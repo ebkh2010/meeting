@@ -1,0 +1,39 @@
+{
+    "title": "memberships",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer"
+        },
+        "organization_id": {
+            "type": "integer"
+        },
+        "member_user_id": {
+            "type": "string",
+            "description": "شناسهٔ کاربر پلتفرم یا خالی برای عضو نمایشی"
+        },
+        "email": {
+            "type": "string"
+        },
+        "full_name": {
+            "type": "string"
+        },
+        "role": {
+            "type": "string",
+            "description": "org_admin|secretary|member"
+        },
+        "status": {
+            "type": "string",
+            "description": "active|disabled"
+        },
+        "is_virtual": {
+            "type": "boolean",
+            "description": "عضو نمایشی بدون حساب واقعی"
+        }
+    },
+    "required": [
+        "organization_id",
+        "full_name",
+        "role"
+    ]
+}

@@ -1,0 +1,49 @@
+{
+    "title": "meeting_attachments",
+    "type": "object",
+    "description": "پیوست‌های دستور جلسه که همراه ایمیل دعوت برای اعضا ارسال می‌شوند",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "شناسه"
+        },
+        "organization_id": {
+            "type": "integer",
+            "description": "شناسه سازمان (مرز مستأجر)"
+        },
+        "meeting_id": {
+            "type": "integer",
+            "description": "شناسه جلسه"
+        },
+        "object_key": {
+            "type": "string",
+            "description": "کلید فایل در فضای ذخیره‌سازی"
+        },
+        "file_name": {
+            "type": "string",
+            "description": "نام اصلی فایل"
+        },
+        "content_type": {
+            "type": "string",
+            "description": "نوع محتوا"
+        },
+        "size_bytes": {
+            "type": "integer",
+            "description": "حجم فایل به بایت"
+        },
+        "uploaded_by_user_id": {
+            "type": "string",
+            "description": "شناسه کاربر بارگذارنده"
+        },
+        "uploaded_by_name": {
+            "type": "string",
+            "description": "نام کاربر بارگذارنده"
+        }
+    },
+    "required": [
+        "organization_id",
+        "meeting_id",
+        "object_key",
+        "file_name"
+    ]
+}

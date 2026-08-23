@@ -1,0 +1,44 @@
+{
+    "title": "notifications",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer"
+        },
+        "organization_id": {
+            "type": "integer"
+        },
+        "recipient_membership_id": {
+            "type": "integer"
+        },
+        "recipient_user_id": {
+            "type": "string"
+        },
+        "kind": {
+            "type": "string",
+            "description": "invite|rsvp|review_request|approved|due_soon|job"
+        },
+        "title": {
+            "type": "string"
+        },
+        "body": {
+            "type": "string"
+        },
+        "link": {
+            "type": "string"
+        },
+        "dedupe_key": {
+            "type": "string"
+        },
+        "is_read": {
+            "type": "boolean"
+        },
+        "read_at": {
+            "type": "string"
+        }
+    },
+    "required": [
+        "organization_id",
+        "title"
+    ]
+}

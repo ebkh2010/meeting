@@ -1,0 +1,56 @@
+{
+    "title": "meetings",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer"
+        },
+        "organization_id": {
+            "type": "integer"
+        },
+        "title": {
+            "type": "string"
+        },
+        "description": {
+            "type": "string"
+        },
+        "meeting_type": {
+            "type": "string",
+            "description": "هیئت‌مدیره|عملیاتی|پروژه‌ای|کمیته"
+        },
+        "starts_at": {
+            "type": "string",
+            "description": "ISO UTC"
+        },
+        "duration_minutes": {
+            "type": "integer"
+        },
+        "location": {
+            "type": "string"
+        },
+        "online_url": {
+            "type": "string"
+        },
+        "secretary_membership_id": {
+            "type": "integer"
+        },
+        "secretary_name": {
+            "type": "string"
+        },
+        "status": {
+            "type": "string",
+            "description": "scheduled|held|cancelled"
+        },
+        "created_by_user_id": {
+            "type": "string"
+        },
+        "created_by_name": {
+            "type": "string"
+        }
+    },
+    "required": [
+        "organization_id",
+        "title",
+        "starts_at"
+    ]
+}

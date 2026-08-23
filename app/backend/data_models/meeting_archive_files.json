@@ -1,0 +1,91 @@
+{
+    "title": "meeting_archive_files",
+    "description": "وضعیت آرشیو و بازیابی هر فایل جانبی جلسه (صوت یا پیوست)",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "شناسهٔ یکتا"
+        },
+        "organization_id": {
+            "type": "integer",
+            "description": "شناسهٔ سازمان (مرز تننت)"
+        },
+        "meeting_id": {
+            "type": "integer",
+            "description": "شناسهٔ جلسه"
+        },
+        "source_kind": {
+            "type": "string",
+            "description": "نوع فایل: recording یا attachment"
+        },
+        "source_id": {
+            "type": "integer",
+            "description": "شناسهٔ رکورد منبع (صوت یا پیوست)"
+        },
+        "file_name": {
+            "type": "string",
+            "description": "نام فایل"
+        },
+        "content_type": {
+            "type": "string",
+            "description": "نوع محتوای فایل"
+        },
+        "source_bucket": {
+            "type": "string",
+            "description": "نام باکت استوریج اصلی"
+        },
+        "source_object_key": {
+            "type": "string",
+            "description": "کلید شیء در استوریج اصلی"
+        },
+        "remote_path": {
+            "type": "string",
+            "description": "مسیر فایل در مقصد خارجی"
+        },
+        "size_bytes": {
+            "type": "integer",
+            "description": "حجم فایل به بایت"
+        },
+        "checksum_sha256": {
+            "type": "string",
+            "description": "چکسام SHA-256 فایل"
+        },
+        "status": {
+            "type": "string",
+            "description": "وضعیت: on_server، archiving، archived، restoring، error"
+        },
+        "error_message": {
+            "type": "string",
+            "description": "پیام آخرین خطا"
+        },
+        "archived_at": {
+            "type": "string",
+            "description": "زمان تکمیل آرشیو (UTC)"
+        },
+        "restored_at": {
+            "type": "string",
+            "description": "زمان آخرین بازیابی (UTC)"
+        },
+        "restore_expires_at": {
+            "type": "string",
+            "description": "زمان انقضای نسخهٔ بازیابی‌شده روی سرور (UTC)"
+        },
+        "archived_by_name": {
+            "type": "string",
+            "description": "نام اجراکنندهٔ آرشیو"
+        },
+        "restored_by_name": {
+            "type": "string",
+            "description": "نام اجراکنندهٔ بازیابی"
+        }
+    },
+    "required": [
+        "id",
+        "organization_id",
+        "meeting_id",
+        "source_kind",
+        "source_id",
+        "status"
+    ]
+}

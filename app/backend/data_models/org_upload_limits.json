@@ -1,0 +1,34 @@
+{
+    "title": "org_upload_limits",
+    "type": "object",
+    "description": "سقف‌های بارگذاری قابل تنظیم برای هر سازمان (مدت صوت و حجم پیوست)",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "شناسهٔ یکتا (autoincrement)"
+        },
+        "organization_id": {
+            "type": "integer",
+            "description": "شناسهٔ سازمان مالک تنظیمات"
+        },
+        "max_audio_minutes": {
+            "type": "integer",
+            "description": "سقف مدت فایل صوتی جلسه به دقیقه"
+        },
+        "max_audio_mb": {
+            "type": "integer",
+            "description": "سقف حجم فایل صوتی جلسه به مگابایت"
+        },
+        "max_attachment_mb": {
+            "type": "integer",
+            "description": "سقف حجم هر فایل پیوست به مگابایت"
+        },
+        "updated_by_name": {
+            "type": "string",
+            "description": "نام آخرین کاربری که سقف‌ها را تغییر داده"
+        }
+    },
+    "required": [
+        "organization_id"
+    ]
+}

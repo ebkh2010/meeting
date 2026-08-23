@@ -1,0 +1,38 @@
+{
+    "title": "invitations",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer"
+        },
+        "organization_id": {
+            "type": "integer"
+        },
+        "email": {
+            "type": "string"
+        },
+        "role": {
+            "type": "string"
+        },
+        "token": {
+            "type": "string"
+        },
+        "status": {
+            "type": "string",
+            "description": "pending|accepted|revoked"
+        },
+        "expires_at": {
+            "type": "string",
+            "description": "ISO UTC"
+        },
+        "invited_by_name": {
+            "type": "string"
+        }
+    },
+    "required": [
+        "organization_id",
+        "email",
+        "role",
+        "token"
+    ]
+}

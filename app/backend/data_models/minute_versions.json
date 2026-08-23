@@ -1,0 +1,41 @@
+{
+    "title": "minute_versions",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer"
+        },
+        "organization_id": {
+            "type": "integer"
+        },
+        "minutes_id": {
+            "type": "integer"
+        },
+        "meeting_id": {
+            "type": "integer"
+        },
+        "version": {
+            "type": "integer"
+        },
+        "body_markdown": {
+            "type": "string"
+        },
+        "summary": {
+            "type": "string"
+        },
+        "status_at_version": {
+            "type": "string"
+        },
+        "changed_by_name": {
+            "type": "string"
+        },
+        "change_note": {
+            "type": "string"
+        }
+    },
+    "required": [
+        "organization_id",
+        "minutes_id",
+        "version"
+    ]
+}

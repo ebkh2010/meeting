@@ -1,0 +1,35 @@
+{
+    "title": "agenda_items",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer"
+        },
+        "organization_id": {
+            "type": "integer"
+        },
+        "meeting_id": {
+            "type": "integer"
+        },
+        "position": {
+            "type": "integer"
+        },
+        "title": {
+            "type": "string"
+        },
+        "notes": {
+            "type": "string"
+        },
+        "planned_minutes": {
+            "type": "integer"
+        },
+        "owner_name": {
+            "type": "string"
+        }
+    },
+    "required": [
+        "organization_id",
+        "meeting_id",
+        "title"
+    ]
+}

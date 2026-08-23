@@ -1,0 +1,584 @@
+"""کانال‌های اعلان بیرونی: ایمیل (SMTP) و پیامک (قاصدک).
+
+قواعد اصلی:
+
+* تنظیمات هر سازمان جدا نگه‌داری می‌شود (``org_notify_settings`` با ``organization_id``).
+* رمز SMTP و کلید API قاصدک رمزنگاری‌شده ذخیره می‌شوند و هرگز به فرانت‌اند بازنمی‌گردند.
+* قرارداد پیامک دقیقاً از مستند رسمی قاصدک پیروی می‌کند:
+  ``POST https://gateway.ghasedak.me/rest/api/v1/WebService/SendSingleSMS``
+  با هدرهای ``ApiKey`` و ``Content-Type: application/json`` و بدنهٔ
+  ``message`` / ``lineNumber`` / ``receptor`` / ``clientReferenceId``.
+* شکست ارسال هرگز جریان اصلی (ایجاد جلسه) را متوقف نمی‌کند؛ نتیجه در
+  ``notify_deliveries`` ثبت می‌شود و امکان «ارسال دوباره» وجود دارد.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import smtplib
+import ssl
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from email import encoders
+from email.header import Header
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.utils import formataddr
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.org_notify_settings import Org_notify_settings
+from services.app_auth import GENDER_SALUTATION, decrypt_secret
+
+logger = logging.getLogger(__name__)
+
+GHASEDAK_BASE_URL = "https://gateway.ghasedak.me/rest/api/v1/WebService"
+SEND_SINGLE_SMS_PATH = "/SendSingleSMS"
+SMS_TIMEOUT_SECONDS = 20.0
+SMTP_TIMEOUT_SECONDS = 20.0
+
+TEHRAN_OFFSET = timedelta(hours=3, minutes=30)
+
+_PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹"
+_JALALI_MONTHS = [
+    "فروردین",
+    "اردیبهشت",
+    "خرداد",
+    "تیر",
+    "مرداد",
+    "شهریور",
+    "مهر",
+    "آبان",
+    "آذر",
+    "دی",
+    "بهمن",
+    "اسفند",
+]
+_WEEKDAYS = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
+
+
+# ---------------------------------------------------------------------------
+# تاریخ و ساعت شمسی
+# ---------------------------------------------------------------------------
+
+
+def to_persian_digits(value: str) -> str:
+    return "".join(_PERSIAN_DIGITS[int(ch)] if ch.isdigit() else ch for ch in str(value))
+
+
+def gregorian_to_jalali(year: int, month: int, day: int) -> Tuple[int, int, int]:
+    """تبدیل تاریخ میلادی به هجری شمسی (الگوریتم استاندارد بدون وابستگی بیرونی)."""
+    g_days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    jy = 0 if year <= 1600 else 979
+    gy = year - (621 if year <= 1600 else 1600)
+    gm = month - 1
+    gd = day - 1
+
+    g_day_no = 365 * gy + (gy + 3) // 4 - (gy + 99) // 100 + (gy + 399) // 400
+    for i in range(gm):
+        g_day_no += g_days_in_month[i]
+    if gm > 1 and ((gy % 4 == 0 and gy % 100 != 0) or (gy % 400 == 0)):
+        g_day_no += 1
+    g_day_no += gd
+
+    j_day_no = g_day_no - 79
+    j_np = j_day_no // 12053
+    j_day_no %= 12053
+    jy += 979 * j_np + 33 * (j_day_no // 1461)
+    j_day_no %= 1461
+    if j_day_no >= 366:
+        jy += (j_day_no - 1) // 365
+        j_day_no = (j_day_no - 1) % 365
+
+    for i in range(11):
+        month_length = 31 if i < 6 else 30
+        if j_day_no < month_length:
+            return jy, i + 1, j_day_no + 1
+        j_day_no -= month_length
+    return jy, 12, j_day_no + 1
+
+
+def to_tehran(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc) + TEHRAN_OFFSET
+
+
+def format_jalali_datetime(value: datetime, with_weekday: bool = True) -> str:
+    """خروجی نمونه: «سه‌شنبه ۲۸ مرداد ۱۴۰۵ ساعت ۱۰:۳۰»."""
+    local = to_tehran(value)
+    jy, jm, jd = gregorian_to_jalali(local.year, local.month, local.day)
+    weekday = _WEEKDAYS[local.weekday()]
+    stamp = f"{jd} {_JALALI_MONTHS[jm - 1]} {jy} ساعت {local.hour:02d}:{local.minute:02d}"
+    if with_weekday:
+        stamp = f"{weekday} {stamp}"
+    return to_persian_digits(stamp)
+
+
+def parse_iso(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value
+    if not value:
+        return None
+    text = str(value).replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# تنظیمات سازمان
+# ---------------------------------------------------------------------------
+
+
+async def get_or_create_settings(db: AsyncSession, organization_id: int) -> Org_notify_settings:
+    """خواندن idempotent تنظیمات اعلان سازمان؛ در نبود رکورد، پیش‌فرض ساخته می‌شود."""
+    result = await db.execute(
+        select(Org_notify_settings).where(Org_notify_settings.organization_id == organization_id)
+    )
+    row = result.scalars().first()
+    if row is not None:
+        return row
+    row = Org_notify_settings(
+        organization_id=organization_id,
+        smtp_enabled=False,
+        smtp_host="",
+        smtp_port=587,
+        smtp_username="",
+        smtp_password_enc="",
+        smtp_use_tls=True,
+        smtp_use_ssl=False,
+        smtp_from_email="",
+        smtp_from_name="ویدارا - نسخه جلسات",
+        sms_enabled=False,
+        sms_api_key_enc="",
+        sms_line_number="",
+    )
+    db.add(row)
+    await db.flush()
+    return row
+
+
+def settings_payload(row: Org_notify_settings) -> Dict[str, Any]:
+    """خروجی امن برای فرانت‌اند: مقدار رمزها هرگز ارسال نمی‌شود."""
+    return {
+        "smtp_enabled": bool(row.smtp_enabled),
+        "smtp_host": row.smtp_host or "",
+        "smtp_port": int(row.smtp_port or 587),
+        "smtp_username": row.smtp_username or "",
+        "smtp_password_set": bool(row.smtp_password_enc),
+        "smtp_use_tls": bool(row.smtp_use_tls),
+        "smtp_use_ssl": bool(row.smtp_use_ssl),
+        "smtp_from_email": row.smtp_from_email or "",
+        "smtp_from_name": row.smtp_from_name or "",
+        "sms_enabled": bool(row.sms_enabled),
+        "sms_api_key_set": bool(row.sms_api_key_enc),
+        "sms_line_number": row.sms_line_number or "",
+    }
+
+
+@dataclass
+class SendResult:
+    ok: bool
+    provider_message_id: str = ""
+    error: str = ""
+
+
+@dataclass
+class EmailAttachment:
+    """پیوست ایمیل؛ محتوا به‌صورت بایت در حافظه و نام فارسی مجاز است."""
+
+    file_name: str
+    content: bytes
+    content_type: str = "application/octet-stream"
+
+
+# ---------------------------------------------------------------------------
+# ایمیل
+# ---------------------------------------------------------------------------
+
+
+def _smtp_send_blocking(
+    *,
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    use_tls: bool,
+    use_ssl: bool,
+    from_email: str,
+    from_name: str,
+    to_email: str,
+    subject: str,
+    text_body: str,
+    html_body: str,
+    ics_content: str,
+    attachments: Sequence[EmailAttachment] = (),
+) -> None:
+    message = MIMEMultipart("mixed")
+    message["Subject"] = Header(subject, "utf-8")
+    message["From"] = formataddr((str(Header(from_name or "", "utf-8")), from_email))
+    message["To"] = to_email
+
+    alternative = MIMEMultipart("alternative")
+    alternative.attach(MIMEText(text_body, "plain", "utf-8"))
+    if html_body:
+        alternative.attach(MIMEText(html_body, "html", "utf-8"))
+    message.attach(alternative)
+
+    if ics_content:
+        calendar_part = MIMEText(ics_content, "calendar", "utf-8")
+        calendar_part.add_header("Content-Disposition", "attachment", filename="meeting.ics")
+        message.attach(calendar_part)
+
+    for attachment in attachments or ():
+        if not attachment.content:
+            continue
+        main_type, _, sub_type = (attachment.content_type or "application/octet-stream").partition("/")
+        part = MIMEBase(main_type or "application", sub_type or "octet-stream")
+        part.set_payload(attachment.content)
+        encoders.encode_base64(part)
+        # نام فایل فارسی با RFC 2231 کدگذاری می‌شود تا در همهٔ کلاینت‌ها درست دیده شود.
+        part.add_header(
+            "Content-Disposition",
+            "attachment",
+            filename=("utf-8", "", attachment.file_name or "attachment"),
+        )
+        message.attach(part)
+
+    if use_ssl:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(host, port, timeout=SMTP_TIMEOUT_SECONDS, context=context) as server:
+            if username:
+                server.login(username, password)
+            server.sendmail(from_email, [to_email], message.as_string())
+        return
+
+    with smtplib.SMTP(host, port, timeout=SMTP_TIMEOUT_SECONDS) as server:
+        server.ehlo()
+        if use_tls:
+            server.starttls(context=ssl.create_default_context())
+            server.ehlo()
+        if username:
+            server.login(username, password)
+        server.sendmail(from_email, [to_email], message.as_string())
+
+
+async def send_email(
+    row: Org_notify_settings,
+    *,
+    to_email: str,
+    subject: str,
+    text_body: str,
+    html_body: str = "",
+    ics_content: str = "",
+    attachments: Sequence[EmailAttachment] = (),
+) -> SendResult:
+    """ارسال ایمیل با تنظیمات SMTP سازمان؛ خطا فقط برگردانده می‌شود، پرتاب نمی‌شود."""
+    if not row.smtp_enabled:
+        return SendResult(ok=False, error="ارسال ایمیل برای این سازمان فعال نیست.")
+    if not (row.smtp_host and row.smtp_from_email):
+        return SendResult(ok=False, error="تنظیمات SMTP کامل نیست (میزبان یا ایمیل فرستانده خالی است).")
+    if not to_email:
+        return SendResult(ok=False, error="نشانی ایمیل گیرنده ثبت نشده است.")
+
+    password = decrypt_secret(row.smtp_password_enc or "")
+    try:
+        await asyncio.to_thread(
+            _smtp_send_blocking,
+            host=row.smtp_host,
+            port=int(row.smtp_port or 587),
+            username=row.smtp_username or "",
+            password=password,
+            use_tls=bool(row.smtp_use_tls),
+            use_ssl=bool(row.smtp_use_ssl),
+            from_email=row.smtp_from_email,
+            from_name=row.smtp_from_name or "",
+            to_email=to_email,
+            subject=subject,
+            text_body=text_body,
+            html_body=html_body,
+            ics_content=ics_content,
+            attachments=list(attachments or ()),
+        )
+    except smtplib.SMTPAuthenticationError:
+        return SendResult(ok=False, error="نام کاربری یا رمز SMTP پذیرفته نشد.")
+    except smtplib.SMTPException as exc:
+        return SendResult(ok=False, error=f"خطای سرور ایمیل: {exc.__class__.__name__}")
+    except (OSError, ssl.SSLError) as exc:
+        return SendResult(ok=False, error=f"اتصال به سرور ایمیل برقرار نشد: {exc.__class__.__name__}")
+    return SendResult(ok=True)
+
+
+# ---------------------------------------------------------------------------
+# پیامک قاصدک
+# ---------------------------------------------------------------------------
+
+
+async def send_sms(
+    row: Org_notify_settings,
+    *,
+    receptor: str,
+    message: str,
+    client_reference_id: str = "",
+) -> SendResult:
+    """ارسال پیامک تکی مطابق مستند قاصدک (``POST /SendSingleSMS``)."""
+    if not row.sms_enabled:
+        return SendResult(ok=False, error="ارسال پیامک برای این سازمان فعال نیست.")
+    api_key = decrypt_secret(row.sms_api_key_enc or "")
+    if not api_key:
+        return SendResult(ok=False, error="کلید API قاصدک ثبت نشده است.")
+    if not row.sms_line_number:
+        return SendResult(ok=False, error="شماره خط فرستندهٔ قاصدک ثبت نشده است.")
+    if not receptor:
+        return SendResult(ok=False, error="شماره موبایل گیرنده ثبت نشده است.")
+
+    payload: Dict[str, Any] = {
+        "lineNumber": row.sms_line_number,
+        "receptor": receptor,
+        "message": message,
+        "udh": False,
+    }
+    if client_reference_id:
+        payload["clientReferenceId"] = client_reference_id
+
+    headers = {"ApiKey": api_key, "Content-Type": "application/json"}
+    url = f"{GHASEDAK_BASE_URL}{SEND_SINGLE_SMS_PATH}"
+
+    try:
+        async with httpx.AsyncClient(timeout=SMS_TIMEOUT_SECONDS) as http_client:
+            response = await http_client.post(url, json=payload, headers=headers)
+    except httpx.TimeoutException:
+        return SendResult(ok=False, error="سرویس پیامک قاصدک در زمان مجاز پاسخ نداد.")
+    except httpx.HTTPError as exc:
+        return SendResult(ok=False, error=f"اتصال به سرویس پیامک برقرار نشد: {exc.__class__.__name__}")
+
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    # پاسخ سرویس در مستند با هر دو حالت PascalCase و camelCase نمونه داده شده است.
+    is_success = body.get("IsSuccess")
+    if is_success is None:
+        is_success = body.get("isSuccess")
+    status_code = body.get("StatusCode") or body.get("statusCode") or response.status_code
+    provider_message = body.get("Message") or body.get("message") or ""
+    data = body.get("Data") or body.get("data") or {}
+    message_id = ""
+    if isinstance(data, dict):
+        message_id = str(data.get("MessageId") or data.get("messageId") or "")
+
+    if response.status_code >= 400 or is_success is False:
+        detail = provider_message or f"کد وضعیت {status_code}"
+        return SendResult(ok=False, error=f"سرویس پیامک درخواست را نپذیرفت ({detail}).")
+    if is_success is None and response.status_code >= 300:
+        return SendResult(ok=False, error=f"پاسخ نامعتبر از سرویس پیامک (کد {response.status_code}).")
+
+    return SendResult(ok=True, provider_message_id=message_id)
+
+
+# ---------------------------------------------------------------------------
+# متن اعلان دعوت جلسه
+# ---------------------------------------------------------------------------
+
+
+def salutation(gender: str, full_name: str) -> str:
+    prefix = GENDER_SALUTATION.get((gender or "").lower(), "")
+    return f"{prefix} {full_name}".strip() if prefix else full_name
+
+
+def build_invite_sms(
+    *,
+    recipient_name: str,
+    gender: str,
+    organization_name: str,
+    meeting_title: str,
+    starts_at: datetime,
+    location: str,
+    online_url: str,
+) -> str:
+    lines = [
+        f"{salutation(gender, recipient_name)}؛",
+        f"به جلسهٔ «{meeting_title}» در {organization_name} دعوت شده‌اید.",
+        f"زمان: {format_jalali_datetime(starts_at)}",
+    ]
+    if location:
+        lines.append(f"محل: {location}")
+    elif online_url:
+        lines.append("این جلسه برخط برگزار می‌شود.")
+    lines.append("ویدارا - نسخه جلسات")
+    return "\n".join(lines)
+
+
+def build_invite_email(
+    *,
+    recipient_name: str,
+    gender: str,
+    organization_name: str,
+    meeting_title: str,
+    description: str,
+    starts_at: datetime,
+    duration_minutes: int,
+    location: str,
+    online_url: str,
+    secretary_name: str,
+    agenda_items: Sequence[Dict[str, Any]] = (),
+    attachment_names: Sequence[str] = (),
+) -> Tuple[str, str, str]:
+    """خروجی: (موضوع، متن ساده، متن HTML).
+
+    ``agenda_items`` بندهای دستور جلسه است (``title`` / ``planned_minutes`` /
+    ``owner_name`` / ``notes``) و ``attachment_names`` نام فایل‌های پیوست\u200cشده به
+    ایمیل است تا گیرنده بداند چه فایل\u200cهایی همراه دعوت ارسال شده است.
+    """
+    when = format_jalali_datetime(starts_at)
+    subject = f"دعوت به جلسهٔ «{meeting_title}» — {when}"
+
+    rows = [
+        ("عنوان جلسه", meeting_title),
+        ("سازمان", organization_name),
+        ("زمان برگزاری", when),
+        ("مدت", f"{to_persian_digits(duration_minutes)} دقیقه"),
+    ]
+    if location:
+        rows.append(("محل برگزاری", location))
+    if online_url:
+        rows.append(("پیوند جلسهٔ برخط", online_url))
+    if secretary_name:
+        rows.append(("دبیر جلسه", secretary_name))
+
+    text_lines = [f"{salutation(gender, recipient_name)}؛", "", "با احترام، حضور شما در جلسهٔ زیر درخواست می‌شود:", ""]
+    text_lines += [f"{label}: {value}" for label, value in rows]
+    if description:
+        text_lines += ["", "توضیحات:", description]
+
+    agenda_rows = [item for item in (agenda_items or ()) if (item.get("title") or "").strip()]
+    if agenda_rows:
+        text_lines += ["", "دستور جلسه:"]
+        for index, item in enumerate(agenda_rows, start=1):
+            parts = [f"{to_persian_digits(index)}. {item.get('title')}"]
+            if item.get("planned_minutes"):
+                parts.append(f"({to_persian_digits(int(item['planned_minutes']))} دقیقه)")
+            if item.get("owner_name"):
+                parts.append(f"— مسئول: {item['owner_name']}")
+            text_lines.append(" ".join(parts))
+            if item.get("notes"):
+                text_lines.append(f"   یادداشت: {item['notes']}")
+
+    file_names = [name for name in (attachment_names or ()) if name]
+    if file_names:
+        text_lines += ["", "فایل‌های پیوست:"]
+        text_lines += [f"- {name}" for name in file_names]
+
+    text_lines += ["", "این پیام به‌صورت خودکار از «ویدارا - نسخه جلسات» ارسال شده است."]
+    text_body = "\n".join(text_lines)
+
+    table_rows = "".join(
+        f'<tr><td style="padding:6px 12px;color:#64748b;white-space:nowrap">{label}</td>'
+        f'<td style="padding:6px 12px;font-weight:600;color:#0f172a">{value}</td></tr>'
+        for label, value in rows
+    )
+    description_html = (
+        f'<p style="margin:16px 0 0;color:#334155;line-height:1.9">{description}</p>' if description else ""
+    )
+
+    agenda_html = ""
+    if agenda_rows:
+        agenda_list = "".join(
+            '<li style="margin:0 0 8px;color:#0f172a;line-height:1.9">'
+            f"<span style=\"font-weight:600\">{item.get('title')}</span>"
+            + (
+                f'<span style="color:#64748b"> — {to_persian_digits(int(item["planned_minutes"]))} دقیقه</span>'
+                if item.get("planned_minutes")
+                else ""
+            )
+            + (
+                f'<span style="color:#64748b"> — مسئول: {item["owner_name"]}</span>'
+                if item.get("owner_name")
+                else ""
+            )
+            + (
+                f'<div style="color:#475569;font-size:13px">{item["notes"]}</div>'
+                if item.get("notes")
+                else ""
+            )
+            + "</li>"
+            for item in agenda_rows
+        )
+        agenda_html = (
+            '<h3 style="margin:24px 0 8px;font-size:15px;color:#0f172a">دستور جلسه</h3>'
+            f'<ol style="margin:0;padding-inline-start:20px;font-size:14px">{agenda_list}</ol>'
+        )
+
+    attachments_html = ""
+    if file_names:
+        items_html = "".join(
+            f'<li style="margin:0 0 6px;color:#0f172a">{name}</li>' for name in file_names
+        )
+        attachments_html = (
+            '<h3 style="margin:24px 0 8px;font-size:15px;color:#0f172a">فایل‌های پیوست</h3>'
+            f'<ul style="margin:0;padding-inline-start:20px;font-size:14px">{items_html}</ul>'
+        )
+    html_body = f"""<!DOCTYPE html>
+<html dir="rtl" lang="fa"><body style="margin:0;background:#f8fafc;padding:24px;font-family:Tahoma,Arial,sans-serif">
+  <div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;padding:24px">
+    <h2 style="margin:0 0 4px;font-size:18px;color:#0f172a">دعوت به جلسه</h2>
+    <p style="margin:0 0 16px;color:#475569">{salutation(gender, recipient_name)}؛ حضور شما در جلسهٔ زیر درخواست می‌شود.</p>
+    <table style="width:100%;border-collapse:collapse;font-size:14px">{table_rows}</table>
+    {description_html}
+    {agenda_html}
+    {attachments_html}
+    <p style="margin:24px 0 0;font-size:12px;color:#6b7280">این پیام به‌صورت خودکار از «ویدارا - نسخه جلسات» ارسال شده است.</p>
+  </div>
+</body></html>"""
+    return subject, text_body, html_body
+
+
+def build_ics(
+    *,
+    meeting_id: int,
+    meeting_title: str,
+    description: str,
+    starts_at: datetime,
+    duration_minutes: int,
+    location: str,
+    organizer_email: str,
+) -> str:
+    start_utc = starts_at.astimezone(timezone.utc) if starts_at.tzinfo else starts_at.replace(tzinfo=timezone.utc)
+    end_utc = start_utc + timedelta(minutes=max(int(duration_minutes or 60), 5))
+    stamp = datetime.now(timezone.utc)
+
+    def fmt(value: datetime) -> str:
+        return value.strftime("%Y%m%dT%H%M%SZ")
+
+    def escape(value: str) -> str:
+        return (value or "").replace("\\", "\\\\").replace(",", "\\,").replace(";", "\\;").replace("\n", "\\n")
+
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Vidara//Meetings//FA",
+        "CALSCALE:GREGORIAN",
+        "METHOD:REQUEST",
+        "BEGIN:VEVENT",
+        f"UID:vidara-meeting-{meeting_id}@vidara",
+        f"DTSTAMP:{fmt(stamp)}",
+        f"DTSTART:{fmt(start_utc)}",
+        f"DTEND:{fmt(end_utc)}",
+        f"SUMMARY:{escape(meeting_title)}",
+    ]
+    if description:
+        lines.append(f"DESCRIPTION:{escape(description)}")
+    if location:
+        lines.append(f"LOCATION:{escape(location)}")
+    if organizer_email:
+        lines.append(f"ORGANIZER:mailto:{organizer_email}")
+    lines += ["END:VEVENT", "END:VCALENDAR"]
+    return "\r\n".join(lines)

@@ -1,0 +1,277 @@
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * سیستم طراحی «ویدارا - نسخه جلسات»
+ * پالت رسمی برند:
+ *   - آبی اصلی/تعاملی : #2B7FFF  -> hsl(216 100% 58%)
+ *   - آبی روشن مکمل   : #BDDBFE  -> hsl(212 97% 87%)
+ *   - خاکستری بسیار روشن: #F3F4F6 -> hsl(220 14% 96%)
+ *   - پس‌زمینهٔ صفحه   : #FFFFFF
+ *   - خطا (پس‌زمینه)   : #FEF0F0  -> hsl(0 87% 97%)
+ *   - خطا (تأکید/حاشیه): #F79283  -> hsl(8 88% 74%)
+ *
+ * قاعدهٔ خوانایی: متن روی آبی اصلی سفید است. رنگ‌های #BDDBFE و #F79283
+ * هرگز برای متن اصلی روی سفید استفاده نمی‌شوند؛ برای متن خطا از تُن تیره‌ترِ
+ * هم‌خانوادهٔ `--destructive` استفاده می‌شود تا کنتراست کافی داشته باشد.
+ */
+
+@layer base {
+  :root {
+    /* پس‌زمینهٔ کلی: سفید کامل */
+    --background: 0 0% 100%;
+    --foreground: 220 26% 14%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 26% 14%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 26% 14%;
+
+    /* آبی اصلی برند #2B7FFF */
+    --primary: 216 100% 58%;
+    --primary-foreground: 0 0% 100%;
+
+    /* خاکستری بسیار روشن #F3F4F6 برای سطوح ثانویه */
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 220 24% 22%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 12% 42%;
+
+    /* آبی روشن مکمل #BDDBFE برای حالت انتخاب/هاور ملایم */
+    --accent: 212 97% 87%;
+    --accent-foreground: 216 76% 26%;
+
+    /* خطا: تُن تیره برای متن/دکمهٔ توپر (کنتراست کافی روی سفید) */
+    --destructive: 8 62% 46%;
+    --destructive-foreground: 0 0% 100%;
+    /* حاشیه/تأکید خطا: #F79283 */
+    --destructive-border: 8 88% 74%;
+    /* پس‌زمینهٔ خطا: #FEF0F0 */
+    --destructive-soft: 0 87% 97%;
+
+    --border: 220 14% 91%;
+    --input: 220 14% 89%;
+    --ring: 216 100% 58%;
+
+    --radius: 0.75rem;
+
+    /* توکن‌های مستقیم برند برای استفاده در Tailwind (bg-brand-soft و …) */
+    --brand: 216 100% 58%;
+    --brand-soft: 212 97% 87%;
+    --brand-surface: 220 14% 96%;
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 220 24% 20%;
+    --sidebar-primary: 216 100% 58%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 212 97% 87%;
+    --sidebar-accent-foreground: 216 76% 26%;
+    --sidebar-border: 220 14% 91%;
+    --sidebar-ring: 216 100% 58%;
+
+    --chart-1: 216 100% 58%;
+    --chart-2: 212 97% 76%;
+    --chart-3: 216 76% 38%;
+    --chart-4: 220 14% 78%;
+    --chart-5: 8 88% 74%;
+  }
+
+  /*
+   * حالت تاریک با همان پالت برند هم‌راستا شده است: پس‌زمینهٔ خنثای سرد،
+   * رنگ تعاملی همان آبی برند و جفت‌رنگ خطا از همان خانواده.
+   */
+  .dark {
+    --background: 220 26% 10%;
+    --foreground: 220 14% 96%;
+
+    --card: 220 24% 13%;
+    --card-foreground: 220 14% 96%;
+
+    --popover: 220 24% 13%;
+    --popover-foreground: 220 14% 96%;
+
+    --primary: 216 100% 62%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 20% 18%;
+    --secondary-foreground: 220 14% 94%;
+
+    --muted: 220 20% 18%;
+    --muted-foreground: 220 12% 70%;
+
+    --accent: 216 62% 26%;
+    --accent-foreground: 212 97% 87%;
+
+    --destructive: 8 68% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --destructive-border: 8 88% 74%;
+    --destructive-soft: 8 40% 18%;
+
+    --border: 220 18% 22%;
+    --input: 220 18% 22%;
+    --ring: 216 100% 62%;
+
+    --brand: 216 100% 62%;
+    --brand-soft: 216 62% 26%;
+    --brand-surface: 220 20% 18%;
+
+    --sidebar-background: 220 26% 11%;
+    --sidebar-foreground: 220 14% 94%;
+    --sidebar-primary: 216 100% 62%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 216 62% 26%;
+    --sidebar-accent-foreground: 212 97% 87%;
+    --sidebar-border: 220 18% 22%;
+    --sidebar-ring: 216 100% 62%;
+
+    --chart-1: 216 100% 62%;
+    --chart-2: 212 90% 74%;
+    --chart-3: 216 70% 46%;
+    --chart-4: 220 14% 60%;
+    --chart-5: 8 88% 70%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    font-family: 'Vazirmatn', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    scroll-behavior: smooth;
+    /* جلوگیری از بزرگ‌نمایی خودکار متن در چرخش صفحهٔ موبایل */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground text-base leading-relaxed;
+    font-feature-settings: 'ss01' on;
+    text-wrap: pretty;
+    /*
+     * هیچ صفحه‌ای نباید اسکرول افقی ناخواسته بسازد؛ بلوک‌های عریض (جدول و کد)
+     * اسکرول محلی خودشان را دارند.
+     */
+    overflow-x: hidden;
+  }
+
+  /*
+   * iOS اگر اندازهٔ فونت ورودی کمتر از ۱۶ پیکسل باشد، هنگام فوکوس کل صفحه را
+   * zoom می‌کند و چیدمان راست‌به‌چپ می‌شکند. در موبایل اندازه را تثبیت می‌کنیم.
+   */
+  @media (max-width: 767px) {
+    input,
+    select,
+    textarea {
+      font-size: 16px;
+    }
+  }
+
+  /* در دستگاه لمسی، ناحیهٔ فشردن دکمه‌ها و لینک‌های آیکونی کوچک نشود. */
+  @media (pointer: coarse) {
+    button,
+    [role='tab'],
+    a[role='button'] {
+      min-height: 2.75rem;
+    }
+  }
+
+  h1 {
+    @apply text-3xl font-bold leading-tight tracking-tight;
+    text-wrap: balance;
+  }
+
+  h2 {
+    @apply text-xl font-semibold leading-snug;
+    text-wrap: balance;
+  }
+
+  h3 {
+    @apply text-lg font-semibold;
+  }
+
+  table,
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  /* سطح بلندشدهٔ استاندارد برای بلوک‌های داده */
+  .surface-raise {
+    @apply bg-card border border-border rounded-xl;
+  }
+
+  /* سطح ثانویهٔ خاکستری روشن برند (#F3F4F6) */
+  .surface-subtle {
+    background-color: hsl(var(--brand-surface));
+    border: 1px solid hsl(var(--border));
+  }
+
+  /* سطح ملایم آبی برند (#BDDBFE) برای بلوک‌های تأکیدی و راهنما */
+  .surface-brand-soft {
+    background-color: hsl(var(--brand-soft) / 0.45);
+    border: 1px solid hsl(var(--brand-soft));
+    color: hsl(var(--accent-foreground));
+  }
+
+  /* جفت‌رنگ رسمی خطا: پس‌زمینهٔ #FEF0F0 با حاشیهٔ #F79283 */
+  .surface-error {
+    background-color: hsl(var(--destructive-soft));
+    border: 1px solid hsl(var(--destructive-border));
+    color: hsl(var(--destructive));
+  }
+
+  .text-error {
+    color: hsl(var(--destructive));
+  }
+
+  .border-error {
+    border-color: hsl(var(--destructive-border));
+  }
+
+  .rise-in {
+    animation: rise-in 620ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* نمای چاپ صورتجلسهٔ فارسی/RTL */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: #ffffff;
+    color: #111111;
+  }
+
+  .print-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
+  }
+
+  @page {
+    size: A4;
+    margin: 18mm 16mm;
+  }
+}

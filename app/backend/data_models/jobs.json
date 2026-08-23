@@ -1,0 +1,61 @@
+{
+    "title": "jobs",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer"
+        },
+        "organization_id": {
+            "type": "integer"
+        },
+        "meeting_id": {
+            "type": "integer"
+        },
+        "job_type": {
+            "type": "string",
+            "description": "transcribe|draft_minutes"
+        },
+        "status": {
+            "type": "string",
+            "description": "queued|running|succeeded|failed|dead_letter"
+        },
+        "progress": {
+            "type": "integer"
+        },
+        "attempts": {
+            "type": "integer"
+        },
+        "max_attempts": {
+            "type": "integer"
+        },
+        "payload_json": {
+            "type": "string"
+        },
+        "result_json": {
+            "type": "string"
+        },
+        "error_message": {
+            "type": "string"
+        },
+        "provider": {
+            "type": "string"
+        },
+        "provider_task_ids": {
+            "type": "string"
+        },
+        "started_at": {
+            "type": "string"
+        },
+        "finished_at": {
+            "type": "string"
+        },
+        "created_by_name": {
+            "type": "string"
+        }
+    },
+    "required": [
+        "organization_id",
+        "job_type",
+        "status"
+    ]
+}

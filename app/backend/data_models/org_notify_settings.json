@@ -1,0 +1,66 @@
+{
+    "title": "org_notify_settings",
+    "type": "object",
+    "description": "تنظیمات SMTP و پیامک قاصدک برای هر سازمان",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "شناسه"
+        },
+        "organization_id": {
+            "type": "integer",
+            "description": "شناسه سازمان"
+        },
+        "smtp_enabled": {
+            "type": "boolean",
+            "description": "فعال بودن ارسال ایمیل"
+        },
+        "smtp_host": {
+            "type": "string",
+            "description": "میزبان SMTP"
+        },
+        "smtp_port": {
+            "type": "integer",
+            "description": "پورت SMTP"
+        },
+        "smtp_username": {
+            "type": "string",
+            "description": "نام کاربری SMTP"
+        },
+        "smtp_password_enc": {
+            "type": "string",
+            "description": "رمز SMTP رمزنگاری‌شده"
+        },
+        "smtp_use_tls": {
+            "type": "boolean",
+            "description": "استفاده از STARTTLS"
+        },
+        "smtp_use_ssl": {
+            "type": "boolean",
+            "description": "استفاده از SSL"
+        },
+        "smtp_from_email": {
+            "type": "string",
+            "description": "ایمیل فرستنده"
+        },
+        "smtp_from_name": {
+            "type": "string",
+            "description": "نام فرستنده"
+        },
+        "sms_enabled": {
+            "type": "boolean",
+            "description": "فعال بودن ارسال پیامک"
+        },
+        "sms_api_key_enc": {
+            "type": "string",
+            "description": "کلید API قاصدک رمزنگاری‌شده"
+        },
+        "sms_line_number": {
+            "type": "string",
+            "description": "شماره خط فرستنده قاصدک"
+        }
+    },
+    "required": [
+        "organization_id"
+    ]
+}

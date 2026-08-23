@@ -1,0 +1,38 @@
+{
+    "title": "ai_usage_events",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer"
+        },
+        "organization_id": {
+            "type": "integer"
+        },
+        "job_id": {
+            "type": "integer"
+        },
+        "meeting_id": {
+            "type": "integer"
+        },
+        "kind": {
+            "type": "string",
+            "description": "transcribe|draft_minutes"
+        },
+        "provider": {
+            "type": "string"
+        },
+        "model": {
+            "type": "string"
+        },
+        "minutes_charged": {
+            "type": "integer"
+        },
+        "detail": {
+            "type": "string"
+        }
+    },
+    "required": [
+        "organization_id",
+        "kind"
+    ]
+}

@@ -1,0 +1,48 @@
+{
+    "title": "minutes",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer"
+        },
+        "organization_id": {
+            "type": "integer"
+        },
+        "meeting_id": {
+            "type": "integer"
+        },
+        "status": {
+            "type": "string",
+            "description": "draft|in_review|approved|locked"
+        },
+        "body_markdown": {
+            "type": "string"
+        },
+        "summary": {
+            "type": "string"
+        },
+        "current_version": {
+            "type": "integer"
+        },
+        "generated_by": {
+            "type": "string",
+            "description": "ai|manual"
+        },
+        "review_requested_at": {
+            "type": "string"
+        },
+        "approved_by_name": {
+            "type": "string"
+        },
+        "approved_at": {
+            "type": "string"
+        },
+        "locked_at": {
+            "type": "string"
+        }
+    },
+    "required": [
+        "organization_id",
+        "meeting_id"
+    ]
+}

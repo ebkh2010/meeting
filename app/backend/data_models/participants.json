@@ -1,0 +1,39 @@
+{
+    "title": "participants",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer"
+        },
+        "organization_id": {
+            "type": "integer"
+        },
+        "meeting_id": {
+            "type": "integer"
+        },
+        "membership_id": {
+            "type": "integer"
+        },
+        "member_user_id": {
+            "type": "string"
+        },
+        "full_name": {
+            "type": "string"
+        },
+        "rsvp_status": {
+            "type": "string",
+            "description": "pending|accepted|declined|tentative"
+        },
+        "rsvp_note": {
+            "type": "string"
+        },
+        "attended": {
+            "type": "boolean"
+        }
+    },
+    "required": [
+        "organization_id",
+        "meeting_id",
+        "membership_id"
+    ]
+}

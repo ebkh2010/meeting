@@ -1,0 +1,50 @@
+{
+    "title": "action_items",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer"
+        },
+        "organization_id": {
+            "type": "integer"
+        },
+        "meeting_id": {
+            "type": "integer"
+        },
+        "decision_id": {
+            "type": "integer"
+        },
+        "title": {
+            "type": "string"
+        },
+        "description": {
+            "type": "string"
+        },
+        "owner_membership_id": {
+            "type": "integer"
+        },
+        "owner_name": {
+            "type": "string"
+        },
+        "due_date": {
+            "type": "string",
+            "description": "ISO UTC"
+        },
+        "status": {
+            "type": "string",
+            "description": "open|in_progress|done|overdue"
+        },
+        "progress_note": {
+            "type": "string"
+        },
+        "source": {
+            "type": "string",
+            "description": "ai|manual"
+        }
+    },
+    "required": [
+        "organization_id",
+        "meeting_id",
+        "title"
+    ]
+}

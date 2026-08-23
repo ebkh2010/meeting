@@ -1,0 +1,92 @@
+{
+    "title": "org_storage_targets",
+    "description": "مقصد ذخیره‌سازی خارجی هر سازمان برای آرشیو فایل‌های جانبی جلسات",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "شناسهٔ یکتا"
+        },
+        "organization_id": {
+            "type": "integer",
+            "description": "شناسهٔ سازمان (مرز تننت)"
+        },
+        "provider": {
+            "type": "string",
+            "description": "نوع مقصد: s3 یا webdav"
+        },
+        "display_name": {
+            "type": "string",
+            "description": "نام نمایشی مقصد"
+        },
+        "enabled": {
+            "type": "boolean",
+            "description": "فعال بودن مقصد"
+        },
+        "endpoint": {
+            "type": "string",
+            "description": "نشانی سرویس سازگار با S3"
+        },
+        "bucket": {
+            "type": "string",
+            "description": "نام باکت S3"
+        },
+        "region": {
+            "type": "string",
+            "description": "منطقهٔ S3"
+        },
+        "path_prefix": {
+            "type": "string",
+            "description": "پیشوند مسیر ذخیره‌سازی"
+        },
+        "access_key": {
+            "type": "string",
+            "description": "شناسهٔ کلید دسترسی S3"
+        },
+        "secret_key_enc": {
+            "type": "string",
+            "description": "کلید محرمانهٔ S3 به‌صورت رمزنگاری‌شده"
+        },
+        "force_path_style": {
+            "type": "boolean",
+            "description": "استفاده از آدرس‌دهی path-style برای MinIO و مشابه"
+        },
+        "webdav_base_url": {
+            "type": "string",
+            "description": "نشانی پایهٔ WebDAV (Nextcloud/ownCloud)"
+        },
+        "webdav_username": {
+            "type": "string",
+            "description": "نام کاربری WebDAV"
+        },
+        "webdav_password_enc": {
+            "type": "string",
+            "description": "رمز عبور WebDAV به‌صورت رمزنگاری‌شده"
+        },
+        "restore_retention_days": {
+            "type": "integer",
+            "description": "مدت ماندن نسخهٔ بازیابی‌شده روی سرور اصلی (روز)"
+        },
+        "last_test_ok": {
+            "type": "boolean",
+            "description": "نتیجهٔ آخرین تست اتصال"
+        },
+        "last_test_at": {
+            "type": "string",
+            "description": "زمان آخرین تست اتصال (UTC)"
+        },
+        "last_test_message": {
+            "type": "string",
+            "description": "پیام آخرین تست اتصال"
+        },
+        "updated_by_name": {
+            "type": "string",
+            "description": "نام آخرین ویرایش‌کننده"
+        }
+    },
+    "required": [
+        "id",
+        "organization_id",
+        "provider"
+    ]
+}

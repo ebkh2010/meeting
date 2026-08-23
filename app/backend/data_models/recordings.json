@@ -1,0 +1,52 @@
+{
+    "title": "recordings",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer"
+        },
+        "organization_id": {
+            "type": "integer"
+        },
+        "meeting_id": {
+            "type": "integer"
+        },
+        "bucket_name": {
+            "type": "string"
+        },
+        "object_key": {
+            "type": "string"
+        },
+        "file_name": {
+            "type": "string"
+        },
+        "mime_type": {
+            "type": "string"
+        },
+        "size_bytes": {
+            "type": "integer"
+        },
+        "duration_seconds": {
+            "type": "integer"
+        },
+        "upload_status": {
+            "type": "string",
+            "description": "uploaded|failed|purged"
+        },
+        "consent_ack": {
+            "type": "boolean"
+        },
+        "purge_after": {
+            "type": "string",
+            "description": "ISO UTC"
+        },
+        "uploaded_by_name": {
+            "type": "string"
+        }
+    },
+    "required": [
+        "organization_id",
+        "meeting_id",
+        "object_key"
+    ]
+}

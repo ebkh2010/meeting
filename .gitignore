@@ -1,0 +1,26 @@
+# --- اسرار و ابزارهای استقرار محلی ---
+.deploy-tools/
+.env
+*.sqlite3
+*.db
+*.sqlite
+
+# --- وابستگی‌ها و خروجی بیلد ---
+node_modules/
+dist/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+coverage/
+
+# --- لاگ‌ها و بکاپ‌ها ---
+logs/
+deploy/backups/
+
+# --- فایل‌های توسعه/تست محلی (بخشی از کد نیستند) ---
+uploads/
+served_index.html
+fix_ai_providers.py
+.DS_Store

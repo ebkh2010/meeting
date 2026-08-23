@@ -1,0 +1,66 @@
+{
+    "title": "organizations",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "شناسه"
+        },
+        "name": {
+            "type": "string",
+            "description": "نام سازمان"
+        },
+        "slug": {
+            "type": "string",
+            "description": "شناسهٔ یکتا"
+        },
+        "plan_code": {
+            "type": "string",
+            "description": "کد پلن: demo|standard"
+        },
+        "timezone": {
+            "type": "string",
+            "description": "منطقهٔ زمانی"
+        },
+        "status": {
+            "type": "string",
+            "description": "active|suspended"
+        },
+        "monthly_ai_minutes_quota": {
+            "type": "integer",
+            "description": "سهمیهٔ ماهانه دقیقهٔ صوت"
+        },
+        "ai_minutes_used": {
+            "type": "integer",
+            "description": "مصرف دقیقه در دورهٔ جاری"
+        },
+        "quota_period": {
+            "type": "string",
+            "description": "دورهٔ سهمیه YYYY-MM"
+        },
+        "max_concurrent_ai_jobs": {
+            "type": "integer",
+            "description": "سقف کار همزمان AI سازمان"
+        },
+        "audio_retention_days": {
+            "type": "integer",
+            "description": "نگه‌داری صوت (روز)"
+        },
+        "max_audio_mb": {
+            "type": "integer",
+            "description": "سقف حجم فایل صوتی"
+        },
+        "max_audio_minutes": {
+            "type": "integer",
+            "description": "سقف مدت فایل صوتی"
+        },
+        "is_demo": {
+            "type": "boolean",
+            "description": "سازمان نمایشی"
+        }
+    },
+    "required": [
+        "name",
+        "slug"
+    ]
+}

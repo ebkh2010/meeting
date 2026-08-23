@@ -1,0 +1,36 @@
+{
+    "title": "decisions",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer"
+        },
+        "organization_id": {
+            "type": "integer"
+        },
+        "meeting_id": {
+            "type": "integer"
+        },
+        "minutes_id": {
+            "type": "integer"
+        },
+        "position": {
+            "type": "integer"
+        },
+        "title": {
+            "type": "string"
+        },
+        "description": {
+            "type": "string"
+        },
+        "source": {
+            "type": "string",
+            "description": "ai|manual"
+        }
+    },
+    "required": [
+        "organization_id",
+        "meeting_id",
+        "title"
+    ]
+}

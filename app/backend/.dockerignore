@@ -1,0 +1,15 @@
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.log
+.pytest_cache
+.mypy_cache
+.env
+.env.*
+*.sqlite3
+*.db
+# کدهای مختص پلتفرم/توسعه که در استقرار مستقل داخل ایمیج نمی‌آیند
+lambda_handler.py
+logs

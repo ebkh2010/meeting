@@ -1,0 +1,52 @@
+{
+    "title": "transcripts",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer"
+        },
+        "organization_id": {
+            "type": "integer"
+        },
+        "meeting_id": {
+            "type": "integer"
+        },
+        "recording_id": {
+            "type": "integer"
+        },
+        "provider": {
+            "type": "string",
+            "description": "atoms_platform|harf"
+        },
+        "model": {
+            "type": "string"
+        },
+        "full_text": {
+            "type": "string"
+        },
+        "segments_json": {
+            "type": "string",
+            "description": "قطعات زمان‌دار به JSON"
+        },
+        "duration_seconds": {
+            "type": "integer"
+        },
+        "known_word_ratio": {
+            "type": "number"
+        },
+        "stats_words": {
+            "type": "integer"
+        },
+        "stats_known_words": {
+            "type": "integer"
+        },
+        "job_id": {
+            "type": "integer"
+        }
+    },
+    "required": [
+        "organization_id",
+        "meeting_id",
+        "recording_id"
+    ]
+}

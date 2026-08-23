@@ -1,0 +1,80 @@
+{
+    "title": "org_ai_providers",
+    "type": "object",
+    "description": "تنظیمات تأمین‌کنندگان هوش مصنوعی (STT/LLM) به‌صورت مستقل در هر سازمان، با اولویت و کلید رمزنگاری‌شده",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "شناسه"
+        },
+        "organization_id": {
+            "type": "integer",
+            "description": "شناسه سازمان (مرز مستأجر)"
+        },
+        "kind": {
+            "type": "string",
+            "description": "نوع سرویس: stt یا llm"
+        },
+        "provider_key": {
+            "type": "string",
+            "description": "کلید فنی تأمین‌کننده مثل harf, elevenlabs, whisper_openai, deepseek, kimi, avalai, chatgpt"
+        },
+        "display_name": {
+            "type": "string",
+            "description": "نام نمایشی فارسی"
+        },
+        "enabled": {
+            "type": "boolean",
+            "description": "فعال یا غیرفعال"
+        },
+        "priority": {
+            "type": "integer",
+            "description": "اولویت اجرا؛ عدد کمتر = زودتر"
+        },
+        "base_url": {
+            "type": "string",
+            "description": "نشانی پایه سرویس"
+        },
+        "model": {
+            "type": "string",
+            "description": "نام مدل"
+        },
+        "api_key_enc": {
+            "type": "string",
+            "description": "کلید API رمزنگاری‌شده"
+        },
+        "auth_username": {
+            "type": "string",
+            "description": "نام کاربری (برای حرف)"
+        },
+        "auth_password_enc": {
+            "type": "string",
+            "description": "رمز عبور رمزنگاری‌شده (برای حرف)"
+        },
+        "diarization": {
+            "type": "boolean",
+            "description": "فعال بودن تفکیک گوینده"
+        },
+        "extra_json": {
+            "type": "string",
+            "description": "تنظیمات تکمیلی به شکل JSON"
+        },
+        "last_test_ok": {
+            "type": "boolean",
+            "description": "نتیجه آخرین تست اتصال"
+        },
+        "last_test_at": {
+            "type": "string",
+            "description": "زمان آخرین تست اتصال به UTC"
+        },
+        "last_test_message": {
+            "type": "string",
+            "description": "پیام آخرین تست اتصال"
+        }
+    },
+    "required": [
+        "organization_id",
+        "kind",
+        "provider_key"
+    ]
+}

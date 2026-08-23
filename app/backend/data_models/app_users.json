@@ -1,0 +1,73 @@
+{
+    "title": "app_users",
+    "type": "object",
+    "description": "کاربران احراز هویت مستقل سامانه (هر کاربر متعلق به یک سازمان/مستأجر)",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "شناسه"
+        },
+        "organization_id": {
+            "type": "integer",
+            "description": "شناسه سازمان"
+        },
+        "username": {
+            "type": "string",
+            "description": "نام کاربری یکتا (پیش‌فرض شماره موبایل)"
+        },
+        "password_hash": {
+            "type": "string",
+            "description": "هش رمز عبور"
+        },
+        "first_name": {
+            "type": "string",
+            "description": "نام"
+        },
+        "last_name": {
+            "type": "string",
+            "description": "نام خانوادگی"
+        },
+        "mobile": {
+            "type": "string",
+            "description": "شماره موبایل"
+        },
+        "email": {
+            "type": "string",
+            "description": "ایمیل"
+        },
+        "national_id": {
+            "type": "string",
+            "description": "کد ملی"
+        },
+        "gender": {
+            "type": "string",
+            "description": "male یا female"
+        },
+        "role": {
+            "type": "string",
+            "description": "admin | secretary | member"
+        },
+        "status": {
+            "type": "string",
+            "description": "active | disabled"
+        },
+        "must_change_password": {
+            "type": "boolean",
+            "description": "الزام تغییر رمز در ورود بعدی"
+        },
+        "last_login_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "آخرین ورود"
+        }
+    },
+    "required": [
+        "organization_id",
+        "username",
+        "password_hash",
+        "first_name",
+        "last_name",
+        "mobile",
+        "role"
+    ]
+}

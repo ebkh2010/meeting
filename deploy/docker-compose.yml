@@ -1,0 +1,153 @@
+# بستهٔ اجرای مستقل «ویدارا - نسخه جلسات»
+#
+# قواعد این چیدمان:
+#   * تنها سرویس منتشرشده روی اینترنت، `proxy` است و فقط پورت‌های ۸۰ و ۴۴۳ را باز می‌کند.
+#   * پایگاه داده، MinIO، دروازهٔ ذخیره‌سازی، بک‌اند و فرانت هیچ پورتی روی میزبان باز نمی‌کنند.
+#   * دادهٔ ماندگار فقط در volume هاست: پایگاه داده، فایل‌های MinIO و گواهی‌های SSL.
+#   * همهٔ مقادیر حساس از فایل `.env` خوانده می‌شوند و هیچ پیش‌فرض قابل حدسی ندارند.
+
+name: vidara-meetings
+
+x-common: &common
+  restart: unless-stopped
+  networks: [internal]
+
+services:
+  db:
+    <<: *common
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?متغیر POSTGRES_DB تنظیم نشده است}
+      POSTGRES_USER: ${POSTGRES_USER:?متغیر POSTGRES_USER تنظیم نشده است}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?متغیر POSTGRES_PASSWORD تنظیم نشده است}
+      TZ: ${TZ:-Asia/Tehran}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
+
+  # فضای ذخیره‌سازی شیئی محلی؛ هرگز مستقیم منتشر نمی‌شود و فقط از طریق proxy دیده می‌شود.
+  minio:
+    <<: *common
+    # نسخهٔ قفل‌شده برای تکرارپذیری؛ هنگام به‌روزرسانی آگاهانه تغییر دهید.
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?متغیر MINIO_ROOT_USER تنظیم نشده است}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?متغیر MINIO_ROOT_PASSWORD تنظیم نشده است}
+      MINIO_BROWSER: "off"
+      TZ: ${TZ:-Asia/Tehran}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  # دروازهٔ ذخیره‌سازی: قرارداد ObjectStorage پروژه را بدون تغییر کد بک‌اند روی MinIO پیاده می‌کند.
+  oss-gateway:
+    <<: *common
+    build:
+      context: ./oss-gateway
+    environment:
+      OSS_API_KEY: ${OSS_API_KEY:?متغیر OSS_API_KEY تنظیم نشده است}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_INTERNAL_URL: http://minio:9000
+      MINIO_PUBLIC_URL: ${STORAGE_PUBLIC_URL:?متغیر STORAGE_PUBLIC_URL تنظیم نشده است}
+      PRESIGN_EXPIRES: ${PRESIGN_EXPIRES:-3600}
+      TZ: ${TZ:-Asia/Tehran}
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  backend:
+    <<: *common
+    build:
+      context: ../app/backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?متغیر JWT_SECRET_KEY تنظیم نشده است}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      OSS_SERVICE_URL: http://oss-gateway:9000
+      OSS_API_KEY: ${OSS_API_KEY}
+      PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-}
+      PYTHON_BACKEND_URL: ${APP_PUBLIC_URL:?متغیر APP_PUBLIC_URL تنظیم نشده است}
+      ENVIRONMENT: production
+      IS_LAMBDA: "false"
+      DEBUG: "false"
+      # فقط same-origin؛ اگر لازم شد منشأ دیگری اضافه کنید (کاما جدا)
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      # کارهای AI نیمه‌کارهٔ جا مانده از ری‌استارت را «شکست‌خورده» می‌کند تا قابل retry شوند
+      RECOVER_ORPHAN_JOBS: ${RECOVER_ORPHAN_JOBS:-1}
+      TZ: ${TZ:-Asia/Tehran}
+    volumes:
+      - backend_logs:/srv/backend/logs
+    depends_on:
+      db:
+        condition: service_healthy
+      oss-gateway:
+        condition: service_started
+
+  frontend:
+    <<: *common
+    build:
+      context: ../app/frontend
+    environment:
+      TZ: ${TZ:-Asia/Tehran}
+
+  proxy:
+    <<: *common
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      # پورت storage: بدون دامنه = ۸۴۴۳ (دسترسی مستقیم با IP)؛
+      # با دامنه و SSL آن را ۴۴۳ بگذارید تا روی همان پورت اپ بنشیند.
+      - "${STORAGE_PORT:-8443}:${STORAGE_PORT:-8443}"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?متغیر APP_DOMAIN تنظیم نشده است}
+      STORAGE_DOMAIN: ${STORAGE_DOMAIN:?متغیر STORAGE_DOMAIN تنظیم نشده است}
+      STORAGE_PORT: ${STORAGE_PORT:-8443}
+      MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-2048m}
+      TZ: ${TZ:-Asia/Tehran}
+    entrypoint: ["/bin/sh", "/etc/nginx/entrypoint.sh"]
+    volumes:
+      - ./nginx/entrypoint.sh:/etc/nginx/entrypoint.sh:ro
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - letsencrypt:/etc/letsencrypt
+      - certbot_webroot:/var/www/certbot
+    depends_on:
+      - backend
+      - frontend
+      - minio
+
+  # تمدید خودکار گواهی؛ صدور اولیه با اسکریپت نصب انجام می‌شود.
+  certbot:
+    <<: *common
+    image: certbot/certbot:v3.3.0
+    entrypoint: >
+      /bin/sh -c "trap exit TERM;
+      while :; do
+        certbot renew --webroot --webroot-path /var/www/certbot --quiet;
+        sleep 12h & wait $${!};
+      done"
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot_webroot:/var/www/certbot
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  db_data:
+  minio_data:
+  letsencrypt:
+  certbot_webroot:
+  backend_logs:

@@ -1,0 +1,37 @@
+{
+    "title": "audit_logs",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer"
+        },
+        "organization_id": {
+            "type": "integer"
+        },
+        "actor_user_id": {
+            "type": "string"
+        },
+        "actor_name": {
+            "type": "string"
+        },
+        "actor_role": {
+            "type": "string"
+        },
+        "action": {
+            "type": "string"
+        },
+        "entity_type": {
+            "type": "string"
+        },
+        "entity_id": {
+            "type": "integer"
+        },
+        "detail": {
+            "type": "string"
+        }
+    },
+    "required": [
+        "organization_id",
+        "action"
+    ]
+}

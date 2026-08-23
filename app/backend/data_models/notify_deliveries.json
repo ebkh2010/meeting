@@ -1,0 +1,56 @@
+{
+    "title": "notify_deliveries",
+    "type": "object",
+    "description": "گزارش ارسال اعلان دعوت جلسه از کانال ایمیل و پیامک",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "شناسه"
+        },
+        "organization_id": {
+            "type": "integer",
+            "description": "شناسه سازمان"
+        },
+        "meeting_id": {
+            "type": "integer",
+            "description": "شناسه جلسه"
+        },
+        "membership_id": {
+            "type": "integer",
+            "description": "شناسه عضویت گیرنده"
+        },
+        "channel": {
+            "type": "string",
+            "description": "sms | email"
+        },
+        "recipient": {
+            "type": "string",
+            "description": "شماره یا ایمیل گیرنده"
+        },
+        "recipient_name": {
+            "type": "string",
+            "description": "نام گیرنده"
+        },
+        "status": {
+            "type": "string",
+            "description": "sent | failed | skipped"
+        },
+        "provider_message_id": {
+            "type": "string",
+            "description": "شناسه پیام سرویس‌دهنده"
+        },
+        "error_message": {
+            "type": "string",
+            "description": "پیام خطا"
+        },
+        "body_preview": {
+            "type": "string",
+            "description": "خلاصه متن ارسال‌شده"
+        }
+    },
+    "required": [
+        "organization_id",
+        "channel",
+        "status"
+    ]
+}
