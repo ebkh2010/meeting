@@ -17,9 +17,12 @@ COPY bundle/bin/ffmpeg bundle/bin/ffprobe /usr/local/bin/
 COPY bundle/fonts/ /usr/share/fonts/truetype/
 RUN chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
 
+# نصب وابستگی‌ها کاملاً آفلاین از wheelهای باندل‌شده در .wheels/
+# (بدون هیچ وابستگی به PyPI یا آینه‌ها — مناسب سرورهای با شبکهٔ فیلترشده)
+COPY .wheels /opt/wheels
 COPY requirements.txt requirements.default ./
-RUN pip install --no-cache-dir -i https://mirror-pypi.runflare.com/simple -r requirements.txt \
-    && pip install --no-cache-dir -i https://mirror-pypi.runflare.com/simple -r requirements.default
+RUN pip install --no-index --find-links /opt/wheels -r requirements.txt \
+    && pip install --no-index --find-links /opt/wheels -r requirements.default
 
 COPY . /srv/backend
 

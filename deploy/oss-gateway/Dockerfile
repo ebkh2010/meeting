@@ -9,8 +9,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /srv
 
+# نصب بسته‌ها کاملاً آفلاین از wheelهای باندل‌شده (بدون PyPI/آینه)
+COPY .wheels /opt/wheels
 COPY requirements.txt /srv/requirements.txt
-RUN pip install --no-cache-dir -i https://mirror-pypi.runflare.com/simple -r /srv/requirements.txt
+RUN pip install --no-index --find-links /opt/wheels -r /srv/requirements.txt
 
 COPY app.py /srv/app.py
 
