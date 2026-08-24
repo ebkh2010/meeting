@@ -73,6 +73,8 @@ export interface AppUser {
   full_name: string;
   mobile: string;
   email: string;
+  email_verified?: boolean;
+  mobile_verified?: boolean;
   national_id: string;
   gender: string;
   gender_label: string;
@@ -176,6 +178,19 @@ export interface MemberOption {
   mobile?: string;
 }
 
+export interface VerifyRequestResult {
+  ok: boolean;
+  already_verified?: boolean;
+  detail?: string;
+  expires_in_seconds?: number;
+  cooldown_seconds?: number;
+}
+
+export interface VerifyConfirmResult {
+  ok: boolean;
+  detail: string;
+}
+
 /* ------------------------------------------------------------------ */
 /* توابع API                                                           */
 /* ------------------------------------------------------------------ */
@@ -214,6 +229,26 @@ export const authApi = {
   },
 
   me: () => call<MePayload>(`${BASE}/me`),
+
+  /** ویرایش مشخصات خودِ کاربر — برای همهٔ نقش‌ها (مدیر، دبیر، عضو) باز است. */
+  updateMe: (payload: Record<string, unknown>) =>
+    call<AppUser>(`${BASE}/me`, 'PATCH', payload),
+
+  /** درخواست کد تأیید ایمیل؛ کد به ایمیل ثبت‌شدهٔ کاربر ارسال می‌شود. */
+  requestEmailCode: () =>
+    call<VerifyRequestResult>(`${BASE}/verify/email/request`, 'POST', {}),
+
+  /** تأیید ایمیل با کد ۶ رقمی ارسال‌شده. */
+  confirmEmailCode: (code: string) =>
+    call<VerifyConfirmResult>(`${BASE}/verify/email/confirm`, 'POST', { code }),
+
+  /** درخواست کد تأیید موبایل؛ کد با پیامک ارسال می‌شود. */
+  requestMobileCode: () =>
+    call<VerifyRequestResult>(`${BASE}/verify/mobile/request`, 'POST', {}),
+
+  /** تأیید شمارهٔ موبایل با کد ۶ رقمی ارسال‌شده. */
+  confirmMobileCode: (code: string) =>
+    call<VerifyConfirmResult>(`${BASE}/verify/mobile/confirm`, 'POST', { code }),
 
   /** سازمان‌هایی که کاربر جاری در آن‌ها حساب فعال دارد (برای تغییر سازمان). */
   myOrganizations: () =>

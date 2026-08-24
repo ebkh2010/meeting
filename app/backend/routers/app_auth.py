@@ -5,7 +5,10 @@
 * ``POST /api/v1/app-auth/register`` — ثبت‌نام مدیر + ساخت سازمان اختصاصی.
 * ``POST /api/v1/app-auth/login`` — ورود با نام کاربری و رمز عبور، صدور توکن.
 * ``GET  /api/v1/app-auth/me`` — پروفایل کاربر جاری.
+* ``PATCH /api/v1/app-auth/me`` — ویرایش مشخصات توسط خود کاربر (همهٔ نقش‌ها).
 * ``POST /api/v1/app-auth/change-password`` — تغییر رمز عبور توسط خود کاربر.
+* ``POST /api/v1/app-auth/verify/email/*`` — تأیید ایمیل با کد یکبارمصرف.
+* ``POST /api/v1/app-auth/verify/mobile/*`` — تأیید موبایل با کد یکبارمصرف (پیامک).
 * ``GET/POST/PATCH /api/v1/app-auth/users`` — مدیریت کاربران توسط مدیر سازمان.
 
 قاعدهٔ اعتبارنامهٔ پیش‌فرض کاربران ساخته‌شده توسط مدیر:
@@ -28,6 +31,8 @@ from models.app_users import App_users
 from models.memberships import Memberships
 from models.organizations import Organizations
 from services import app_auth
+from services import notify_channels as channels
+from services import verification
 from services.ai_providers import ensure_defaults
 from services.notify_channels import get_or_create_settings
 
@@ -64,6 +69,21 @@ class SwitchOrganizationIn(BaseModel):
 class ChangePasswordIn(BaseModel):
     current_password: str
     new_password: str
+
+
+class MeUpdateIn(BaseModel):
+    """ویرایش مشخصات خودِ کاربر — برای همهٔ نقش‌ها (مدیر، دبیر، عضو) باز است."""
+
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    mobile: Optional[str] = None
+    email: Optional[str] = None
+    national_id: Optional[str] = None
+    gender: Optional[str] = None
+
+
+class VerifyConfirmIn(BaseModel):
+    code: str = Field(..., min_length=4, max_length=8, description="کد ۶ رقمی ارسال‌شده")
 
 
 class UserIn(BaseModel):
@@ -245,7 +265,216 @@ async def me(
     return payload
 
 
-@router.get("/organizations")
+@router.patch("/me")
+async def update_me(
+    data: MeUpdateIn,
+    principal: app_auth.AppPrincipal = Depends(get_app_principal),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """ویرایش مشخصات خودِ کاربر — در هر زمان و برای همهٔ نقش‌ها باز است.
+
+    تغییر ایمیل یا موبایل، وضعیت تأیید آن را باطل می‌کند تا کاربر با کد
+    یکبارمصرف، نشانی جدید را تأیید کند. نقش و وضعیت حساب از اینجا قابل تغییر
+    نیستند (فقط مدیر سازمان از بخش کاربران).
+    """
+    app_user = await app_auth.load_app_user(db, principal.app_user_id)
+
+    if data.first_name is not None:
+        app_user.first_name = data.first_name.strip() or app_user.first_name
+    if data.last_name is not None:
+        app_user.last_name = data.last_name.strip() or app_user.last_name
+    if data.national_id is not None and data.national_id.strip():
+        app_user.national_id = app_auth.normalize_national_id(data.national_id)
+    if data.gender is not None and data.gender.strip():
+        app_user.gender = app_auth.normalize_gender(data.gender)
+
+    if data.mobile is not None and data.mobile.strip():
+        new_mobile = app_auth.normalize_mobile(data.mobile)
+        if new_mobile != (app_user.mobile or ""):
+            existing = await app_auth.find_existing_account(
+                db,
+                new_mobile,
+                new_mobile,
+                exclude_id=app_user.id,
+                organization_id=principal.organization_id,
+            )
+            if existing is not None:
+                raise app_auth.conflict(
+                    "این شمارهٔ موبایل در همین سازمان به حساب دیگری تعلق دارد."
+                )
+            app_user.mobile = new_mobile
+            app_user.mobile_verified = False
+
+    if data.email is not None:
+        new_email = app_auth.normalize_email(data.email)
+        if new_email != (app_user.email or ""):
+            app_user.email = new_email
+            app_user.email_verified = False
+
+    membership = await app_auth.membership_of(db, app_user)
+    if membership is not None:
+        membership.full_name = app_auth.full_name_of(app_user.first_name, app_user.last_name)
+        membership.email = app_user.email or ""
+
+    payload = app_auth.user_payload(app_user, int(membership.id) if membership else None)
+    await db.commit()
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# تأیید ایمیل و موبایل با کد یکبارمصرف
+# ---------------------------------------------------------------------------
+
+
+async def _issue_and_send(
+    db: AsyncSession,
+    principal: app_auth.AppPrincipal,
+    app_user: App_users,
+    purpose: str,
+    target: str,
+    subject: str,
+    text_body: str,
+    html_body: str,
+    sms_text: str,
+) -> Dict[str, Any]:
+    """صدور کد + ارسال با کانال مناسب (ایمیل/پیامک) + ذخیره؛ خطاها به ۴۰۰ تبدیل می‌شوند."""
+    try:
+        code = await verification.issue_code(db, app_user, purpose, target)
+    except verification.VerificationError as exc:
+        raise app_auth.bad_request(str(exc))
+
+    settings_row = await get_or_create_settings(db, principal.organization_id)
+    if purpose == verification.PURPOSE_EMAIL:
+        result = await channels.send_email(
+            settings_row,
+            to_email=target,
+            subject=subject,
+            text_body=text_body.replace("{code}", code),
+            html_body=html_body.replace("{code}", code),
+        )
+        channel_label = "ایمیل"
+    else:
+        result = await channels.send_sms(
+            settings_row,
+            receptor=target,
+            message=sms_text.replace("{code}", code),
+            client_reference_id=f"verify-{int(app_user.id)}",
+        )
+        channel_label = "پیامک"
+
+    if not result.ok:
+        raise app_auth.bad_request(f"ارسال {channel_label} ناموفق بود: {result.error}")
+    await db.commit()
+    return {
+        "ok": True,
+        "detail": f"کد تأیید به {target} ارسال شد.",
+        "expires_in_seconds": verification.CODE_TTL_SECONDS,
+        "cooldown_seconds": verification.RESEND_COOLDOWN_SECONDS,
+    }
+
+
+@router.post("/verify/email/request")
+async def request_email_verification(
+    principal: app_auth.AppPrincipal = Depends(get_app_principal),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """درخواست کد تأیید ایمیل؛ کد به ایمیل ثبت‌شدهٔ کاربر ارسال می‌شود."""
+    app_user = await app_auth.load_app_user(db, principal.app_user_id)
+    email = (app_user.email or "").strip()
+    if not email:
+        raise app_auth.bad_request("ابتدا ایمیل خود را در مشخصات حساب ذخیره کنید.")
+    if app_user.email_verified:
+        return {"ok": True, "already_verified": True, "detail": "ایمیل شما قبلاً تأیید شده است."}
+    return await _issue_and_send(
+        db,
+        principal,
+        app_user,
+        verification.PURPOSE_EMAIL,
+        email,
+        subject="کد تأیید ایمیل — ویدارا - نسخه جلسات",
+        text_body=(
+            f"سلام {app_user.first_name}؛\n"
+            "کد تأیید ایمیل شما: {code}\n"
+            "این کد تا ۱۰ دقیقه معتبر است.\n"
+            "اگر این درخواست از سوی شما نبوده است، این پیام را نادیده بگیرید."
+        ),
+        html_body=(
+            '<div dir="rtl" style="font-family:Tahoma,Arial,sans-serif;color:#0f172a">'
+            f"<h3>سلام {app_user.first_name}؛</h3>"
+            '<p>کد تأیید ایمیل شما:</p>'
+            '<p style="font-size:28px;font-weight:700;letter-spacing:6px;direction:ltr">{code}</p>'
+            "<p>این کد تا ۱۰ دقیقه معتبر است.</p>"
+            "<p>اگر این درخواست از سوی شما نبوده است، این پیام را نادیده بگیرید.</p></div>"
+        ),
+        sms_text="",
+    )
+
+
+@router.post("/verify/email/confirm")
+async def confirm_email_verification(
+    data: VerifyConfirmIn,
+    principal: app_auth.AppPrincipal = Depends(get_app_principal),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """تأیید ایمیل کاربر با کد ارسال‌شده."""
+    app_user = await app_auth.load_app_user(db, principal.app_user_id)
+    email = (app_user.email or "").strip()
+    if not email:
+        raise app_auth.bad_request("ابتدا ایمیل خود را در مشخصات حساب ذخیره کنید.")
+    ok, message = await verification.confirm_code(
+        db, app_user, verification.PURPOSE_EMAIL, email, data.code
+    )
+    if not ok:
+        raise app_auth.bad_request(message)
+    app_user.email_verified = True
+    await db.commit()
+    return {"ok": True, "detail": "ایمیل شما با موفقیت تأیید شد."}
+
+
+@router.post("/verify/mobile/request")
+async def request_mobile_verification(
+    principal: app_auth.AppPrincipal = Depends(get_app_principal),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """درخواست کد تأیید موبایل؛ کد با پیامک به شمارهٔ ثبت‌شده ارسال می‌شود."""
+    app_user = await app_auth.load_app_user(db, principal.app_user_id)
+    mobile = (app_user.mobile or "").strip()
+    if not mobile:
+        raise app_auth.bad_request("شمارهٔ موبایل ثبت نشده است.")
+    if app_user.mobile_verified:
+        return {"ok": True, "already_verified": True, "detail": "موبایل شما قبلاً تأیید شده است."}
+    return await _issue_and_send(
+        db,
+        principal,
+        app_user,
+        verification.PURPOSE_MOBILE,
+        mobile,
+        subject="",
+        text_body="",
+        html_body="",
+        sms_text="کد تأیید ویدارا: {code}\nاین کد تا ۱۰ دقیقه معتبر است.",
+    )
+
+
+@router.post("/verify/mobile/confirm")
+async def confirm_mobile_verification(
+    data: VerifyConfirmIn,
+    principal: app_auth.AppPrincipal = Depends(get_app_principal),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """تأیید شمارهٔ موبایل کاربر با کد ارسال‌شده."""
+    app_user = await app_auth.load_app_user(db, principal.app_user_id)
+    mobile = (app_user.mobile or "").strip()
+    if not mobile:
+        raise app_auth.bad_request("شمارهٔ موبایل ثبت نشده است.")
+    ok, message = await verification.confirm_code(
+        db, app_user, verification.PURPOSE_MOBILE, mobile, data.code
+    )
+    if not ok:
+        raise app_auth.bad_request(message)
+    app_user.mobile_verified = True
+    await db.commit()
+    return {"ok": True, "detail": "شمارهٔ موبایل شما با موفقیت تأیید شد."}
 async def my_organizations(
     principal: app_auth.AppPrincipal = Depends(get_app_principal),
     db: AsyncSession = Depends(get_db),
@@ -409,9 +638,14 @@ async def update_user(
         app_user.last_name = data.last_name.strip() or app_user.last_name
     if data.mobile is not None and data.mobile.strip():
         new_mobile = app_auth.normalize_mobile(data.mobile)
+        if new_mobile != (app_user.mobile or ""):
+            app_user.mobile_verified = False
         app_user.mobile = new_mobile
     if data.email is not None:
-        app_user.email = app_auth.normalize_email(data.email)
+        new_email = app_auth.normalize_email(data.email)
+        if new_email != (app_user.email or ""):
+            app_user.email_verified = False
+        app_user.email = new_email
     if data.national_id is not None and data.national_id.strip():
         app_user.national_id = app_auth.normalize_national_id(data.national_id)
     if data.gender is not None and data.gender.strip():

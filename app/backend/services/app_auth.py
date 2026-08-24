@@ -563,6 +563,8 @@ def user_payload(app_user: App_users, membership_id: Optional[int] = None) -> Di
         "full_name": full_name_of(app_user.first_name, app_user.last_name),
         "mobile": app_user.mobile or "",
         "email": app_user.email or "",
+        "email_verified": bool(app_user.email_verified),
+        "mobile_verified": bool(app_user.mobile_verified),
         "national_id": app_user.national_id or "",
         "gender": app_user.gender or "",
         "gender_label": GENDER_LABELS.get(app_user.gender or "", ""),

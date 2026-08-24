@@ -33,6 +33,19 @@ const EMPTY_FORM = {
   role: 'member',
 };
 
+/** نشان کوچک «تأیید شده» کنار موبایل/ایمیل کاربر. */
+function VerifyMark({ ok }: { ok?: boolean }) {
+  if (!ok) return null;
+  return (
+    <span
+      title="تأیید شده"
+      className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] text-emerald-700"
+    >
+      ✓
+    </span>
+  );
+}
+
 export default function UsersPanel() {
   const [items, setItems] = useState<AppUser[]>([]);
   const [form, setForm] = useState({ ...EMPTY_FORM });
@@ -232,14 +245,16 @@ export default function UsersPanel() {
                   <dl className="space-y-1 text-xs">
                     <div className="flex items-center justify-between gap-2">
                       <dt className="text-muted-foreground">موبایل</dt>
-                      <dd dir="ltr" className="truncate">
+                      <dd dir="ltr" className="flex items-center gap-1 truncate">
                         {user.mobile || '—'}
+                        <VerifyMark ok={user.mobile_verified} />
                       </dd>
                     </div>
                     <div className="flex items-center justify-between gap-2">
                       <dt className="text-muted-foreground">ایمیل</dt>
-                      <dd dir="ltr" className="truncate">
+                      <dd dir="ltr" className="flex items-center gap-1 truncate">
                         {user.email || '—'}
+                        <VerifyMark ok={user.email_verified} />
                       </dd>
                     </div>
                   </dl>
@@ -312,8 +327,18 @@ export default function UsersPanel() {
                   <TableRow key={user.id}>
                     <TableCell className="font-medium">{user.full_name}</TableCell>
                     <TableCell>{user.username}</TableCell>
-                    <TableCell>{user.mobile || '—'}</TableCell>
-                    <TableCell>{user.email || '—'}</TableCell>
+                    <TableCell>
+                      <span className="flex items-center gap-1">
+                        {user.mobile || '—'}
+                        <VerifyMark ok={user.mobile_verified} />
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="flex items-center gap-1">
+                        {user.email || '—'}
+                        <VerifyMark ok={user.email_verified} />
+                      </span>
+                    </TableCell>
                     <TableCell>
                       <Select
                         value={user.role}

@@ -20,6 +20,8 @@ class App_users(Base):
     role = Column(String, nullable=False)
     status = Column(String, nullable=True)
     must_change_password = Column(Boolean, nullable=True)
+    email_verified = Column(Boolean, nullable=True, default=False)
+    mobile_verified = Column(Boolean, nullable=True, default=False)
     last_login_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
