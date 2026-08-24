@@ -24,6 +24,7 @@ import asyncio
 import json
 import logging
 import math
+import os
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -270,8 +271,54 @@ async def _download_media(url: str) -> Tuple[str, bytes]:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# اعتبارنامهٔ پیش‌فرض سرویس «حرف» برای سازمان‌های تازه‌ثبت‌نام‌کرده
+# ---------------------------------------------------------------------------
+#
+# هر سازمان به محض ثبت‌نام، رونویسی «حرف» با این اعتبارنامه فعال است و بدون
+# هیچ پیکربندی کار می‌کند. مقادیر از متغیرهای محیطی خوانده می‌شوند؛ در
+# نبودشان از همین مقادیر پیش‌فرض استفاده می‌شود.
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+DEFAULT_HARF_ENABLED = _env_flag("DEFAULT_HARF_ENABLED", True)
+DEFAULT_HARF_AUTH_USERNAME = os.environ.get("DEFAULT_HARF_AUTH_USERNAME", "samim2")
+DEFAULT_HARF_AUTH_PASSWORD = os.environ.get("DEFAULT_HARF_AUTH_PASSWORD", "samim2_14050527")
+
+
+def _apply_default_harf(row: Org_ai_providers) -> None:
+    """فعال‌سازی «حرف» با اعتبارنامهٔ پیش‌فرض روی ردیفی که هنوز پیکربندی نشده است."""
+    row.enabled = DEFAULT_HARF_ENABLED
+    row.auth_username = DEFAULT_HARF_AUTH_USERNAME
+    row.auth_password_enc = encrypt_secret(DEFAULT_HARF_AUTH_PASSWORD)
+
+
+def _harf_unconfigured(row: Org_ai_providers) -> bool:
+    """ردیف «حرف» بدون هیچ اعتبارنامه‌ای که مدیر هم صریحاً غیرفعالش نکرده است.
+
+    اگر مدیر سرویس را خاموش کرده باشد (``enabled=False``) یا نام کاربری/رمز
+    ثبت کرده باشد، پیش‌فرض روی آن اعمال نمی‌شود.
+    """
+    if row.kind != KIND_STT or (row.provider_key or "") != "harf":
+        return False
+    if row.enabled is False:
+        return False
+    return not ((row.auth_username or "").strip() or (row.auth_password_enc or "").strip())
+
+
 async def ensure_defaults(db: AsyncSession, organization_id: int) -> List[Org_ai_providers]:
-    """ساخت ردیف‌های پیش‌فرض تنظیمات برای سازمان (یک‌بار، بی‌اثر در فراخوان دوباره)."""
+    """ساخت ردیف‌های پیش‌فرض تنظیمات برای سازمان (یک‌بار، بی‌اثر در فراخوان دوباره).
+
+    ردیف سرویس «حرف» با اعتبارنامهٔ پیش‌فرض ساخته می‌شود تا رونویسی برای هر
+    سازمانِ تازه‌ثبت‌نام‌کرده بدون هیچ پیکربندی فعال باشد؛ ردیف‌های «حرف»
+    دست‌نخوردهٔ قدیمی (بدون نام کاربری و رمز) هم به همین پیش‌فرض منتقل می‌شوند.
+    """
     result = await db.execute(
         select(Org_ai_providers).where(Org_ai_providers.organization_id == organization_id)
     )
@@ -300,10 +347,18 @@ async def ensure_defaults(db: AsyncSession, organization_id: int) -> List[Org_ai
                 last_test_at="",
                 last_test_message="",
             )
+            if entry["provider_key"] == "harf":
+                _apply_default_harf(row)
             db.add(row)
             rows.append(row)
             created = True
-    if created:
+    # پشتیبانی از ردیف‌های «حرف» قدیمی که بدون اعتبارنامه ساخته شده‌اند
+    changed = False
+    for row in rows:
+        if _harf_unconfigured(row):
+            _apply_default_harf(row)
+            changed = True
+    if created or changed:
         await db.flush()
     rows.sort(key=lambda row: (row.kind, int(row.priority or 99), int(row.id or 0)))
     return rows
@@ -797,6 +852,10 @@ async def run_transcription(
     duration_hint_seconds: int = 0,
 ) -> Tuple[TranscriptionResult, List[Dict[str, Any]]]:
     """رونویسی با زنجیرهٔ تأمین‌کنندگان سازمان و بازگشت به آداپتر پلتفرم."""
+    # اطمینان از وجود ردیف‌های پیش‌فرض (و اعتبارنامهٔ پیش‌فرض «حرف») پیش از
+    # خواندن تأمین‌کنندگان فعال، تا رونویسی برای سازمان‌های تازه‌ثبت‌نام‌کرده
+    # بدون باز کردن صفحهٔ تنظیمات هم کار کند.
+    await ensure_defaults(db, organization_id)
     attempts: List[Dict[str, Any]] = []
     rows = await enabled_providers(db, organization_id, KIND_STT)
     for row in rows:

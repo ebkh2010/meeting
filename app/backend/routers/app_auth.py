@@ -28,6 +28,7 @@ from models.app_users import App_users
 from models.memberships import Memberships
 from models.organizations import Organizations
 from services import app_auth
+from services.ai_providers import ensure_defaults
 from services.notify_channels import get_or_create_settings
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,7 @@ async def register(data: RegisterIn, db: AsyncSession = Depends(get_db)) -> Dict
         must_change_password=False,
     )
     await get_or_create_settings(db, int(organization.id))
+    await ensure_defaults(db, int(organization.id))
     payload = await _session_payload(db, app_user)
     await db.commit()
     return payload
