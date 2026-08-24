@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import smtplib
 import ssl
 from dataclasses import dataclass
@@ -33,7 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.org_notify_settings import Org_notify_settings
-from services.app_auth import GENDER_SALUTATION, decrypt_secret
+from services.app_auth import GENDER_SALUTATION, decrypt_secret, encrypt_secret
 
 logger = logging.getLogger(__name__)
 
@@ -137,29 +138,94 @@ def parse_iso(value: Any) -> Optional[datetime]:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# تنظیمات پیش‌فرض SMTP برای سازمان‌های تازه‌ثبت‌نام‌کرده
+# ---------------------------------------------------------------------------
+#
+# هر سازمان به محض ثبت‌نام، بدون هیچ پیکربندی‌ای از این تنظیمات برای ارسال
+# ایمیل استفاده می‌کند. مقادیر از متغیرهای محیطی خوانده می‌شوند تا در هر
+# استقرار قابل تغییر باشند؛ در نبودشان از همین مقادیر پیش‌فرض استفاده می‌شود.
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("مقدار نامعتبر %s=%r؛ پیش‌فرض %d استفاده می‌شود.", name, raw, default)
+        return default
+
+
+DEFAULT_SMTP_ENABLED = _env_bool("DEFAULT_SMTP_ENABLED", True)
+DEFAULT_SMTP_HOST = os.environ.get("DEFAULT_SMTP_HOST", "mail.samimsolutions.com")
+DEFAULT_SMTP_PORT = _env_int("DEFAULT_SMTP_PORT", 465)
+DEFAULT_SMTP_USERNAME = os.environ.get("DEFAULT_SMTP_USERNAME", "noreply@samimsolutions.com")
+DEFAULT_SMTP_PASSWORD = os.environ.get("DEFAULT_SMTP_PASSWORD", "")
+DEFAULT_SMTP_USE_TLS = _env_bool("DEFAULT_SMTP_USE_TLS", False)
+DEFAULT_SMTP_USE_SSL = _env_bool("DEFAULT_SMTP_USE_SSL", True)
+DEFAULT_SMTP_FROM_EMAIL = os.environ.get("DEFAULT_SMTP_FROM_EMAIL", "noreply@samimsolutions.com")
+DEFAULT_SMTP_FROM_NAME = os.environ.get("DEFAULT_SMTP_FROM_NAME", "ویدارا - نسخه جلسات")
+
+
+def _apply_default_smtp(row: Org_notify_settings) -> None:
+    """پر کردن تنظیمات SMTP پیش‌فرض روی رکوردی که هنوز پیکربندی نشده است."""
+    row.smtp_enabled = DEFAULT_SMTP_ENABLED
+    row.smtp_host = DEFAULT_SMTP_HOST
+    row.smtp_port = DEFAULT_SMTP_PORT
+    row.smtp_username = DEFAULT_SMTP_USERNAME
+    row.smtp_password_enc = encrypt_secret(DEFAULT_SMTP_PASSWORD)
+    row.smtp_use_tls = DEFAULT_SMTP_USE_TLS
+    row.smtp_use_ssl = DEFAULT_SMTP_USE_SSL
+    row.smtp_from_email = DEFAULT_SMTP_FROM_EMAIL
+    row.smtp_from_name = DEFAULT_SMTP_FROM_NAME
+
+
+def _smtp_configured(row: Org_notify_settings) -> bool:
+    """آیا سازمان تنظیمات SMTP خودش را انجام داده است؟
+
+    اگر مدیر، حتی برای غیرفعال‌سازی، تنظیمات را لمس کرده باشد (مثلاً میزبان
+    یا نام کاربری یا رمزی ثبت شده باشد)، پیش‌فرض روی آن اعمال نمی‌شود.
+    """
+    return bool(
+        row.smtp_enabled
+        or (row.smtp_host or "").strip()
+        or (row.smtp_username or "").strip()
+        or (row.smtp_password_enc or "").strip()
+    )
+
+
 async def get_or_create_settings(db: AsyncSession, organization_id: int) -> Org_notify_settings:
-    """خواندن idempotent تنظیمات اعلان سازمان؛ در نبود رکورد، پیش‌فرض ساخته می‌شود."""
+    """خواندن idempotent تنظیمات اعلان سازمان؛ در نبود رکورد، پیش‌فرض ساخته می‌شود.
+
+    سازمان‌هایی که هنوز هیچ تنظیمی انجام نداده‌اند (اعم از تازه‌ثبت‌نام‌کرده و
+    قدیمیِ دست‌نخورده) به‌صورت خودکار SMTP پیش‌فرض را دریافت می‌کنند تا ایمیل
+    بدون نیاز به پیکربندی ارسال شود.
+    """
     result = await db.execute(
         select(Org_notify_settings).where(Org_notify_settings.organization_id == organization_id)
     )
     row = result.scalars().first()
     if row is not None:
+        if not _smtp_configured(row):
+            _apply_default_smtp(row)
+            await db.flush()
         return row
     row = Org_notify_settings(
         organization_id=organization_id,
-        smtp_enabled=False,
-        smtp_host="",
-        smtp_port=587,
-        smtp_username="",
-        smtp_password_enc="",
-        smtp_use_tls=True,
-        smtp_use_ssl=False,
-        smtp_from_email="",
-        smtp_from_name="ویدارا - نسخه جلسات",
         sms_enabled=False,
         sms_api_key_enc="",
         sms_line_number="",
     )
+    _apply_default_smtp(row)
     db.add(row)
     await db.flush()
     return row
