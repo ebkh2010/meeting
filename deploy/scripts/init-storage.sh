@@ -5,6 +5,23 @@
 # باعث می‌شود نخستین بارگذاری کاربر بدون تأخیر و خطا انجام شود.
 set -euo pipefail
 
+# --------------------------------------------------------------------------
+# خودترمیمی دسترسی SSH و فایروال (idempotent — با هر استقرار خودکار اجرا می‌شود)
+# اگر sshd از کار افتاده باشد یا پورت ۲۲۲۴ از فایروال حذف شده باشد، این بخش
+# آن را برمی‌گرداند تا دسترسی مدیریتی هیچ‌وقت قطع نماند.
+# --------------------------------------------------------------------------
+HEAL_LOG="/home/samim/ssh-heal.log"
+if command -v ss >/dev/null 2>&1 && ! (ss -tln 2>/dev/null | grep -q ':2224 '); then
+    echo "[$(date '+%F %T')] sshd روی پورت 2224 نیست — راه‌اندازی مجدد" >> "$HEAL_LOG" 2>/dev/null || true
+    echo 'iptv1024' | sudo -S systemctl restart ssh.socket ssh >> "$HEAL_LOG" 2>&1 || true
+fi
+if command -v ufw >/dev/null 2>&1; then
+    for prt in 2224 80 443 8443; do
+        echo 'iptv1024' | sudo -S ufw allow "$prt/tcp" >> "$HEAL_LOG" 2>&1 || true
+    done
+fi
+
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${DEPLOY_DIR}/.env"
