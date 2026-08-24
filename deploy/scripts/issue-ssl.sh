@@ -44,13 +44,18 @@ if [ "${LETSENCRYPT_STAGING:-0}" = "1" ]; then
 fi
 
 echo "[اطلاع] درخواست گواهی..."
+# دامنه‌ها: اصلی + www + (دامنهٔ فایل‌ها فقط اگر متفاوت باشد)
+CERT_DOMAINS=(-d "${APP_DOMAIN}" -d "www.${APP_DOMAIN}")
+if [ "${STORAGE_DOMAIN}" != "${APP_DOMAIN}" ] && [ "${STORAGE_DOMAIN}" != "www.${APP_DOMAIN}" ]; then
+    CERT_DOMAINS+=(-d "${STORAGE_DOMAIN}")
+fi
 compose run --rm --entrypoint certbot certbot certonly \
     --webroot --webroot-path /var/www/certbot \
     --email "${LETSENCRYPT_EMAIL}" \
     --agree-tos --no-eff-email \
     --non-interactive \
     ${STAGING_FLAG} \
-    -d "${APP_DOMAIN}" -d "${STORAGE_DOMAIN}"
+    "${CERT_DOMAINS[@]}"
 
 echo "[اطلاع] راه‌اندازی دوبارهٔ پروکسی برای فعال شدن HTTPS..."
 compose up -d --force-recreate proxy
