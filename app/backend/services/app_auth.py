@@ -405,7 +405,10 @@ async def find_sibling_accounts(db: AsyncSession, app_user: App_users) -> list[A
     برگردانده می‌شوند. شمارهٔ موبایل و نام کاربری به‌عنوان کلید کمکی برای حساب‌های
     قدیمیِ بدون کد ملی استفاده می‌شوند و حساب‌هایی که کد ملی متفاوت (غیرخالی)
     دارند کنار گذاشته می‌شوند تا هم‌موبایلیِ تصادفی حساب‌ها را به هم وصل نکند.
-    برای هر سازمان تنها یک حساب برگردانده می‌شود.
+
+    **همهٔ** حساب‌ها برگردانده می‌شوند (بدون ادغام به‌ازای سازمان) تا سوییچ
+    بتواند حساب مقصد را با نام کاربریِ واردشده دقیق پیدا کند؛ ادغام برای نمایش
+    فهرست در لایهٔ روتر انجام می‌شود.
     """
     conditions = []
     national_id = (app_user.national_id or "").strip()
@@ -435,11 +438,7 @@ async def find_sibling_accounts(db: AsyncSession, app_user: App_users) -> list[A
 
     if all(int(row.id) != int(app_user.id) for row in rows):
         rows.append(app_user)
-
-    unique: Dict[int, App_users] = {}
-    for row in rows:
-        unique.setdefault(int(row.organization_id), row)
-    return list(unique.values())
+    return rows
 
 
 async def ensure_national_id_identity(

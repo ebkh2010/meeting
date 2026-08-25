@@ -545,11 +545,19 @@ async def my_organizations(
     principal: app_auth.AppPrincipal = Depends(get_app_principal),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    """سازمان\u200cهایی که کاربر جاری در آن\u200cها حساب فعال دارد (برای تغییر سازمان)."""
+    """سازمان‌هایی که کاربر جاری در آن‌ها حساب فعال دارد (برای تغییر فضای کاری).
+
+    هر سازمان یک بار در فهرست می‌آید؛ اگر شخص در یک سازمان چند حساب (مثلاً مدیر
+    و عضو) داشته باشد، تنها یک ورودی نمایش داده می‌شود ولی در سوییچ، با نام
+    کاربریِ واردشده به همان حسابِ موردنظر وارد می‌شود.
+    """
     app_user = await app_auth.load_app_user(db, principal.app_user_id)
     siblings = await app_auth.find_sibling_accounts(db, app_user)
-    items: List[Dict[str, Any]] = []
+    unique: Dict[int, Any] = {}
     for row in siblings:
+        unique.setdefault(int(row.organization_id), row)
+    items: List[Dict[str, Any]] = []
+    for row in unique.values():
         brief = await _organization_brief(db, row)
         brief["is_current"] = int(row.organization_id) == int(app_user.organization_id)
         items.append(brief)
