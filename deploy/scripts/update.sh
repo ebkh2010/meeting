@@ -38,7 +38,8 @@ compose up -d
 
 echo "[اطلاع] گام ۵: بررسی سلامت..."
 for _ in $(seq 1 60); do
-    if compose exec -T backend curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+    # ایمیج بک‌اند شامل curl نیست؛ بررسی سلامت با خودِ پایتون انجام می‌شود.
+    if compose exec -T backend python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status==200 else 1)" >/dev/null 2>&1; then
         echo "[موفق] به‌روزرسانی با موفقیت انجام شد."
         compose ps
         exit 0

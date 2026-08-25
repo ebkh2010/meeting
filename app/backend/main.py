@@ -16,6 +16,7 @@ from utils.logging_utils import cleanup_old_log_files
 
 # MODULE_IMPORTS_START
 from services.database import initialize_database, close_database
+from core.database import db_manager
 from services.mock_data import initialize_mock_data
 from services.auth import initialize_admin_user
 # MODULE_IMPORTS_END

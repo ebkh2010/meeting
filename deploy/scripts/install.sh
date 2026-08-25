@@ -115,7 +115,9 @@ bash "${SCRIPT_DIR}/init-storage.sh" || warn "آماده‌سازی باکت‌�
 log "بررسی سلامت بک‌اند (حداکثر ۱۸۰ ثانیه)..."
 HEALTHY=0
 for _ in $(seq 1 60); do
-    if compose exec -T backend curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+    # ایمیج بک‌اند (python:3.11-slim) شامل curl نیست؛ بررسی سلامت با خودِ پایتون
+    # انجام می‌شود تا به ابزار اضافه در ایمیج وابسته نباشد.
+    if compose exec -T backend python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status==200 else 1)" >/dev/null 2>&1; then
         HEALTHY=1
         break
     fi
