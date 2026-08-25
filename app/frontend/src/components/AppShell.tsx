@@ -2,10 +2,12 @@
  * پوستهٔ فضای کاری: راست‌به‌چپ، سایدبار راستِ جمع‌شونده (مانند دیپ‌سیک)، وضعیت
  * احراز هویت مستقل، سهمیه و اعلان‌ها.
  *
- * چیدمان دسکتاپ: همهٔ منوها (ناوبری، تغییر فضای کاری، حساب کاربری، سهمیه و
- * خروج) در سایدبار سمت راست جمع شده‌اند؛ با دکمهٔ کنار نوار بالا سایدبار به
- * حالت آیکونی جمع می‌شود و وضعیت آن در مرورگر نگه داشته می‌شود. در موبایل،
- * همان منوها داخل drawer سمت راست باز می‌شوند (side="right").
+ * چیدمان دسکتاپ: منوهای اصلی (داشبورد، جلسات، تنظیمات سازمان برای مدیر و
+ * «حساب کاربری» — ادغام «حساب من» و «تغییر رمز عبور») و تغییر فضای کاری در
+ * سایدبار سمت راست قرار دارند؛ بخش پایینی منو حذف شده و سهمیه و خروج به نوار
+ * بالا منتقل شده‌اند. سایدبار با دکمهٔ کنار نوار بالا به حالت آیکونی جمع می‌شود
+ * و وضعیت آن در مرورگر نگه داشته می‌شود. در موبایل، همان منوها داخل drawer سمت
+ * راست باز می‌شوند (side="right").
  *
  * احراز هویت کاملاً مستقل است: نشست از توکن ذخیره‌شده در مرورگر خوانده می‌شود و
  * در نبودِ نشست معتبر، کاربر به صفحهٔ ورود («/») هدایت می‌شود. صفحه‌ها با تابع
@@ -17,7 +19,6 @@ import {
   Bell,
   Building2,
   CalendarDays,
-  KeyRound,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -54,14 +55,6 @@ import AssistantPanel from '@/components/AssistantPanel';
 const BASE_NAV = [
   { to: '/dashboard', label: 'داشبورد', icon: LayoutDashboard },
   { to: '/meetings', label: 'جلسات', icon: CalendarDays },
-];
-
-/** میان‌بُرهای منوی کاربر؛ آیتم‌های مدیریتی فقط برای نقش مدیر سازمان. */
-const ACCOUNT_MENU = [
-  { to: '/account', label: 'حساب من', icon: UserCircle, adminOnly: false },
-  { to: '/account', label: 'تغییر رمز عبور', icon: KeyRound, adminOnly: false },
-  { to: '/settings?tab=users', label: 'مدیریت کاربران و نقش‌ها', icon: Building2, adminOnly: true },
-  { to: '/settings?tab=email', label: 'تنظیمات ارسال ایمیل و پیامک', icon: Settings2, adminOnly: true },
 ];
 
 const SIDEBAR_KEY = 'vidara.sidebar.collapsed';
@@ -341,7 +334,6 @@ export default function AppShell({ children }: AppShellProps) {
     isAdmin || (bootstrap.membership.role || '').trim().toLowerCase() === ROLE_SECRETARY;
   const unread = notifications.filter((item) => !item.is_read).length;
   const quota = bootstrap.quota;
-  const accountItems = ACCOUNT_MENU.filter((item) => !item.adminOnly || isAdmin);
   const quotaLabel = quota
     ? `سهمیهٔ رونویسی این ماه: ${toPersianDigits(quota.used_minutes)} از ${toPersianDigits(
         quota.limit_minutes,
@@ -375,24 +367,18 @@ export default function AppShell({ children }: AppShellProps) {
           active={location.pathname === '/settings'}
         />
       )}
-    </>
-  );
-
-  const accountBlock = (collapsed: boolean) => (
-    <>
-      {accountItems.map((item) => {
-        const Icon = item.icon;
-        return (
-          <SidebarLink
-            key={`${item.to}-${item.label}`}
-            to={item.to}
-            label={item.label}
-            icon={Icon}
-            collapsed={collapsed}
-            active={false}
-          />
-        );
-      })}
+      {/*
+        «حساب من» و «تغییر رمز عبور» در یک آیتم واحد به نام «حساب کاربری»
+        ادغام شده‌اند؛ بخش‌های «مدیریت کاربران» و «تنظیمات ایمیل/پیامک» هم از
+        منو حذف شده‌اند چون در زبانه‌های «تنظیمات سازمان» در دسترس‌اند.
+      */}
+      <SidebarLink
+        to="/account"
+        label="حساب کاربری"
+        icon={UserCircle}
+        collapsed={collapsed}
+        active={location.pathname === '/account'}
+      />
     </>
   );
 
@@ -448,11 +434,6 @@ export default function AppShell({ children }: AppShellProps) {
                 </Button>
               </nav>
 
-              <div className="space-y-1 border-t border-border p-3">
-                <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">حساب کاربری</p>
-                {accountBlock(false)}
-              </div>
-
               {quota && (
                 <div className="space-y-2 border-t border-border p-4 text-xs text-muted-foreground">
                   <p>{quotaLabel}</p>
@@ -488,7 +469,7 @@ export default function AppShell({ children }: AppShellProps) {
           <NotificationsMenu items={notifications} unread={unread} onMarkRead={handleMarkRead} />
         </div>
 
-        {/* نوار دسکتاپ: دکمهٔ جمع‌کردن سایدبار + نام فضا + نقش + اعلان */}
+        {/* نوار دسکتاپ: دکمهٔ جمع‌کردن سایدبار + نام فضا + سهمیه + نقش + اعلان + خروج */}
         <div className="hidden h-14 items-center justify-between gap-3 px-4 md:flex">
           <div className="flex min-w-0 items-center gap-2">
             <Button
@@ -505,10 +486,25 @@ export default function AppShell({ children }: AppShellProps) {
               )}
             </Button>
             <span className="truncate text-sm font-semibold">{orgName}</span>
+            {quota && (
+              <span className="hidden items-center gap-2 text-xs text-muted-foreground lg:flex">
+                <span className="truncate">{quotaLabel}</span>
+                <Progress value={quota.usage_percent} className="h-1.5 w-28" />
+              </span>
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <Badge variant="outline">{bootstrap.membership.role_label}</Badge>
             <NotificationsMenu items={notifications} unread={unread} onMarkRead={handleMarkRead} />
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={handleLogout}
+              title="خروج از حساب"
+              aria-label="خروج از حساب"
+            >
+              <LogOut className="h-5 w-5" />
+            </Button>
           </div>
         </div>
       </header>
@@ -558,40 +554,6 @@ export default function AppShell({ children }: AppShellProps) {
                 </span>
               )}
             </Button>
-          </div>
-
-          {/* بخش پایینی: سهمیه، حساب کاربری و خروج */}
-          <div className="mt-auto flex flex-col gap-1">
-            {quota && !sidebarCollapsed && (
-              <div className="space-y-2 px-4 py-3 text-xs text-muted-foreground">
-                <p>{quotaLabel}</p>
-                <Progress value={quota.usage_percent} className="h-1.5 w-full" />
-              </div>
-            )}
-
-            <Separator />
-
-            <div className="space-y-1 p-3">
-              {!sidebarCollapsed && (
-                <p className="flex items-center gap-2 px-2 pb-1 text-xs font-medium text-muted-foreground">
-                  <UserCircle className="h-4 w-4" />
-                  {userName}
-                </p>
-              )}
-              {accountBlock(sidebarCollapsed)}
-              <Button
-                variant="outline"
-                title={sidebarCollapsed ? 'خروج از حساب' : undefined}
-                className={cn(
-                  'min-h-11 w-full',
-                  sidebarCollapsed ? 'justify-center px-0' : 'justify-center',
-                )}
-                onClick={handleLogout}
-              >
-                <LogOut className="me-1 h-4 w-4" />
-                {!sidebarCollapsed && 'خروج از حساب'}
-              </Button>
-            </div>
           </div>
         </aside>
 
