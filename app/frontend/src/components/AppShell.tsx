@@ -181,8 +181,14 @@ export default function AppShell({ children }: AppShellProps) {
       }
       try {
         // اعتبار نشست مستقل در سرور بررسی می‌شود؛ توکن منقضی پاک می‌گردد.
-        await authApi.me();
+        const meData = await authApi.me();
         if (!active) return;
+        // کاربرِ ساخته‌شده توسط مدیر که هنوز مشخصاتش را تکمیل نکرده است، پیش از
+        // ورود به فضای کاری باید صفحهٔ «تکمیل مشخصات» را ببیند.
+        if (meData.user?.must_change_password) {
+          navigate('/complete-profile', { replace: true });
+          return;
+        }
         setAuthState('authenticated');
         await loadWorkspace();
         await loadNotifications();

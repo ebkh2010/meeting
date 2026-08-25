@@ -95,6 +95,11 @@ export default function Login() {
         setError('');
         return;
       }
+      // کاربری که مدیر ساخته است پیش از ورود به فضای کاری باید مشخصاتش را تکمیل کند.
+      if (result.user?.must_change_password) {
+        navigate('/complete-profile', { replace: true });
+        return;
+      }
       navigate('/dashboard', { replace: true });
     } catch (err) {
       setError(errorMessage(err, 'ورود ناموفق بود.'));

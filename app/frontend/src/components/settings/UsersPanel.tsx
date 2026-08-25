@@ -21,15 +21,18 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
 import { errorMessage } from '@/lib/mgmt';
-import { AppUser, authApi, GENDER_OPTIONS, ROLE_OPTIONS } from '@/lib/appAuth';
+import {
+  AppUser,
+  authApi,
+  DEFAULT_PASSWORD,
+  ROLE_OPTIONS,
+} from '@/lib/appAuth';
 
 const EMPTY_FORM = {
   first_name: '',
   last_name: '',
   mobile: '',
-  national_id: '',
-  gender: '',
-  email: '',
+  password: '',
   role: 'member',
 };
 
@@ -69,19 +72,21 @@ export default function UsersPanel() {
     setBusy(true);
     setCreatedInfo('');
     try {
-      const result = await authApi.createUser(form);
-      const password = result.temporary_password || result.password || '';
+      const result = await authApi.createUser({
+        first_name: form.first_name,
+        last_name: form.last_name,
+        mobile: form.mobile,
+        password: form.password || undefined,
+        role: form.role,
+      });
       const loginName = result.default_credentials?.username || result.username || form.mobile;
-      const hint = result.default_credentials?.password_hint || '';
-      if (password) {
-        setCreatedInfo(`کاربر ساخته شد — نام کاربری: ${loginName} | رمز موقت: ${password}`);
-      } else {
-        setCreatedInfo(
-          `کاربر ساخته شد — نام کاربری: ${loginName} | رمز عبور اولیه: ${
-            hint || 'کد ملی کاربر'
-          }. کاربر در نخستین ورود باید رمز خود را تغییر دهد.`,
-        );
-      }
+      const password =
+        result.default_credentials?.password || result.temporary_password || DEFAULT_PASSWORD;
+      setCreatedInfo(
+        `کاربر ساخته شد — نام کاربری: ${loginName} | رمز عبور: ${password}${
+          form.password ? '' : ' (رمز پیش‌فرض سیستم)'
+        }. کاربر در نخستین ورود باید نام کاربری جدید، رمز عبور جدید و کد ملی خود را تکمیل کند.`,
+      );
       toast.success('کاربر جدید ساخته شد.');
       setForm({ ...EMPTY_FORM });
       await load();
@@ -97,7 +102,9 @@ export default function UsersPanel() {
       const result = await authApi.updateUser(user.id, payload);
       const password = result.temporary_password || result.password || '';
       if (password) {
-        setCreatedInfo(`رمز موقت جدید برای ${user.full_name}: ${password}`);
+        setCreatedInfo(
+          `رمز عبور ${user.full_name} به «${password}» بازنشانی شد؛ او در نخستین ورود باید مشخصات خود را تکمیل کند.`,
+        );
       }
       toast.success(result.detail || 'تغییرات ذخیره شد.');
       await load();
@@ -112,8 +119,13 @@ export default function UsersPanel() {
         <CardHeader>
           <CardTitle>افزودن کاربر سازمان</CardTitle>
           <CardDescription>
-            نام کاربری کاربر جدید، شمارهٔ موبایل او و رمز عبور اولیه، کد ملی او است؛ این اعتبارنامه
-            پس از ساخت در همین بخش نمایش داده می‌شود و کاربر در نخستین ورود باید رمز را تغییر دهد.
+            فقط نام، نام خانوادگی و شمارهٔ موبایل کافی است. نام کاربری، شمارهٔ موبایل او است و رمز
+            عبور، همان رمزی است که تعیین می‌کنید؛ اگر رمزی ندهید، رمز پیش‌فرض سیستم (
+            <span dir="ltr" className="font-mono text-xs">
+              {DEFAULT_PASSWORD}
+            </span>
+            ) استفاده می‌شود. کاربر در نخستین ورود باید نام کاربری جدید، رمز عبور جدید و کد ملی
+            خود را تکمیل کند.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -145,40 +157,18 @@ export default function UsersPanel() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="u-national">کد ملی</Label>
+              <Label htmlFor="u-password">رمز عبور (اختیاری)</Label>
               <Input
-                id="u-national"
-                inputMode="numeric"
-                value={form.national_id}
-                onChange={(event) => setForm({ ...form, national_id: event.target.value })}
+                id="u-password"
+                type="text"
+                dir="ltr"
+                placeholder={DEFAULT_PASSWORD}
+                value={form.password}
+                onChange={(event) => setForm({ ...form, password: event.target.value })}
               />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="u-email">ایمیل (برای دعوت‌نامهٔ ایمیلی)</Label>
-              <Input
-                id="u-email"
-                type="email"
-                value={form.email}
-                onChange={(event) => setForm({ ...form, email: event.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>جنسیت</Label>
-              <Select
-                value={form.gender}
-                onValueChange={(value) => setForm({ ...form, gender: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="انتخاب کنید" />
-                </SelectTrigger>
-                <SelectContent>
-                  {GENDER_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <p className="text-xs text-muted-foreground">
+                خالی بگذارید تا رمز پیش‌فرض سیستم استفاده شود.
+              </p>
             </div>
             <div className="space-y-2">
               <Label>نقش</Label>
@@ -233,6 +223,14 @@ export default function UsersPanel() {
                       <p dir="ltr" className="truncate text-xs text-muted-foreground">
                         {user.username}
                       </p>
+                      {user.must_change_password && (
+                        <Badge
+                          variant="outline"
+                          className="mt-1 border-amber-200 bg-amber-50 text-amber-700"
+                        >
+                          در انتظار تکمیل مشخصات
+                        </Badge>
+                      )}
                     </div>
                     <Badge
                       variant={(user.status || 'active') === 'active' ? 'secondary' : 'outline'}
@@ -325,7 +323,17 @@ export default function UsersPanel() {
               ) : (
                 items.map((user) => (
                   <TableRow key={user.id}>
-                    <TableCell className="font-medium">{user.full_name}</TableCell>
+                    <TableCell className="font-medium">
+                      {user.full_name}
+                      {user.must_change_password && (
+                        <Badge
+                          variant="outline"
+                          className="mr-2 border-amber-200 bg-amber-50 text-amber-700"
+                        >
+                          در انتظار تکمیل مشخصات
+                        </Badge>
+                      )}
+                    </TableCell>
                     <TableCell>{user.username}</TableCell>
                     <TableCell>
                       <span className="flex items-center gap-1">

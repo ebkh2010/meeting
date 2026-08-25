@@ -3,6 +3,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
+import CompleteProfile from './pages/CompleteProfile';
 import Dashboard from './pages/Dashboard';
 import Meetings from './pages/Meetings';
 import MeetingDetail from './pages/MeetingDetail';
@@ -16,6 +17,8 @@ const AppRoutes = () => (
   <Routes>
     {/* ریشهٔ سامانه صفحهٔ ورود/ثبت‌نام مستقل است؛ صفحهٔ معرفی حذف شده است. */}
     <Route path="/" element={<Login />} />
+    {/* تکمیل اجباری مشخصات کاربران ساخته‌شده توسط مدیر در نخستین ورود */}
+    <Route path="/complete-profile" element={<CompleteProfile />} />
     <Route path="/dashboard" element={<Dashboard />} />
     <Route path="/meetings" element={<Meetings />} />
     <Route path="/meetings/:meetingId" element={<MeetingDetail />} />

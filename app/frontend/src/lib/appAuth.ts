@@ -64,6 +64,9 @@ export const GENDER_OPTIONS = [
   { value: 'female', label: 'زن' },
 ];
 
+/** رمز عبور پیش‌فرض کاربرانی که مدیر بدون تعیین رمز می‌سازد (منبع حقیقت: بک‌اند). */
+export const DEFAULT_PASSWORD = 'vidara@12345';
+
 export interface AppUser {
   id: number;
   membership_id: number | null;
@@ -145,14 +148,34 @@ export interface RegisterPayload {
   password: string;
 }
 
+/**
+ * ورودی ساخت کاربر توسط مدیر سازمان — فقط نام، نام خانوادگی و موبایل الزامی است؛
+ * کد ملی و جنسیت اختیاری‌اند و رمز عبور در نبودِ مقدار، پیش‌فرض سیستم می‌شود.
+ */
 export interface UserPayload {
   first_name: string;
   last_name: string;
   mobile: string;
-  national_id: string;
-  gender: string;
+  national_id?: string;
+  gender?: string;
   email?: string;
+  password?: string;
   role: string;
+}
+
+/** تکمیل اجباری مشخصات در نخستین ورود: نام کاربری جدید، رمز جدید و کد ملی. */
+export interface CompleteProfilePayload {
+  username: string;
+  new_password: string;
+  national_id: string;
+  gender?: string;
+  email?: string;
+}
+
+export interface CompleteProfileResult {
+  ok: boolean;
+  detail: string;
+  user?: AppUser;
 }
 
 export interface CreatedUserResult {
@@ -162,8 +185,13 @@ export interface CreatedUserResult {
   full_name?: string;
   role?: string;
   role_label?: string;
-  /** اعتبارنامهٔ پیش‌فرض بازگشتی روتر: نام کاربری = موبایل، رمز = کد ملی. */
-  default_credentials?: { username: string; password_hint: string };
+  /** اعتبارنامهٔ بازگشتی روتر: نام کاربری = موبایل، رمز = انتخاب مدیر یا پیش‌فرض سیستم. */
+  default_credentials?: {
+    username: string;
+    password?: string;
+    is_default_password?: boolean;
+    password_hint?: string;
+  };
   temporary_password?: string;
   password?: string;
   detail?: string;
@@ -276,6 +304,17 @@ export const authApi = {
     call<{ ok: boolean; detail: string }>(`${BASE}/change-password`, 'POST', {
       current_password: currentPassword,
       new_password: newPassword,
+    }),
+
+  /**
+   * تکمیل اجباری مشخصات در نخستین ورود کاربرِ ساخته‌شده توسط مدیر:
+   * نام کاربری جدید، رمز عبور جدید و کد ملی (جنسیت/ایمیل اختیاری).
+   */
+  completeProfile: (payload: CompleteProfilePayload) =>
+    call<CompleteProfileResult>(`${BASE}/complete-profile`, 'POST', {
+      ...payload,
+      gender: payload.gender || '',
+      email: payload.email || '',
     }),
 
   logout: () => clearToken(),

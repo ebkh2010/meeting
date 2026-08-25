@@ -7,12 +7,16 @@
 * ``GET  /api/v1/app-auth/me`` — پروفایل کاربر جاری.
 * ``PATCH /api/v1/app-auth/me`` — ویرایش مشخصات توسط خود کاربر (همهٔ نقش‌ها).
 * ``POST /api/v1/app-auth/change-password`` — تغییر رمز عبور توسط خود کاربر.
+* ``POST /api/v1/app-auth/complete-profile`` — تکمیل اجباری مشخصات در نخستین ورود
+  کاربرِ ساخته‌شده توسط مدیر (نام کاربری جدید، رمز جدید، کد ملی).
 * ``POST /api/v1/app-auth/verify/email/*`` — تأیید ایمیل با کد یکبارمصرف.
 * ``POST /api/v1/app-auth/verify/mobile/*`` — تأیید موبایل با کد یکبارمصرف (پیامک).
 * ``GET/POST/PATCH /api/v1/app-auth/users`` — مدیریت کاربران توسط مدیر سازمان.
 
 قاعدهٔ اعتبارنامهٔ پیش‌فرض کاربران ساخته‌شده توسط مدیر:
-نام کاربری = شمارهٔ موبایل، رمز عبور = کد ملی، با الزام تغییر رمز در نخستین ورود.
+نام کاربری = شمارهٔ موبایل، رمز عبور = رمز تعیین‌شده توسط مدیر یا رمز پیش‌فرض
+سیستم ``vidara@12345``؛ کاربر در نخستین ورود باید نام کاربری جدید، رمز عبور
+جدید و کد ملی خود را با ``POST /complete-profile`` تکمیل کند.
 """
 
 from __future__ import annotations
@@ -87,13 +91,33 @@ class VerifyConfirmIn(BaseModel):
 
 
 class UserIn(BaseModel):
+    """ساخت دبیر/عضو توسط مدیر سازمان — فقط نام، نام خانوادگی و موبایل الزامی است.
+
+    کد ملی و جنسیت در نخستین ورود توسط خودِ کاربر تکمیل می‌شود؛ رمز عبور اختیاری
+    است و در نبودِ آن، رمز پیش‌فرض سیستم ``vidara@12345`` استفاده می‌شود.
+    """
+
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
     mobile: str
-    national_id: str
-    gender: str
+    national_id: str = ""
+    gender: str = ""
     email: str = ""
+    password: Optional[str] = None
     role: str = app_auth.ROLE_MEMBER
+
+
+class CompleteProfileIn(BaseModel):
+    """تکمیل اجباری مشخصات در نخستین ورود کاربرِ ساخته‌شده توسط مدیر.
+
+    نام کاربری جدید، رمز عبور جدید و کد ملی الزامی‌اند؛ جنسیت و ایمیل اختیاری.
+    """
+
+    username: str
+    new_password: str
+    national_id: str
+    gender: Optional[str] = None
+    email: Optional[str] = None
 
 
 class UserUpdateIn(BaseModel):
@@ -548,6 +572,54 @@ async def change_password(
     return {"ok": True, "detail": "رمز عبور با موفقیت تغییر کرد."}
 
 
+@router.post("/complete-profile")
+async def complete_profile(
+    data: CompleteProfileIn,
+    principal: app_auth.AppPrincipal = Depends(get_app_principal),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """تکمیل اجباری مشخصات کاربرِ ساخته‌شده توسط مدیر در نخستین ورود.
+
+    نام کاربری جدید (یکتا در سازمان)، رمز عبور جدید و کد ملی الزامی‌اند؛ پس از
+    موفقیت، پرچم ``must_change_password`` برداشته می‌شود و کاربر وارد فضای کاری
+    می‌شود. موبایل از اینجا قابل تغییر نیست (مرجع ورود حساب است).
+    """
+    app_user = await app_auth.load_app_user(db, principal.app_user_id)
+
+    username = app_auth.normalize_username(data.username)
+    if await app_auth.username_taken(
+        db, username, exclude_id=int(app_user.id), organization_id=principal.organization_id
+    ):
+        raise app_auth.conflict(
+            "این نام کاربری در همین سازمان قبلاً استفاده شده است. نام کاربری دیگری انتخاب کنید."
+        )
+
+    new_password = app_auth.validate_password(data.new_password)
+    if app_auth.verify_password(new_password, app_user.password_hash or ""):
+        raise app_auth.bad_request("رمز عبور جدید باید با رمز فعلی متفاوت باشد.")
+
+    national_id = app_auth.normalize_national_id(data.national_id)
+    email = app_auth.normalize_email(data.email or "")
+    gender = app_auth.normalize_gender(data.gender) if (data.gender or "").strip() else ""
+
+    app_user.username = username
+    app_user.password_hash = app_auth.hash_password(new_password)
+    app_user.national_id = national_id
+    app_user.email = email
+    if gender:
+        app_user.gender = gender
+    app_user.must_change_password = False
+
+    membership = await app_auth.membership_of(db, app_user)
+    if membership is not None:
+        membership.full_name = app_auth.full_name_of(app_user.first_name, app_user.last_name)
+        membership.email = email or ""
+
+    payload = app_auth.user_payload(app_user, int(membership.id) if membership else None)
+    await db.commit()
+    return {"ok": True, "detail": "مشخصات حساب شما با موفقیت تکمیل شد.", "user": payload}
+
+
 @router.get("/users")
 async def list_users(
     principal: app_auth.AppPrincipal = Depends(get_app_admin),
@@ -574,12 +646,22 @@ async def create_user(
     principal: app_auth.AppPrincipal = Depends(get_app_admin),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    """ساخت کاربر دبیر/عضو با اعتبارنامهٔ پیش‌فرض: نام کاربری=موبایل، رمز=کد ملی."""
+    """ساخت دبیر/عضو با حداقل اطلاعات: نام، نام خانوادگی، موبایل و نقش.
+
+    نام کاربری = شمارهٔ موبایل؛ رمز عبور = رمز تعیین‌شدهٔ مدیر یا در نبودِ آن
+    رمز پیش‌فرض سیستم. کاربر در نخستین ورود ملزم به تکمیل مشخصات (نام کاربری
+    جدید، رمز جدید و کد ملی) است.
+    """
     mobile = app_auth.normalize_mobile(data.mobile)
-    national_id = app_auth.normalize_national_id(data.national_id)
-    gender = app_auth.normalize_gender(data.gender)
-    email = app_auth.normalize_email(data.email)
+    password = app_auth.validate_password(data.password or app_auth.DEFAULT_PASSWORD)
     role = app_auth.normalize_role(data.role)
+    email = app_auth.normalize_email(data.email)
+    national_id = (
+        app_auth.normalize_national_id(data.national_id)
+        if (data.national_id or "").strip()
+        else ""
+    )
+    gender = app_auth.normalize_gender(data.gender) if (data.gender or "").strip() else ""
 
     existing = await app_auth.find_existing_account(
         db, mobile, mobile, organization_id=principal.organization_id
@@ -594,7 +676,7 @@ async def create_user(
         db,
         organization_id=principal.organization_id,
         username=mobile,
-        password=national_id,
+        password=password,
         first_name=data.first_name.strip(),
         last_name=data.last_name.strip(),
         mobile=mobile,
@@ -608,7 +690,8 @@ async def create_user(
     payload = app_auth.user_payload(app_user, int(membership.id) if membership else None)
     payload["default_credentials"] = {
         "username": mobile,
-        "password_hint": "کد ملی کاربر",
+        "password": password,
+        "is_default_password": password == app_auth.DEFAULT_PASSWORD,
     }
     await db.commit()
     return payload
@@ -663,7 +746,7 @@ async def update_user(
             raise app_auth.bad_request("نمی‌توانید حساب کاربری خودتان را غیرفعال کنید.")
         app_user.status = new_status
     if data.reset_password:
-        app_user.password_hash = app_auth.hash_password(app_user.national_id or app_user.mobile)
+        app_user.password_hash = app_auth.hash_password(app_auth.DEFAULT_PASSWORD)
         app_user.must_change_password = True
 
     membership = await app_auth.membership_of(db, app_user)
@@ -674,6 +757,8 @@ async def update_user(
         membership.status = app_user.status or "active"
 
     payload = app_auth.user_payload(app_user, int(membership.id) if membership else None)
+    if data.reset_password:
+        payload["temporary_password"] = app_auth.DEFAULT_PASSWORD
     await db.commit()
     return payload
 

@@ -7,6 +7,7 @@
  * از سازمان جدید خوانده می‌شوند.
  */
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Building2, Check, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -47,6 +48,7 @@ export default function OrganizationSwitcher({
   onOpenChange,
   hideTrigger = false,
 }: OrganizationSwitcherProps) {
+  const navigate = useNavigate();
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const isControlled = controlledOpen !== undefined;
   const open = isControlled ? controlledOpen : uncontrolledOpen;
@@ -105,6 +107,12 @@ export default function OrganizationSwitcher({
       );
       setOpen(false);
       setPassword('');
+      // اگر حساب سازمان مقصد را مدیر ساخته باشد و هنوز مشخصات تکمیل نشده، کاربر
+      // پیش از فضای کاری باید صفحهٔ تکمیل مشخصات را ببیند.
+      if (result.user?.must_change_password) {
+        navigate('/complete-profile', { replace: true });
+        return;
+      }
       onSwitched();
     } catch (error) {
       toast.error(errorMessage(error, 'تغییر سازمان ناموفق بود.'));
