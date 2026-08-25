@@ -13,6 +13,8 @@
 * ``POST /api/v1/app-auth/verify/email/*`` — تأیید ایمیل با کد یکبارمصرف.
 * ``POST /api/v1/app-auth/verify/mobile/*`` — تأیید موبایل با کد یکبارمصرف (پیامک).
 * ``GET/POST/PATCH /api/v1/app-auth/users`` — مدیریت کاربران توسط مدیر سازمان.
+* ``POST /api/v1/app-auth/delete-organization`` — حذف کامل سازمان و همهٔ داده‌ها
+  (فقط مدیر، با تأیید عبارتی «حذف کامل» و نام دقیق سازمان — بازگشت‌ناپذیر).
 
 قاعده‌های هویت:
 
@@ -37,12 +39,34 @@ from core.database import get_db
 from dependencies.app_auth import get_app_admin, get_app_principal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.action_items import Action_items
+from models.agenda_items import Agenda_items
+from models.ai_usage_events import Ai_usage_events
 from models.app_users import App_users
+from models.audit_logs import Audit_logs
+from models.decisions import Decisions
+from models.invitations import Invitations
+from models.jobs import Jobs
+from models.meeting_archive_files import Meeting_archive_files
+from models.meeting_attachments import Meeting_attachments
+from models.meetings import Meetings
 from models.memberships import Memberships
+from models.minute_versions import Minute_versions
+from models.minutes import Minutes
+from models.notifications import Notifications
+from models.notify_deliveries import Notify_deliveries
+from models.org_ai_providers import Org_ai_providers
+from models.org_notify_settings import Org_notify_settings
+from models.org_storage_targets import Org_storage_targets
+from models.org_upload_limits import Org_upload_limits
 from models.organizations import Organizations
+from models.participants import Participants
+from models.recordings import Recordings
+from models.transcripts import Transcripts
+from models.user_verification_codes import User_verification_codes
 from services import app_auth
 from services import notify_channels as channels
 from services import verification
@@ -132,6 +156,13 @@ class CompleteProfileIn(BaseModel):
     national_id: str
     gender: Optional[str] = None
     email: Optional[str] = None
+
+
+class DeleteOrganizationIn(BaseModel):
+    """تأیید حذف کامل سازمان: عبارت ثابت «حذف کامل» + نام دقیق سازمان."""
+
+    confirm: str
+    confirm_org_name: str
 
 
 class UserUpdateIn(BaseModel):
@@ -831,3 +862,107 @@ async def list_members(
     ]
     await db.commit()
     return {"items": items}
+
+
+# ---------------------------------------------------------------------------
+# حذف کامل سازمان و همهٔ داده‌های آن (خودخدمتی — M14)
+# ---------------------------------------------------------------------------
+
+# ترتیب حذف: ابتدا رکوردهای وابسته (جلسه‌ها، صورتجلسه‌ها و …)، سپس اعضا و
+# کاربران، و در پایان خودِ سازمان. جدول‌ها قید کلید خارجی ندارند اما این ترتیب
+# خوانایی و اطمینان از حذف کامل را تضمین می‌کند.
+ORG_DELETION_TABLES = (
+    ("action_items", Action_items),
+    ("decisions", Decisions),
+    ("minute_versions", Minute_versions),
+    ("minutes", Minutes),
+    ("transcripts", Transcripts),
+    ("recordings", Recordings),
+    ("ai_usage_events", Ai_usage_events),
+    ("jobs", Jobs),
+    ("meeting_attachments", Meeting_attachments),
+    ("agenda_items", Agenda_items),
+    ("meeting_archive_files", Meeting_archive_files),
+    ("participants", Participants),
+    ("meetings", Meetings),
+    ("notify_deliveries", Notify_deliveries),
+    ("notifications", Notifications),
+    ("invitations", Invitations),
+    ("audit_logs", Audit_logs),
+    ("org_ai_providers", Org_ai_providers),
+    ("org_notify_settings", Org_notify_settings),
+    ("org_storage_targets", Org_storage_targets),
+    ("org_upload_limits", Org_upload_limits),
+    ("user_verification_codes", User_verification_codes),
+    ("memberships", Memberships),
+    ("app_users", App_users),
+)
+
+
+@router.post("/delete-organization")
+async def delete_organization(
+    data: DeleteOrganizationIn,
+    principal: app_auth.AppPrincipal = Depends(get_app_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """حذف کامل سازمان و همهٔ داده‌های آن (فقط مدیر سازمان، با تأیید عبارتی).
+
+    این عملیات بازگشت‌ناپذیر است: همهٔ کاربران، جلسات، صورتجلسه‌ها، مصوبات،
+    فایل‌های صوتی/پیوست و تنظیمات سازمان برای همیشه حذف می‌شوند. برای جلوگیری
+    از حذف اشتباهی، عبارت «حذف کامل» و نام دقیق سازمان باید ارسال شود.
+    """
+    org_id = principal.organization_id
+    org_result = await db.execute(select(Organizations).where(Organizations.id == org_id))
+    organization = org_result.scalars().first()
+    if organization is None:
+        raise app_auth.not_found("سازمان یافت نشد.")
+
+    if (data.confirm or "").strip() != "حذف کامل":
+        raise app_auth.bad_request("برای تأیید، عبارت «حذف کامل» را دقیقاً وارد کنید.")
+    if (data.confirm_org_name or "").strip() != (organization.name or "").strip():
+        raise app_auth.bad_request("نام سازمان واردشده با نام واقعی سازمان یکسان نیست.")
+
+    # فایل‌های صوتی و پیوست‌ها پیش از رکوردهایشان حذف می‌شوند (بهترین تلاش؛
+    # شکست حذف فایل، حذف سازمان را متوقف نمی‌کند تا دادهٔ نیمه‌کاره نماند).
+    from schemas.storage import ObjectRequest
+    from services.meeting_files import delete_attachment_object
+    from services.storage import StorageService
+
+    rec_result = await db.execute(
+        select(Recordings).where(Recordings.organization_id == org_id)
+    )
+    storage_service = StorageService()
+    for row in rec_result.scalars().all():
+        if not (row.object_key or "").strip():
+            continue
+        try:
+            await storage_service.delete_object(
+                ObjectRequest(bucket_name=row.bucket_name or "", object_key=row.object_key)
+            )
+        except Exception:  # pragma: no cover - بهترین تلاش
+            logger.warning("حذف فایل صوتی %s از Storage ناموفق بود", row.object_key)
+
+    att_result = await db.execute(
+        select(Meeting_attachments).where(Meeting_attachments.organization_id == org_id)
+    )
+    for row in att_result.scalars().all():
+        if (row.object_key or "").strip():
+            await delete_attachment_object(row.object_key)
+
+    removed: Dict[str, int] = {}
+    for label, model in ORG_DELETION_TABLES:
+        result = await db.execute(delete(model).where(model.organization_id == org_id))
+        removed[label] = int(result.rowcount or 0)
+
+    org_delete = await db.execute(delete(Organizations).where(Organizations.id == org_id))
+    removed["organizations"] = int(org_delete.rowcount or 0)
+    total = sum(removed.values())
+
+    await db.commit()
+    logger.info("سازمان %d و %d رکورد آن توسط مدیر حذف شد", org_id, total)
+    return {
+        "success": True,
+        "detail": "سازمان و همهٔ داده‌های آن برای همیشه حذف شد.",
+        "removed": removed,
+        "total": total,
+    }

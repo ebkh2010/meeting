@@ -300,6 +300,21 @@ export const authApi = {
 
   logout: () => clearToken(),
 
+  /**
+   * حذف کامل سازمان و همهٔ داده‌های آن — فقط مدیر سازمان، با تأیید عبارتی
+   * «حذف کامل» و نام دقیق سازمان. این عملیات بازگشت‌ناپذیر است.
+   */
+  deleteOrganization: (confirm: string, orgName: string) =>
+    call<{
+      success: boolean;
+      detail: string;
+      removed?: Record<string, number>;
+      total?: number;
+    }>(`${BASE}/delete-organization`, 'POST', {
+      confirm,
+      confirm_org_name: orgName,
+    }),
+
   listUsers: () => call<{ items: AppUser[]; total?: number }>(`${BASE}/users`),
 
   createUser: (payload: UserPayload) =>

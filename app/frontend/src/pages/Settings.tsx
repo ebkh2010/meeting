@@ -23,6 +23,7 @@ import UsersPanel from '@/components/settings/UsersPanel';
 import AiProvidersPanel from '@/components/settings/AiProvidersPanel';
 import UploadLimitsPanel from '@/components/settings/UploadLimitsPanel';
 import ExternalStoragePanel from '@/components/settings/ExternalStoragePanel';
+import DangerZonePanel from '@/components/settings/DangerZonePanel';
 import {
   DeliveriesPanel,
   EmailSettingsPanel,
@@ -129,6 +130,9 @@ function SettingsView({ isAdmin, roleLabel }: { isAdmin: boolean; roleLabel: str
           <DeliveriesPanel />
         </TabsContent>
       </Tabs>
+
+      {/* حذف کامل سازمان و داده‌ها — فقط مدیر، با تأیید عبارتی و نام دقیق سازمان */}
+      <DangerZonePanel />
     </div>
   );
 }
