@@ -538,6 +538,9 @@ async def confirm_mobile_verification(
     app_user.mobile_verified = True
     await db.commit()
     return {"ok": True, "detail": "شمارهٔ موبایل شما با موفقیت تأیید شد."}
+
+
+@router.get("/organizations")
 async def my_organizations(
     principal: app_auth.AppPrincipal = Depends(get_app_principal),
     db: AsyncSession = Depends(get_db),
@@ -565,16 +568,26 @@ async def switch_organization(
 
     توکن تازه برای حساب همان شخص (شناسهٔ اصلی: کد ملی) در فضای مقصد صادر می‌شود؛
     بنابراین نقش و همهٔ گاردهای دسترسی از فضای جدید خوانده می‌شوند. برای جلوگیری
-    از ارتقای دسترسی، نام کاربری **و** رمز عبور همان فضا الزاماً بررسی می‌شوند.
+    از ارتقای دسترسی، نام کاربری **و** رمز عبور همان فضا الزاماً بررسی می‌شوند؛
+    نام کاربری دقیقاً حسابِ مقصد را مشخص می‌کند — اگر شخص در یک فضا چند حساب
+    (مثلاً مدیر و عضو) داشته باشد، حسابِ همان اعتبارنامه فعال می‌شود.
     """
     app_user = await app_auth.load_app_user(db, principal.app_user_id)
     siblings = await app_auth.find_sibling_accounts(db, app_user)
+    given_username = app_auth.to_latin_digits((data.username or "").strip()).lower()
     target = next(
-        (row for row in siblings if int(row.organization_id) == int(data.organization_id)),
+        (
+            row
+            for row in siblings
+            if int(row.organization_id) == int(data.organization_id)
+            and (row.username or "").strip().lower() == given_username
+        ),
         None,
     )
     if target is None:
-        raise app_auth.not_found("در سازمان انتخاب‌شده حساب فعالی برای شما وجود ندارد.")
+        raise app_auth.not_found(
+            "در سازمان انتخاب‌شده حساب فعالی با این نام کاربری برای شما وجود ندارد."
+        )
 
     if int(target.id) == int(app_user.id):
         payload = await _session_payload(db, app_user)
@@ -582,12 +595,7 @@ async def switch_organization(
         await db.commit()
         return payload
 
-    target_username = (target.username or "").strip().lower()
-    given_username = app_auth.to_latin_digits((data.username or "").strip()).lower()
-    credentials_ok = target_username == given_username and app_auth.verify_password(
-        data.password, target.password_hash or ""
-    )
-    if not credentials_ok:
+    if not app_auth.verify_password(data.password, target.password_hash or ""):
         raise app_auth.bad_request(
             "نام کاربری یا رمز عبور حساب شما در سازمان انتخاب‌شده نادرست است."
         )
