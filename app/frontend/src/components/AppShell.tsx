@@ -1,17 +1,15 @@
 /**
- * پوستهٔ فضای کاری: راست‌به‌چپ، ناوبری اصلی، وضعیت احراز هویت مستقل، سهمیه و اعلان‌ها.
+ * پوستهٔ فضای کاری: راست‌به‌چپ، سایدبار راستِ جمع‌شونده (مانند دیپ‌سیک)، وضعیت
+ * احراز هویت مستقل، سهمیه و اعلان‌ها.
  *
- * احراز هویت کاملاً مستقل است: نشست از توکن ذخیره‌شده در مرورگر خوانده می‌شود و در
- * نبودِ نشست معتبر، کاربر به صفحهٔ ورود («/») هدایت می‌شود. صفحه‌ها با تابع فرزند
- * به دادهٔ bootstrap دسترسی دارند.
+ * چیدمان دسکتاپ: همهٔ منوها (ناوبری، تغییر فضای کاری، حساب کاربری، سهمیه و
+ * خروج) در سایدبار سمت راست جمع شده‌اند؛ با دکمهٔ کنار نوار بالا سایدبار به
+ * حالت آیکونی جمع می‌شود و وضعیت آن در مرورگر نگه داشته می‌شود. در موبایل،
+ * همان منوها داخل drawer سمت راست باز می‌شوند (side="right").
  *
- * آیکون «تنظیمات» در نوار ابزار هدر تنها برای نقش «مدیر سازمان» رندر می‌شود؛
- * برای دبیر و عضو نمایش داده نمی‌شود و صفحهٔ تنظیمات خودش دسترسی را رد می‌کند.
- *
- * چیدمان واکنش‌گرا: در عرض کمتر از `md` هدر تنها لوگو، اعلان‌ها و دکمهٔ همبرگری را
- * نگه می‌دارد و همهٔ ناوبری، تغییر سازمان، میان‌بُرهای حساب، سهمیه و خروج به drawer
- * راست‌به‌چپ منتقل می‌شود. گاردهای نقش داخل منو هم دقیقاً مثل نسخهٔ دسکتاپ اعمال
- * می‌شوند، پس منوی موبایل مسیر اضافه‌ای برای دسترسی غیرمجاز نمی‌سازد.
+ * احراز هویت کاملاً مستقل است: نشست از توکن ذخیره‌شده در مرورگر خوانده می‌شود و
+ * در نبودِ نشست معتبر، کاربر به صفحهٔ ورود («/») هدایت می‌شود. صفحه‌ها با تابع
+ * فرزند به دادهٔ bootstrap دسترسی دارند.
  */
 import { ReactNode, useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -19,11 +17,12 @@ import {
   Bell,
   Building2,
   CalendarDays,
-  ChevronDown,
   KeyRound,
   LayoutDashboard,
   LogOut,
   Menu,
+  PanelRightClose,
+  PanelRightOpen,
   Settings2,
   UserCircle,
 } from 'lucide-react';
@@ -35,6 +34,7 @@ import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
+import { cn } from '@/lib/utils';
 import {
   api,
   applyUploadLimits,
@@ -63,6 +63,8 @@ const ACCOUNT_MENU = [
   { to: '/settings?tab=users', label: 'مدیریت کاربران و نقش‌ها', icon: Building2, adminOnly: true },
   { to: '/settings?tab=email', label: 'تنظیمات ارسال ایمیل و پیامک', icon: Settings2, adminOnly: true },
 ];
+
+const SIDEBAR_KEY = 'vidara.sidebar.collapsed';
 
 type AuthState = 'loading' | 'authenticated' | 'anonymous';
 
@@ -129,6 +131,35 @@ interface AppShellProps {
   children: (bootstrap: Bootstrap, reload: () => void) => ReactNode;
 }
 
+/** آیتم ناوبری سایدبار دسکتاپ؛ در حالت جمع‌شده فقط آیکون با tooltip دیده می‌شود. */
+function SidebarLink({
+  to,
+  label,
+  icon: Icon,
+  collapsed,
+  active,
+}: {
+  to: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  collapsed: boolean;
+  active: boolean;
+}) {
+  return (
+    <Button
+      asChild
+      variant={active ? 'secondary' : 'ghost'}
+      title={collapsed ? label : undefined}
+      className={cn('min-h-11 w-full', collapsed ? 'justify-center px-0' : 'justify-start')}
+    >
+      <Link to={to} className="flex items-center gap-2">
+        <Icon className="h-4 w-4 shrink-0" />
+        {!collapsed && <span className="truncate">{label}</span>}
+      </Link>
+    </Button>
+  );
+}
+
 export default function AppShell({ children }: AppShellProps) {
   const [authState, setAuthState] = useState<AuthState>('loading');
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
@@ -136,6 +167,13 @@ export default function AppShell({ children }: AppShellProps) {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [orgDialogOpen, setOrgDialogOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(SIDEBAR_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -148,6 +186,18 @@ export default function AppShell({ children }: AppShellProps) {
   useEffect(() => {
     setMobileNavOpen(false);
   }, [location.pathname, location.search]);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((value) => {
+      const next = !value;
+      try {
+        window.localStorage.setItem(SIDEBAR_KEY, next ? '1' : '0');
+      } catch {
+        /* حالت مرور خصوصی: وضعیت فقط در حافظهٔ برنامه می‌ماند. */
+      }
+      return next;
+    });
+  }, []);
 
   const loadWorkspace = useCallback(async () => {
     try {
@@ -218,8 +268,8 @@ export default function AppShell({ children }: AppShellProps) {
   };
 
   /**
-   * پس از تغییر سازمان، دادهٔ فضای کاری و اعلان‌ها بازخوانی می‌شود تا نقش، منوها
-   * و سهمیهٔ نمایش‌داده‌شده متعلق به سازمان جدید باشد.
+   * پس از تغییر فضای کاری، دادهٔ فضای کاری و اعلان‌ها بازخوانی می‌شود تا نقش،
+   * منوها و سهمیهٔ نمایش‌داده‌شده متعلق به فضای جدید باشد.
    */
   const handleOrganizationSwitched = async () => {
     setBootstrap(null);
@@ -289,7 +339,6 @@ export default function AppShell({ children }: AppShellProps) {
   // دستیار هوشمند فقط برای مدیر سازمان و دبیر جلسه؛ برای نقش «عضو» رندر نمی‌شود.
   const canUseAssistant =
     isAdmin || (bootstrap.membership.role || '').trim().toLowerCase() === ROLE_SECRETARY;
-  const navItems = BASE_NAV;
   const unread = notifications.filter((item) => !item.is_read).length;
   const quota = bootstrap.quota;
   const accountItems = ACCOUNT_MENU.filter((item) => !item.adminOnly || isAdmin);
@@ -298,23 +347,60 @@ export default function AppShell({ children }: AppShellProps) {
         quota.limit_minutes,
       )} دقیقه`
     : '';
+  const orgName = bootstrap.organization?.name || 'سازمان من';
+  const userName = bootstrap.user.name || 'حساب من';
+
+  /* ------------------------- بلوک منوهای مشترک ------------------------- */
+  const navBlock = (collapsed: boolean) => (
+    <>
+      {BASE_NAV.map((item) => {
+        const Icon = item.icon;
+        return (
+          <SidebarLink
+            key={item.to}
+            to={item.to}
+            label={item.label}
+            icon={Icon}
+            collapsed={collapsed}
+            active={location.pathname === item.to}
+          />
+        );
+      })}
+      {isAdmin && (
+        <SidebarLink
+          to="/settings"
+          label="تنظیمات سازمان"
+          icon={Settings2}
+          collapsed={collapsed}
+          active={location.pathname === '/settings'}
+        />
+      )}
+    </>
+  );
+
+  const accountBlock = (collapsed: boolean) => (
+    <>
+      {accountItems.map((item) => {
+        const Icon = item.icon;
+        return (
+          <SidebarLink
+            key={`${item.to}-${item.label}`}
+            to={item.to}
+            label={item.label}
+            icon={Icon}
+            collapsed={collapsed}
+            active={false}
+          />
+        );
+      })}
+    </>
+  );
 
   return (
     <div className="flex min-h-screen flex-col bg-background" dir="rtl">
       <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur">
-        {/* نوار موبایل: لوگو + اعلان + همبرگری؛ بقیهٔ کنترل‌ها داخل drawer است. */}
+        {/* نوار موبایل: همبرگری در سمت راست (ابتدای RTL) + لوگو + اعلان؛ منوها در drawer راست. */}
         <div className="flex items-center gap-1 px-3 py-2 md:hidden">
-          <Link to="/dashboard" className="flex min-w-0 flex-1 items-center gap-2">
-            <img
-              src="/assets/vidara-icon.png"
-              alt="ویدارا"
-              className="h-7 w-7 shrink-0 object-contain"
-            />
-            <span className="truncate text-sm font-bold">ویدارا - نسخه جلسات</span>
-          </Link>
-
-          <NotificationsMenu items={notifications} unread={unread} onMarkRead={handleMarkRead} />
-
           <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
             <SheetTrigger asChild>
               <Button size="icon" variant="ghost" aria-label="منوی اصلی">
@@ -338,69 +424,17 @@ export default function AppShell({ children }: AppShellProps) {
                   <div className="min-w-0">
                     <p className="truncate text-sm font-bold">ویدارا - نسخه جلسات</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {bootstrap.user.name || 'حساب من'} — {bootstrap.membership.role_label}
+                      {userName} — {bootstrap.membership.role_label}
                     </p>
                   </div>
                 </div>
               </div>
 
               <nav className="space-y-1 p-3">
-                {navItems.map((item) => {
-                  const Icon = item.icon;
-                  const active = location.pathname === item.to;
-                  return (
-                    <Button
-                      key={item.to}
-                      asChild
-                      variant={active ? 'secondary' : 'ghost'}
-                      className="min-h-11 w-full justify-start"
-                    >
-                      <Link to={item.to} className="flex items-center gap-2">
-                        <Icon className="h-4 w-4 shrink-0" />
-                        {item.label}
-                      </Link>
-                    </Button>
-                  );
-                })}
+                {navBlock(false)}
 
-                {/* گارد نقش داخل منوی موبایل نیز دقیقاً مثل هدر دسکتاپ اعمال می‌شود. */}
-                {isAdmin && (
-                  <Button
-                    asChild
-                    variant={location.pathname === '/settings' ? 'secondary' : 'ghost'}
-                    className="min-h-11 w-full justify-start"
-                  >
-                    <Link to="/settings" className="flex items-center gap-2">
-                      <Settings2 className="h-4 w-4 shrink-0" />
-                      تنظیمات سازمان
-                    </Link>
-                  </Button>
-                )}
-              </nav>
-
-              <div className="space-y-1 border-t border-border p-3">
-                <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">حساب کاربری</p>
-                {accountItems.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <Button
-                      key={`${item.to}-${item.label}`}
-                      asChild
-                      variant="ghost"
-                      className="min-h-11 w-full justify-start"
-                    >
-                      <Link to={item.to} className="flex items-center gap-2 text-right">
-                        <Icon className="h-4 w-4 shrink-0" />
-                        <span className="truncate">{item.label}</span>
-                      </Link>
-                    </Button>
-                  );
-                })}
-
-                {/*
-                  برای پرهیز از تودرتویی دیالوگ در drawer، ابتدا منو بسته می‌شود و
-                  سپس دیالوگ تغییر سازمان به‌صورت کنترل‌شده باز می‌گردد.
-                */}
+                {/* برای پرهیز از تودرتویی دیالوگ در drawer، ابتدا منو بسته می‌شود و
+                    سپس دیالوگ تغییر فضای کاری به‌صورت کنترل‌شده باز می‌گردد. */}
                 <Button
                   variant="ghost"
                   className="min-h-11 w-full justify-start"
@@ -410,10 +444,13 @@ export default function AppShell({ children }: AppShellProps) {
                   }}
                 >
                   <Building2 className="me-2 h-4 w-4 shrink-0" />
-                  <span className="truncate">
-                    تغییر فضای کاری ({bootstrap.organization?.name || 'سازمان من'})
-                  </span>
+                  <span className="truncate">تغییر فضای کاری ({orgName})</span>
                 </Button>
+              </nav>
+
+              <div className="space-y-1 border-t border-border p-3">
+                <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">حساب کاربری</p>
+                {accountBlock(false)}
               </div>
 
               {quota && (
@@ -438,109 +475,131 @@ export default function AppShell({ children }: AppShellProps) {
               </div>
             </SheetContent>
           </Sheet>
-        </div>
 
-        {/* نوار دسکتاپ */}
-        <div className="mx-auto hidden max-w-7xl flex-wrap items-center gap-3 px-4 py-3 md:flex">
-          <Link to="/dashboard" className="flex items-center gap-2">
-            <img src="/assets/vidara-icon.png" alt="ویدارا" className="h-8 w-8 object-contain" />
-            <span className="text-base font-bold">ویدارا - نسخه جلسات</span>
+          <Link to="/dashboard" className="flex min-w-0 flex-1 items-center gap-2">
+            <img
+              src="/assets/vidara-icon.png"
+              alt="ویدارا"
+              className="h-7 w-7 shrink-0 object-contain"
+            />
+            <span className="truncate text-sm font-bold">ویدارا - نسخه جلسات</span>
           </Link>
 
-          <nav className="flex flex-1 flex-wrap items-center gap-1">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const active = location.pathname === item.to;
-              return (
-                <Button key={item.to} asChild size="sm" variant={active ? 'secondary' : 'ghost'}>
-                  <Link to={item.to} className="flex items-center gap-1.5">
-                    <Icon className="h-4 w-4" />
-                    {item.label}
-                  </Link>
-                </Button>
-              );
-            })}
-          </nav>
-
-          <div className="flex items-center gap-2">
-            {/* تغییر سازمان فعال نشست بدون خروج کامل؛ نقش از سازمان جدید خوانده می‌شود. */}
-            <OrganizationSwitcher
-              currentName={bootstrap.organization?.name || ''}
-              onSwitched={handleOrganizationSwitched}
-            />
-
-            {/* آیکون تنظیمات فقط برای مدیر سازمان دیده می‌شود. */}
-            {isAdmin && (
-              <Button
-                asChild
-                size="icon"
-                variant={location.pathname === '/settings' ? 'secondary' : 'ghost'}
-                title="تنظیمات سازمان"
-              >
-                <Link to="/settings" aria-label="تنظیمات سازمان">
-                  <Settings2 className="h-5 w-5" />
-                </Link>
-              </Button>
-            )}
-
-            <NotificationsMenu items={notifications} unread={unread} onMarkRead={handleMarkRead} />
-
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button size="sm" variant="ghost" className="flex items-center gap-1.5">
-                  <UserCircle className="h-4 w-4" />
-                  {bootstrap.user.name || 'حساب من'}
-                  <ChevronDown className="h-3.5 w-3.5 opacity-70" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="start" dir="rtl" className="w-64 p-2">
-                <p className="px-2 pb-2 text-xs text-muted-foreground">
-                  {bootstrap.organization?.name || 'سازمان من'} — {bootstrap.membership.role_label}
-                </p>
-                <Separator />
-                <div className="pt-2">
-                  {accountItems.map((item) => {
-                    const Icon = item.icon;
-                    return (
-                      <Button
-                        key={`${item.to}-${item.label}`}
-                        asChild
-                        variant="ghost"
-                        size="sm"
-                        className="w-full justify-start"
-                      >
-                        <Link to={item.to} className="flex items-center gap-2">
-                          <Icon className="h-4 w-4" />
-                          {item.label}
-                        </Link>
-                      </Button>
-                    );
-                  })}
-                </div>
-              </PopoverContent>
-            </Popover>
-
-            <Badge variant="outline">{bootstrap.membership.role_label}</Badge>
-
-            <Button size="sm" variant="ghost" onClick={handleLogout}>
-              <LogOut className="me-1 h-4 w-4" />
-              خروج
-            </Button>
-          </div>
+          <NotificationsMenu items={notifications} unread={unread} onMarkRead={handleMarkRead} />
         </div>
 
-        {quota && (
-          <div className="mx-auto hidden max-w-7xl items-center gap-3 px-4 pb-3 text-xs text-muted-foreground md:flex">
-            <span>{quotaLabel}</span>
-            <Progress value={quota.usage_percent} className="h-1.5 w-40" />
+        {/* نوار دسکتاپ: دکمهٔ جمع‌کردن سایدبار + نام فضا + نقش + اعلان */}
+        <div className="hidden h-14 items-center justify-between gap-3 px-4 md:flex">
+          <div className="flex min-w-0 items-center gap-2">
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={toggleSidebar}
+              title={sidebarCollapsed ? 'باز کردن منو' : 'جمع کردن منو'}
+              aria-label={sidebarCollapsed ? 'باز کردن منو' : 'جمع کردن منو'}
+            >
+              {sidebarCollapsed ? (
+                <PanelRightOpen className="h-5 w-5" />
+              ) : (
+                <PanelRightClose className="h-5 w-5" />
+              )}
+            </Button>
+            <span className="truncate text-sm font-semibold">{orgName}</span>
           </div>
-        )}
+          <div className="flex shrink-0 items-center gap-2">
+            <Badge variant="outline">{bootstrap.membership.role_label}</Badge>
+            <NotificationsMenu items={notifications} unread={unread} onMarkRead={handleMarkRead} />
+          </div>
+        </div>
       </header>
 
-      <main className="mx-auto w-full max-w-7xl flex-1 px-3 py-4 sm:px-4 sm:py-6">
-        {loadError && <p className="mb-4 text-sm text-destructive">{loadError}</p>}
-        {children(bootstrap, loadWorkspace)}
-      </main>
+      <div className="flex flex-1">
+        {/* سایدبار دسکتاپ — سمت راست (اولین فرزند در RTL)، جمع‌شونده با حفظ وضعیت */}
+        <aside
+          className={cn(
+            'sticky top-14 hidden h-[calc(100vh-3.5rem)] shrink-0 flex-col gap-1 border-l border-border bg-sidebar/50 transition-[width] duration-200 md:flex',
+            sidebarCollapsed ? 'w-[76px]' : 'w-64',
+          )}
+        >
+          <div className={cn('flex items-center gap-2 px-3 pt-4 pb-3', sidebarCollapsed && 'justify-center px-0')}>
+            <Link
+              to="/dashboard"
+              title={sidebarCollapsed ? 'ویدارا - نسخه جلسات' : undefined}
+              className="flex min-w-0 items-center gap-2"
+            >
+              <img
+                src="/assets/vidara-icon.png"
+                alt="ویدارا"
+                className="h-8 w-8 shrink-0 object-contain"
+              />
+              {!sidebarCollapsed && (
+                <span className="truncate text-sm font-bold">ویدارا - نسخه جلسات</span>
+              )}
+            </Link>
+          </div>
+
+          <Separator className="mx-3 w-auto" />
+
+          <nav className="space-y-1 px-3">{navBlock(sidebarCollapsed)}</nav>
+
+          {/* تغییر فضای کاری از داخل سایدبار */}
+          <div className="px-3">
+            <Button
+              variant="ghost"
+              title={sidebarCollapsed ? `تغییر فضای کاری (${orgName})` : undefined}
+              className={cn('min-h-11 w-full', sidebarCollapsed ? 'justify-center px-0' : 'justify-start')}
+              onClick={() => setOrgDialogOpen(true)}
+            >
+              <Building2 className="h-4 w-4 shrink-0" />
+              {!sidebarCollapsed && (
+                <span className="ms-2 min-w-0 truncate text-right">
+                  تغییر فضای کاری
+                  <span className="block truncate text-xs text-muted-foreground">{orgName}</span>
+                </span>
+              )}
+            </Button>
+          </div>
+
+          {/* بخش پایینی: سهمیه، حساب کاربری و خروج */}
+          <div className="mt-auto flex flex-col gap-1">
+            {quota && !sidebarCollapsed && (
+              <div className="space-y-2 px-4 py-3 text-xs text-muted-foreground">
+                <p>{quotaLabel}</p>
+                <Progress value={quota.usage_percent} className="h-1.5 w-full" />
+              </div>
+            )}
+
+            <Separator />
+
+            <div className="space-y-1 p-3">
+              {!sidebarCollapsed && (
+                <p className="flex items-center gap-2 px-2 pb-1 text-xs font-medium text-muted-foreground">
+                  <UserCircle className="h-4 w-4" />
+                  {userName}
+                </p>
+              )}
+              {accountBlock(sidebarCollapsed)}
+              <Button
+                variant="outline"
+                title={sidebarCollapsed ? 'خروج از حساب' : undefined}
+                className={cn(
+                  'min-h-11 w-full',
+                  sidebarCollapsed ? 'justify-center px-0' : 'justify-center',
+                )}
+                onClick={handleLogout}
+              >
+                <LogOut className="me-1 h-4 w-4" />
+                {!sidebarCollapsed && 'خروج از حساب'}
+              </Button>
+            </div>
+          </div>
+        </aside>
+
+        <main className="min-w-0 flex-1 px-3 py-4 sm:px-4 sm:py-6">
+          {loadError && <p className="mb-4 text-sm text-destructive">{loadError}</p>}
+          {children(bootstrap, loadWorkspace)}
+        </main>
+      </div>
 
       <footer className="border-t border-border bg-sidebar/60 py-4">
         <div className="mx-auto flex max-w-7xl items-center justify-center px-4">
@@ -549,14 +608,14 @@ export default function AppShell({ children }: AppShellProps) {
       </footer>
 
       {/*
-        نمونهٔ کنترل‌شدهٔ تغییر سازمان برای منوی موبایل؛ دکمهٔ trigger ندارد و فقط با
-        انتخاب آیتم منو باز می‌شود.
+        نمونهٔ کنترل‌شدهٔ تغییر فضای کاری برای سایدبار دسکتاپ و drawer موبایل؛
+        دکمهٔ trigger ندارد و فقط با انتخاب آیتم منو باز می‌شود.
       */}
       <OrganizationSwitcher
         hideTrigger
         open={orgDialogOpen}
         onOpenChange={setOrgDialogOpen}
-        currentName={bootstrap.organization?.name || ''}
+        currentName={orgName}
         onSwitched={handleOrganizationSwitched}
       />
 
