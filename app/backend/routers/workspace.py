@@ -281,6 +281,9 @@ async def create_meeting(
         raise bad_request("زمان شروع جلسه معتبر نیست.")
     if payload.meeting_type and payload.meeting_type not in MEETING_TYPES:
         raise bad_request("نوع جلسه معتبر نیست.")
+    duration_minutes = int(payload.duration_minutes or 60)
+    if not 5 <= duration_minutes <= 480:
+        raise bad_request("مدت جلسه باید بین ۵ تا ۴۸۰ دقیقه باشد.")
 
     secretary_name = ""
     secretary_id = payload.secretary_membership_id or ctx.membership_id
@@ -293,7 +296,7 @@ async def create_meeting(
         description=(payload.description or "").strip(),
         meeting_type=payload.meeting_type or MEETING_TYPES[0],
         starts_at=starts_at,
-        duration_minutes=max(int(payload.duration_minutes or 60), 5),
+        duration_minutes=duration_minutes,
         location=(payload.location or "").strip(),
         online_url=(payload.online_url or "").strip(),
         secretary_membership_id=int(secretary.id),
@@ -452,7 +455,10 @@ async def update_meeting(
             raise bad_request("زمان شروع جلسه معتبر نیست.")
         meeting.starts_at = normalized
     if payload.duration_minutes is not None:
-        meeting.duration_minutes = max(int(payload.duration_minutes), 5)
+        new_duration = int(payload.duration_minutes)
+        if not 5 <= new_duration <= 480:
+            raise bad_request("مدت جلسه باید بین ۵ تا ۴۸۰ دقیقه باشد.")
+        meeting.duration_minutes = new_duration
     if payload.location is not None:
         meeting.location = payload.location.strip()
     if payload.online_url is not None:
