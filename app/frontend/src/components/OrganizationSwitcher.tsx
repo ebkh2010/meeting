@@ -1,10 +1,10 @@
 /**
- * تغییر سازمان فعال نشست بدون خروج کامل از سامانه.
+ * تغییر فضای کاری فعال نشست بدون خروج کامل از سامانه.
  *
- * فهرست سازمان‌هایی که همین شخص در آن‌ها حساب فعال دارد از بک‌اند خوانده می‌شود.
- * پس از انتخاب سازمان و تأیید رمز عبور همان سازمان، توکن تازه با نقش سازمان
- * مقصد صادر می‌شود؛ بنابراین همهٔ گاردهای دسترسی (از جمله آیکون تنظیمات مدیر)
- * از سازمان جدید خوانده می‌شوند.
+ * فهرست فضاهایی که همین شخص (شناسهٔ اصلی: کد ملی) در آن‌ها حساب فعال دارد از
+ * بک‌اند خوانده می‌شود. پس از انتخاب فضا و تأیید نام کاربری و رمز عبور همان
+ * فضا، توکن تازه با نقش فضای مقصد صادر می‌شود؛ بنابراین همهٔ گاردهای دسترسی
+ * (از جمله آیکون تنظیمات مدیر) از فضای جدید خوانده می‌شوند.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -62,6 +62,7 @@ export default function OrganizationSwitcher({
   const [items, setItems] = useState<LoginOrganizationOption[]>([]);
   const [currentId, setCurrentId] = useState<number | null>(null);
   const [targetId, setTargetId] = useState<number | null>(null);
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -85,6 +86,7 @@ export default function OrganizationSwitcher({
 
   useEffect(() => {
     if (open) {
+      setUsername('');
       setPassword('');
       load();
     }
@@ -95,19 +97,24 @@ export default function OrganizationSwitcher({
       toast.error('سازمان مقصد را انتخاب کنید.');
       return;
     }
+    if (!username.trim()) {
+      toast.error('نام کاربری حساب خود در سازمان مقصد را وارد کنید.');
+      return;
+    }
     if (!password.trim()) {
       toast.error('رمز عبور حساب خود در سازمان مقصد را وارد کنید.');
       return;
     }
     setBusy(true);
     try {
-      const result = await authApi.switchOrganization(targetId, password);
+      const result = await authApi.switchOrganization(targetId, username, password);
       toast.success(
-        `سازمان فعال به «${result.organization.name}» تغییر کرد؛ نقش شما: ${result.user.role_label}`,
+        `فضای کاری فعال به «${result.organization.name}» تغییر کرد؛ نقش شما: ${result.user.role_label}`,
       );
       setOpen(false);
+      setUsername('');
       setPassword('');
-      // اگر حساب سازمان مقصد را مدیر ساخته باشد و هنوز مشخصات تکمیل نشده، کاربر
+      // اگر حساب فضای مقصد را مدیر ساخته باشد و هنوز مشخصات تکمیل نشده، کاربر
       // پیش از فضای کاری باید صفحهٔ تکمیل مشخصات را ببیند.
       if (result.user?.must_change_password) {
         navigate('/complete-profile', { replace: true });
@@ -115,7 +122,7 @@ export default function OrganizationSwitcher({
       }
       onSwitched();
     } catch (error) {
-      toast.error(errorMessage(error, 'تغییر سازمان ناموفق بود.'));
+      toast.error(errorMessage(error, 'تغییر فضای کاری ناموفق بود.'));
     } finally {
       setBusy(false);
     }
@@ -129,7 +136,7 @@ export default function OrganizationSwitcher({
             size="sm"
             variant="ghost"
             className="flex items-center gap-1.5"
-            title="تغییر سازمان"
+            title="تغییر فضای کاری"
           >
             <Building2 className="h-4 w-4" />
             <span className="max-w-[10rem] truncate">{currentName || 'سازمان من'}</span>
@@ -141,10 +148,10 @@ export default function OrganizationSwitcher({
         dir="rtl"
       >
         <DialogHeader>
-          <DialogTitle>تغییر سازمان فعال</DialogTitle>
+          <DialogTitle>تغییر فضای کاری فعال</DialogTitle>
           <DialogDescription>
-            نقش و دسترسی‌های شما همیشه از سازمان فعال نشست خوانده می‌شود. برای تغییر سازمان نیازی
-            به خروج کامل نیست.
+            نقش و دسترسی‌های شما همیشه از فضای کاری فعال نشست خوانده می‌شود. برای جابه‌جایی،
+            نام کاربری و رمز عبور همان فضا را وارد کنید.
           </DialogDescription>
         </DialogHeader>
 
@@ -200,20 +207,34 @@ export default function OrganizationSwitcher({
           )}
 
           {targetId !== null && (
-            <div className="space-y-2">
-              <Label htmlFor="switch-password">رمز عبور حساب شما در سازمان مقصد</Label>
-              <Input
-                id="switch-password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') submit();
-                }}
-              />
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="switch-username">نام کاربری حساب شما در فضای کاری مقصد</Label>
+                <Input
+                  id="switch-username"
+                  dir="ltr"
+                  autoComplete="username"
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="switch-password">رمز عبور حساب شما در فضای کاری مقصد</Label>
+                <Input
+                  id="switch-password"
+                  dir="ltr"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') submit();
+                  }}
+                />
+              </div>
               <p className="text-xs text-muted-foreground">
-                برای جلوگیری از ارتقای ناخواستهٔ دسترسی، رمز عبور همان سازمان بررسی می‌شود.
+                برای جلوگیری از ارتقای ناخواستهٔ دسترسی، نام کاربری و رمز عبور همان فضای کاری
+                بررسی می‌شود.
               </p>
             </div>
           )}
@@ -233,7 +254,7 @@ export default function OrganizationSwitcher({
             onClick={submit}
             disabled={busy || targetId === null}
           >
-            {busy ? 'در حال تغییر…' : 'تغییر سازمان'}
+            {busy ? 'در حال تغییر…' : 'تغییر فضای کاری'}
           </Button>
         </DialogFooter>
       </DialogContent>

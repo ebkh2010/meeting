@@ -411,7 +411,7 @@ export default function AppShell({ children }: AppShellProps) {
                 >
                   <Building2 className="me-2 h-4 w-4 shrink-0" />
                   <span className="truncate">
-                    تغییر سازمان ({bootstrap.organization?.name || 'سازمان من'})
+                    تغییر فضای کاری ({bootstrap.organization?.name || 'سازمان من'})
                   </span>
                 </Button>
               </div>

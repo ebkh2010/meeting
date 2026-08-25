@@ -235,7 +235,11 @@ export default function CompleteProfile() {
                   setForm({ ...form, national_id: event.target.value.replace(/[^\d۰-۹٠-٩]/g, '') })
                 }
               />
-              <p className="text-xs text-muted-foreground">دقیقاً ۱۰ رقم</p>
+              <p className="text-xs text-muted-foreground">
+                دقیقاً ۱۰ رقم — کد ملی شناسهٔ اصلی هویت شماست؛ اگر قبلاً در سامانه ثبت شده
+                باشد، نام و نام خانوادگی باید با همان هویت سازگار باشد و همهٔ حساب‌های شما به
+                هم پیوند می‌خورند.
+              </p>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">

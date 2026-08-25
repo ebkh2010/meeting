@@ -110,26 +110,10 @@ export interface SessionPayload {
   token: string;
   user: AppUser;
   organization: AppOrganization;
-  needs_organization?: boolean;
-  organizations?: LoginOrganizationOption[];
 }
 
-/**
- * پاسخ مرحلهٔ اول ورود وقتی شخص در چند سازمان حساب فعال دارد؛ توکنی صادر
- * نمی‌شود تا کاربر ابتدا سازمان فعال نشست را انتخاب کند.
- */
-export interface LoginChoicePayload {
-  needs_organization: true;
-  organizations: LoginOrganizationOption[];
-  detail: string;
-}
-
-export type LoginResult = SessionPayload | LoginChoicePayload;
-
-/** تشخیص اینکه پاسخ ورود نیازمند انتخاب سازمان است یا نشست کامل ساخته شد. */
-export function needsOrganizationChoice(result: LoginResult): result is LoginChoicePayload {
-  return (result as LoginChoicePayload).needs_organization === true;
-}
+/** پاسخ ورود همیشه یک نشست کامل است؛ رمز عبور هر فضا، حساب مقصد را مشخص می‌کند. */
+export type LoginResult = SessionPayload;
 
 export interface MePayload {
   user: AppUser;
@@ -236,23 +220,17 @@ export const authApi = {
   },
 
   /**
-   * ورود با نام کاربری/رمز و انتخاب اختیاری سازمان.
+   * ورود با جفت «نام کاربری + رمز عبور» بدون مرحلهٔ انتخاب سازمان.
    *
-   * اگر شخص در چند سازمان حساب فعال داشته باشد و `organizationId` ارسال نشود،
-   * پاسخ بدون توکن و با `needs_organization` برمی‌گردد تا UI فهرست سازمان‌ها
-   * را نشان دهد؛ پس از انتخاب، همین تابع با شناسهٔ سازمان دوباره صدا می‌شود.
+   * رمز عبور هر فضای کاری مستقل است؛ همین جفت اعتبارنامه است که تعیین می‌کند
+   * کاربر وارد کدام فضا (سازمان/نقش) می‌شود.
    */
-  login: async (
-    username: string,
-    password: string,
-    organizationId?: number,
-  ): Promise<LoginResult> => {
+  login: async (username: string, password: string): Promise<LoginResult> => {
     const result = await call<LoginResult>(`${BASE}/login`, 'POST', {
       username,
       password,
-      ...(organizationId ? { organization_id: organizationId } : {}),
     });
-    if (!needsOrganizationChoice(result)) setToken(result.token);
+    setToken(result.token);
     return result;
   },
 
@@ -285,15 +263,18 @@ export const authApi = {
     ),
 
   /**
-   * تغییر سازمان فعال نشست بدون خروج کامل؛ توکن تازه با نقش سازمان مقصد صادر و
-   * جایگزین توکن فعلی می‌شود تا همهٔ گاردهای دسترسی از سازمان جدید بخوانند.
+   * تغییر فضای کاری فعال نشست بدون خروج کامل؛ برای جلوگیری از ارتقای دسترسی،
+   * نام کاربری و رمز عبور همان فضا الزامی است. توکن تازه با نقش فضای مقصد صادر
+   * و جایگزین توکن فعلی می‌شود.
    */
   switchOrganization: async (
     organizationId: number,
+    username: string,
     password: string,
   ): Promise<SessionPayload> => {
     const result = await call<SessionPayload>(`${BASE}/switch-organization`, 'POST', {
       organization_id: organizationId,
+      username,
       password,
     });
     setToken(result.token);

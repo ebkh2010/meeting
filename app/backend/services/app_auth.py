@@ -4,6 +4,13 @@
 
 * ثبت‌نام مدیر → ساخت سازمان (مستأجر) اختصاصی + عضویت مدیر.
 * ورود با نام کاربری و رمز عبور → صدور توکن مستقل با claim مخصوص (``typ``).
+* **شناسهٔ اصلی هویت، کد ملی است**: هر کد ملی یک شخص است؛ اگر کد ملی از قبل در
+  سامانه ثبت شده باشد، نام و نام خانوادگی باید با همان هویت سازگار باشد و همهٔ
+  حساب‌های همان کد ملی (در سازمان‌های مختلف) به هم پیوند می‌خورند تا کاربر
+  بتواند بین فضاهای کاری جابه‌جا شود.
+* ورود بر پایهٔ جفت «نام کاربری + رمز عبور» است و کاربر مستقیماً وارد همان
+  فضای کاریِ همان حساب می‌شود؛ جابه‌جایی بین فضاهای کاری مستلزم ورود نام
+  کاربری و رمز عبور همان فضاست.
 * ساخت کاربر دبیر/عضو توسط مدیر فقط با نام، نام خانوادگی و موبایل؛ نام کاربری =
   موبایل و رمز عبور = رمز تعیین‌شدهٔ مدیر یا رمز پیش‌فرض سیستم ``vidara@12345``.
 * کاربر ساخته‌شده در نخستین ورود باید نام کاربری جدید، رمز عبور جدید و کد ملی
@@ -131,6 +138,44 @@ def normalize_national_id(raw: str) -> str:
     if not re.fullmatch(r"\d{10}", digits):
         raise bad_request("کد ملی باید دقیقاً ۱۰ رقم باشد.")
     return digits
+
+
+_PERSIAN_NAME_MAP = str.maketrans(
+    {
+        "ي": "ی",
+        "ك": "ک",
+        "ۀ": "ه",
+        "ة": "ه",
+        "أ": "ا",
+        "إ": "ا",
+        "ؤ": "و",
+        "ء": "",
+        "\u0640": "",  # تطویل
+        "\u200c": " ",  # نیم‌فاصله
+    }
+)
+
+
+def normalize_person_name(value: str) -> str:
+    """نرمال‌سازی نام برای مقایسهٔ هویت: یکسان‌سازی حروف، حذف اعراب و فشرده‌سازی فاصله.
+
+    هدف این تابع این است که «محمد» و «محمّد» و «م ح م د» با فاصله‌گذاری متفاوت،
+    هنگام مقایسه با کد ملی یکسان شمرده شوند؛ نه این‌که املای متفاوت عمدی را بپذیرد.
+    """
+    value = to_latin_digits(value or "")
+    value = value.translate(_PERSIAN_NAME_MAP)
+    value = re.sub(r"[\u064B-\u0652\u0640\u200C]", " ", value)
+    value = re.sub(r"\s+", " ", value).strip().lower()
+    return value
+
+
+def names_consistent(
+    first_a: str, last_a: str, first_b: str, last_b: str
+) -> bool:
+    """سازگاری دو نام کامل (نام + نام خانوادگی) پس از نرمال‌سازی."""
+    return normalize_person_name(full_name_of(first_a, last_a)) == normalize_person_name(
+        full_name_of(first_b, last_b)
+    )
 
 
 def normalize_email(raw: str) -> str:
@@ -354,13 +399,18 @@ async def find_login_candidates(db: AsyncSession, raw_identifier: str) -> list[A
 
 
 async def find_sibling_accounts(db: AsyncSession, app_user: App_users) -> list[App_users]:
-    """حساب\u200cهای فعال همین شخص در سازمان\u200cهای مختلف، برای «تغییر سازمان» در نشست.
+    """حساب‌های فعال همین شخص در سازمان‌های مختلف، برای «تغییر فضای کاری» در نشست.
 
-    هویت شخص با شمارهٔ موبایل یا نام کاربری یکسان تشخیص داده می\u200cشود و در صورت
-    وجود کد ملی، با کد ملی هم مقایسه می\u200cشود تا هم\u200cنامی تصادفی حساب\u200cها را به هم
-    وصل نکند. برای هر سازمان تنها یک حساب برگردانده می\u200cشود.
+    شناسهٔ اصلی هویت، کد ملی است؛ بنابراین نخست همهٔ حساب‌های فعال با همان کد ملی
+    برگردانده می‌شوند. شمارهٔ موبایل و نام کاربری به‌عنوان کلید کمکی برای حساب‌های
+    قدیمیِ بدون کد ملی استفاده می‌شوند و حساب‌هایی که کد ملی متفاوت (غیرخالی)
+    دارند کنار گذاشته می‌شوند تا هم‌موبایلیِ تصادفی حساب‌ها را به هم وصل نکند.
+    برای هر سازمان تنها یک حساب برگردانده می‌شود.
     """
     conditions = []
+    national_id = (app_user.national_id or "").strip()
+    if national_id:
+        conditions.append(App_users.national_id == national_id)
     variants = mobile_variants(app_user.mobile or "")
     if variants:
         conditions.append(App_users.mobile.in_(variants))
@@ -375,7 +425,6 @@ async def find_sibling_accounts(db: AsyncSession, app_user: App_users) -> list[A
     )
     rows = [row for row in result.scalars().all() if (row.status or "active") == "active"]
 
-    national_id = (app_user.national_id or "").strip()
     if national_id:
         rows = [
             row
@@ -391,6 +440,39 @@ async def find_sibling_accounts(db: AsyncSession, app_user: App_users) -> list[A
     for row in rows:
         unique.setdefault(int(row.organization_id), row)
     return list(unique.values())
+
+
+async def ensure_national_id_identity(
+    db: AsyncSession,
+    national_id: str,
+    first_name: str,
+    last_name: str,
+    exclude_id: Optional[int] = None,
+) -> Optional[App_users]:
+    """یک کد ملی = یک هویت: سازگاری نام و نام خانوادگی با سوابق همان کد ملی.
+
+    اگر کد ملی از قبل در سامانه (هر سازمانی) ثبت شده باشد، نام و نام خانوادگیِ
+    واردشده باید با سوابق همان کد ملی یکی باشد؛ در غیر این صورت درخواست با ۴۰۹ رد
+    می‌شود. هدف این است که یک کد ملی نتواند به دو شخص متفاوت وصل شود و همهٔ
+    حساب‌های یک شخص (در سازمان‌های مختلف) هویت یکسانی داشته باشند.
+    """
+    if not national_id:
+        return None
+    stmt = select(App_users).where(App_users.national_id == national_id)
+    if exclude_id is not None:
+        stmt = stmt.where(App_users.id != int(exclude_id))
+    result = await db.execute(stmt.order_by(App_users.id.asc()))
+    rows = list(result.scalars().all())
+    if not rows:
+        return None
+
+    for row in rows:
+        if not names_consistent(first_name, last_name, row.first_name, row.last_name):
+            raise conflict(
+                "این کد ملی قبلاً در سامانه با نام و نام خانوادگی دیگری ثبت شده است؛ "
+                "نام و نام خانوادگی باید با کد ملی سازگار باشد."
+            )
+    return rows[0]
 
 
 def mobile_variants(raw: str) -> list[str]:
@@ -605,6 +687,7 @@ __all__ = [
     "create_organization",
     "decrypt_secret",
     "encrypt_secret",
+    "ensure_national_id_identity",
     "find_existing_account",
     "find_login_candidates",
     "find_sibling_accounts",
@@ -615,10 +698,12 @@ __all__ = [
     "issue_token",
     "load_app_user",
     "membership_of",
+    "names_consistent",
     "normalize_email",
     "normalize_gender",
     "normalize_mobile",
     "normalize_national_id",
+    "normalize_person_name",
     "normalize_role",
     "normalize_username",
     "not_found",

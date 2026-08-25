@@ -3,7 +3,8 @@
 قراردادها:
 
 * ``POST /api/v1/app-auth/register`` — ثبت‌نام مدیر + ساخت سازمان اختصاصی.
-* ``POST /api/v1/app-auth/login`` — ورود با نام کاربری و رمز عبور، صدور توکن.
+* ``POST /api/v1/app-auth/login`` — ورود با جفت «نام کاربری + رمز عبور»؛ همین
+  جفت است که مشخص می‌کند کاربر وارد کدام فضا (سازمان/نقش) می‌شود.
 * ``GET  /api/v1/app-auth/me`` — پروفایل کاربر جاری.
 * ``PATCH /api/v1/app-auth/me`` — ویرایش مشخصات توسط خود کاربر (همهٔ نقش‌ها).
 * ``POST /api/v1/app-auth/change-password`` — تغییر رمز عبور توسط خود کاربر.
@@ -13,10 +14,18 @@
 * ``POST /api/v1/app-auth/verify/mobile/*`` — تأیید موبایل با کد یکبارمصرف (پیامک).
 * ``GET/POST/PATCH /api/v1/app-auth/users`` — مدیریت کاربران توسط مدیر سازمان.
 
-قاعدهٔ اعتبارنامهٔ پیش‌فرض کاربران ساخته‌شده توسط مدیر:
-نام کاربری = شمارهٔ موبایل، رمز عبور = رمز تعیین‌شده توسط مدیر یا رمز پیش‌فرض
-سیستم ``vidara@12345``؛ کاربر در نخستین ورود باید نام کاربری جدید، رمز عبور
-جدید و کد ملی خود را با ``POST /complete-profile`` تکمیل کند.
+قاعده‌های هویت:
+
+* **شناسهٔ اصلی هویت، کد ملی است**: اگر کد ملی از قبل در سامانه ثبت شده باشد،
+  نام و نام خانوادگی باید با همان هویت سازگار باشد؛ همهٔ حساب‌های یک کد ملی به
+  هم پیوند می‌خورند و کاربر می‌تواند بین فضاهای کاری خود جابه‌جا شود.
+* **ورود بر پایهٔ جفت «نام کاربری + رمز عبور» است**: کاربر مستقیم وارد همان
+  فضای کاریِ همان اعتبارنامه می‌شود؛ برای جابه‌جایی بین فضاها، نام کاربری و
+  رمز عبور فضای مقصد الزامی است (``POST /switch-organization``).
+* اعتبارنامهٔ پیش‌فرض کاربران ساخته‌شده توسط مدیر: نام کاربری = شمارهٔ موبایل،
+  رمز عبور = رمز تعیین‌شده توسط مدیر یا رمز پیش‌فرض سیستم ``vidara@12345``؛
+  کاربر در نخستین ورود باید نام کاربری جدید، رمز عبور جدید و کد ملی خود را با
+  ``POST /complete-profile`` تکمیل کند.
 """
 
 from __future__ import annotations
@@ -57,16 +66,21 @@ class RegisterIn(BaseModel):
 
 
 class LoginIn(BaseModel):
+    """ورود بر پایهٔ جفت «نام کاربری + رمز عبور».
+
+    رمز عبور هر فضای کاری مستقل است؛ همان جفت اعتبارنامه است که مشخص می‌کند کاربر
+    وارد کدام فضا (سازمان/نقش) می‌شود و هیچ مرحلهٔ انتخاب سازمان وجود ندارد.
+    """
+
     username: str
     password: str
-    # اگر شخص در چند سازمان حساب داشته باشد، انتخاب سازمان اجباری است.
-    organization_id: Optional[int] = None
 
 
 class SwitchOrganizationIn(BaseModel):
-    """تغییر سازمان فعال نشست؛ رمز عبور حساب سازمان مقصد تأیید می\u200cشود."""
+    """تغییر فضای کاری فعال نشست؛ نام کاربری و رمز عبور همان فضا الزامی است."""
 
     organization_id: int
+    username: str
     password: str
 
 
@@ -162,9 +176,11 @@ async def register(data: RegisterIn, db: AsyncSession = Depends(get_db)) -> Dict
     password = app_auth.validate_password(data.password)
     username = app_auth.normalize_username(data.username) if data.username else mobile
 
-    # یکتایی نام کاربری در مرز سازمان است، نه سراسری؛ هر ثبت‌نام یک سازمان
-    # مستقل می‌سازد، پس همین شخص می‌تواند در چند سازمان حساب داشته باشد و در
-    # ورود، سازمان فعال نشست را انتخاب کند.
+    # شناسهٔ اصلی هویت کد ملی است: اگر این کد ملی قبلاً در سامانه ثبت شده باشد،
+    # نام و نام خانوادگی باید با همان هویت سازگار باشد (همین شخص می‌تواند در چند
+    # سازمان حساب داشته باشد و ورود با جفت نام کاربری/رمز هر فضا انجام می‌شود).
+    await app_auth.ensure_national_id_identity(db, national_id, first_name, last_name)
+
     organization = await app_auth.create_organization(db, data.organization_name.strip())
     app_user = await app_auth.create_app_user(
         db,
@@ -188,7 +204,7 @@ async def register(data: RegisterIn, db: AsyncSession = Depends(get_db)) -> Dict
 
 
 async def _organization_brief(db: AsyncSession, app_user: App_users) -> Dict[str, Any]:
-    """کارت کوتاه سازمان + نقش همان حساب، برای مرحلهٔ انتخاب سازمان در ورود."""
+    """کارت کوتاه سازمان + نقش همان حساب، برای فهرست «تغییر فضای کاری»."""
     org_result = await db.execute(
         select(Organizations).where(Organizations.id == int(app_user.organization_id))
     )
@@ -206,61 +222,42 @@ async def _organization_brief(db: AsyncSession, app_user: App_users) -> Dict[str
 
 @router.post("/login")
 async def login(data: LoginIn, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
-    """ورود با نام کاربری و رمز عبور + انتخاب سازمان در عضویت چندسازمانی.
+    """ورود با جفت «نام کاربری + رمز عبور» بدون مرحلهٔ انتخاب سازمان.
 
-    اگر یک شخص با همین اعتبارنامه در چند سازمان حساب فعال داشته باشد، پاسخ نخست
-    بدون توکن و با ``needs_organization=true`` برمی‌گردد تا کاربر سازمان فعال
-    نشست را انتخاب کند؛ نقش همیشه از حساب همان سازمان خوانده می‌شود.
+    رمز عبور هر فضای کاری مستقل است؛ همین جفت اعتبارنامه است که تعیین می‌کند کاربر
+    وارد کدام فضا (سازمان/نقش) می‌شود. اگر یک شناسه (نام کاربری یا شمارهٔ موبایل)
+    به چند حساب فعال تعلق داشته باشد، رمز عبور همان فضا حساب مقصد را مشخص می‌کند؛
+    تنها حالتی که ابهام می‌ماند، یکسان بودن نام کاربری **و** رمز عبور در چند فضا
+    است که با پیام راهنما به کاربر اعلام می‌شود.
     """
-    username = app_auth.to_latin_digits((data.username or "").strip()).lower()
-    if not username or not data.password:
+    identifier = app_auth.to_latin_digits((data.username or "").strip()).lower()
+    if not identifier or not data.password:
         raise app_auth.bad_request("نام کاربری و رمز عبور را وارد کنید.")
 
-    candidates = await app_auth.find_login_candidates(db, username)
+    candidates = await app_auth.find_login_candidates(db, identifier)
     active = [row for row in candidates if (row.status or "active") == "active"]
     if not active:
         if candidates:
             raise app_auth.forbidden("حساب کاربری شما توسط مدیر سازمان غیرفعال شده است.")
         raise app_auth.unauthorized("نام کاربری یا رمز عبور نادرست است.")
 
-    # مالکیت این نام کاربری باید با رمز عبور دست‌کم یکی از حساب‌های فعال اثبات شود؛
-    # در غیر این صورت فهرست سازمان‌ها افشا نمی‌شود.
+    # رمز عبور، فضای کاریِ حساب را مشخص می‌کند؛ حساب‌هایی که رمزشان با ورودی
+    # یکی نیست کنار گذاشته می‌شوند تا ورود همیشه به همان نقش/سازمانِ همان
+    # اعتبارنامه برود.
     matched = [
         row for row in active if app_auth.verify_password(data.password, row.password_hash or "")
     ]
     if not matched:
         raise app_auth.unauthorized("نام کاربری یا رمز عبور نادرست است.")
-
-    if data.organization_id is not None:
-        selected = next(
-            (row for row in active if int(row.organization_id) == int(data.organization_id)),
-            None,
+    if len(matched) > 1:
+        raise app_auth.bad_request(
+            "نام کاربری و رمز عبور یکسان در چند فضای کاری برای شما ثبت شده است؛ "
+            "برای ورود بدون ابهام، رمز عبور یکی از حساب‌ها را تغییر دهید."
         )
-        if selected is None:
-            raise app_auth.bad_request(
-                "در سازمان انتخاب‌شده حساب فعالی با این اعتبارنامه وجود ندارد."
-            )
-        # رمز عبور هر سازمان مستقل است؛ ورود به سازمان مقصد باید با رمز همان سازمان
-        # تأیید شود تا مرز مستأجر حفظ بماند.
-        if not app_auth.verify_password(data.password, selected.password_hash or ""):
-            raise app_auth.unauthorized(
-                "رمز عبور شما در سازمان انتخاب‌شده متفاوت است؛ رمز عبور همان سازمان را وارد کنید."
-            )
-    elif len(active) > 1:
-        organizations = [await _organization_brief(db, row) for row in active]
-        await db.commit()
-        return {
-            "needs_organization": True,
-            "organizations": organizations,
-            "detail": "شما در چند سازمان عضو هستید؛ سازمان مورد نظر را انتخاب کنید.",
-        }
-    else:
-        selected = active[0]
 
+    selected = matched[0]
     selected.last_login_at = app_auth.utc_now()
     payload = await _session_payload(db, selected)
-    payload["needs_organization"] = False
-    payload["organizations"] = [await _organization_brief(db, row) for row in active]
     await db.commit()
     return payload
 
@@ -308,7 +305,18 @@ async def update_me(
     if data.last_name is not None:
         app_user.last_name = data.last_name.strip() or app_user.last_name
     if data.national_id is not None and data.national_id.strip():
-        app_user.national_id = app_auth.normalize_national_id(data.national_id)
+        new_national_id = app_auth.normalize_national_id(data.national_id)
+        if new_national_id != (app_user.national_id or ""):
+            # شناسهٔ اصلی هویت کد ملی است؛ نام و نام خانوادگی باید با سوابق
+            # همان کد ملی در کل سامانه سازگار باشد.
+            await app_auth.ensure_national_id_identity(
+                db,
+                new_national_id,
+                app_user.first_name,
+                app_user.last_name,
+                exclude_id=app_user.id,
+            )
+            app_user.national_id = new_national_id
     if data.gender is not None and data.gender.strip():
         app_user.gender = app_auth.normalize_gender(data.gender)
 
@@ -522,11 +530,11 @@ async def switch_organization(
     principal: app_auth.AppPrincipal = Depends(get_app_principal),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    """تغییر سازمان فعال نشست بدون خروج کامل از سامانه.
+    """تغییر فضای کاری فعال نشست بدون خروج کامل از سامانه.
 
-    توکن تازه برای حساب همان شخص در سازمان مقصد صادر می\u200cشود؛ بنابراین نقش و
-    همهٔ گاردهای دسترسی از سازمان جدید خوانده می\u200cشوند. برای جلوگیری از ارتقای
-    دسترسی، رمز عبور حساب سازمان مقصد الزاماً بررسی می\u200cگردد.
+    توکن تازه برای حساب همان شخص (شناسهٔ اصلی: کد ملی) در فضای مقصد صادر می‌شود؛
+    بنابراین نقش و همهٔ گاردهای دسترسی از فضای جدید خوانده می‌شوند. برای جلوگیری
+    از ارتقای دسترسی، نام کاربری **و** رمز عبور همان فضا الزاماً بررسی می‌شوند.
     """
     app_user = await app_auth.load_app_user(db, principal.app_user_id)
     siblings = await app_auth.find_sibling_accounts(db, app_user)
@@ -535,7 +543,7 @@ async def switch_organization(
         None,
     )
     if target is None:
-        raise app_auth.not_found("در سازمان انتخاب\u200cشده حساب فعالی برای شما وجود ندارد.")
+        raise app_auth.not_found("در سازمان انتخاب‌شده حساب فعالی برای شما وجود ندارد.")
 
     if int(target.id) == int(app_user.id):
         payload = await _session_payload(db, app_user)
@@ -543,8 +551,15 @@ async def switch_organization(
         await db.commit()
         return payload
 
-    if not app_auth.verify_password(data.password, target.password_hash or ""):
-        raise app_auth.bad_request("رمز عبور حساب شما در سازمان انتخاب\u200cشده نادرست است.")
+    target_username = (target.username or "").strip().lower()
+    given_username = app_auth.to_latin_digits((data.username or "").strip()).lower()
+    credentials_ok = target_username == given_username and app_auth.verify_password(
+        data.password, target.password_hash or ""
+    )
+    if not credentials_ok:
+        raise app_auth.bad_request(
+            "نام کاربری یا رمز عبور حساب شما در سازمان انتخاب‌شده نادرست است."
+        )
 
     target.last_login_at = app_auth.utc_now()
     payload = await _session_payload(db, target)
@@ -580,9 +595,11 @@ async def complete_profile(
 ) -> Dict[str, Any]:
     """تکمیل اجباری مشخصات کاربرِ ساخته‌شده توسط مدیر در نخستین ورود.
 
-    نام کاربری جدید (یکتا در سازمان)، رمز عبور جدید و کد ملی الزامی‌اند؛ پس از
-    موفقیت، پرچم ``must_change_password`` برداشته می‌شود و کاربر وارد فضای کاری
-    می‌شود. موبایل از اینجا قابل تغییر نیست (مرجع ورود حساب است).
+    نام کاربری جدید (یکتا در سازمان)، رمز عبور جدید و کد ملی الزامی‌اند؛ کد ملی
+    شناسهٔ اصلی هویت است و اگر قبلاً در سامانه ثبت شده باشد، نام و نام خانوادگی
+    باید با همان هویت سازگار باشد. پس از موفقیت، پرچم ``must_change_password``
+    برداشته می‌شود و کاربر وارد فضای کاری می‌شود. موبایل از اینجا قابل تغییر
+    نیست (مرجع ورود حساب است).
     """
     app_user = await app_auth.load_app_user(db, principal.app_user_id)
 
@@ -599,6 +616,15 @@ async def complete_profile(
         raise app_auth.bad_request("رمز عبور جدید باید با رمز فعلی متفاوت باشد.")
 
     national_id = app_auth.normalize_national_id(data.national_id)
+    # یک کد ملی = یک هویت در کل سامانه؛ همهٔ حساب‌های همان کد ملی به هم
+    # پیوند می‌خورند و نام و نام خانوادگی باید با سوابق سازگار باشد.
+    await app_auth.ensure_national_id_identity(
+        db,
+        national_id,
+        app_user.first_name,
+        app_user.last_name,
+        exclude_id=int(app_user.id),
+    )
     email = app_auth.normalize_email(data.email or "")
     gender = app_auth.normalize_gender(data.gender) if (data.gender or "").strip() else ""
 
@@ -672,6 +698,12 @@ async def create_user(
             "برای ویرایش نقش او از فهرست کاربران سازمان استفاده کنید."
         )
 
+    # اگر مدیر کد ملی را هم وارد کرده باشد، باید با سوابق همان کد ملی در کل
+    # سامانه سازگار باشد (یک کد ملی = یک هویت).
+    await app_auth.ensure_national_id_identity(
+        db, national_id, data.first_name.strip(), data.last_name.strip()
+    )
+
     app_user = await app_auth.create_app_user(
         db,
         organization_id=principal.organization_id,
@@ -730,7 +762,18 @@ async def update_user(
             app_user.email_verified = False
         app_user.email = new_email
     if data.national_id is not None and data.national_id.strip():
-        app_user.national_id = app_auth.normalize_national_id(data.national_id)
+        new_national_id = app_auth.normalize_national_id(data.national_id)
+        if new_national_id != (app_user.national_id or ""):
+            # یک کد ملی = یک هویت؛ نام و نام خانوادگی باید با سوابق همان کد ملی
+            # در کل سامانه سازگار باشد.
+            await app_auth.ensure_national_id_identity(
+                db,
+                new_national_id,
+                app_user.first_name,
+                app_user.last_name,
+                exclude_id=int(app_user.id),
+            )
+            app_user.national_id = new_national_id
     if data.gender is not None and data.gender.strip():
         app_user.gender = app_auth.normalize_gender(data.gender)
     if data.role is not None and data.role.strip():

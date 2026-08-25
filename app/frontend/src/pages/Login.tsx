@@ -17,12 +17,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { errorMessage } from '@/lib/mgmt';
-import {
-  authApi,
-  GENDER_OPTIONS,
-  needsOrganizationChoice,
-  type LoginOrganizationOption,
-} from '@/lib/appAuth';
+import { authApi, GENDER_OPTIONS } from '@/lib/appAuth';
 import { isSignedIn } from '@/lib/session';
 import VidaraBranding from '@/components/VidaraBranding';
 
@@ -45,10 +40,6 @@ export default function Login() {
   const [registerForm, setRegisterForm] = useState({ ...EMPTY_REGISTER });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [duplicateAccount, setDuplicateAccount] = useState(false);
-  /** فهرست سازمان‌های عضویت شخص؛ فقط در عضویت چندسازمانی پر می‌شود. */
-  const [orgChoices, setOrgChoices] = useState<LoginOrganizationOption[]>([]);
-  const [selectedOrgId, setSelectedOrgId] = useState('');
 
   useEffect(() => {
     document.documentElement.setAttribute('dir', 'rtl');
@@ -56,45 +47,15 @@ export default function Login() {
     if (isSignedIn()) navigate('/dashboard', { replace: true });
   }, [navigate]);
 
-  /** تشخیص خطای «حساب تکراری» تا کاربر به مسیر ورود هدایت شود، نه بن‌بست. */
-  const isDuplicateError = (err: unknown): boolean => {
-    const status = (err as { status?: number; response?: { status?: number } })?.status;
-    const nested = (err as { response?: { status?: number } })?.response?.status;
-    return status === 409 || nested === 409;
-  };
-
-  /** انتقال کاربر به تب ورود با نام کاربری پیش‌پر شده. */
-  const goToLogin = () => {
-    const identifier = registerForm.username.trim() || registerForm.mobile.trim();
-    setLoginForm({ username: identifier, password: '' });
-    setDuplicateAccount(false);
-    setOrgChoices([]);
-    setSelectedOrgId('');
-    setError('');
-    setTab('login');
-  };
-
   /**
-   * ورود؛ اگر شخص در چند سازمان حساب فعال داشته باشد، بک‌اند بدون توکن پاسخ
-   * می‌دهد و فهرست سازمان‌ها نمایش داده می‌شود تا کاربر سازمان فعال نشست را
-   * انتخاب کند و سپس ورود با شناسهٔ سازمان تکمیل شود.
+   * ورود با جفت «نام کاربری + رمز عبور»؛ رمز عبور هر فضای کاری مستقل است و
+   * کاربر مستقیم وارد همان فضای کاریِ همان اعتبارنامه می‌شود.
    */
-  const handleLogin = async (organizationId?: number) => {
+  const handleLogin = async () => {
     setBusy(true);
     setError('');
-    setDuplicateAccount(false);
     try {
-      const result = await authApi.login(
-        loginForm.username.trim(),
-        loginForm.password,
-        organizationId,
-      );
-      if (needsOrganizationChoice(result)) {
-        setOrgChoices(result.organizations);
-        setSelectedOrgId(String(result.organizations[0]?.organization_id ?? ''));
-        setError('');
-        return;
-      }
+      const result = await authApi.login(loginForm.username.trim(), loginForm.password);
       // کاربری که مدیر ساخته است پیش از ورود به فضای کاری باید مشخصاتش را تکمیل کند.
       if (result.user?.must_change_password) {
         navigate('/complete-profile', { replace: true });
@@ -111,13 +72,11 @@ export default function Login() {
   const handleRegister = async () => {
     setBusy(true);
     setError('');
-    setDuplicateAccount(false);
     try {
       await authApi.register(registerForm);
       navigate('/dashboard', { replace: true });
     } catch (err) {
       setError(errorMessage(err, 'ثبت‌نام ناموفق بود.'));
-      setDuplicateAccount(isDuplicateError(err));
     } finally {
       setBusy(false);
     }
@@ -175,53 +134,17 @@ export default function Login() {
                       setLoginForm({ ...loginForm, password: event.target.value })
                     }
                     onKeyDown={(event) => {
-                      if (event.key === 'Enter' && orgChoices.length === 0) handleLogin();
+                      if (event.key === 'Enter') handleLogin();
                     }}
                   />
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  رمز عبور هر فضای کاری مستقل است؛ با همین نام کاربری و رمز عبور، وارد همان
+                  سازمان و نقشی می‌شوید که این اعتبارنامه برای آن تعریف شده است.
+                </p>
 
-                {orgChoices.length > 0 && (
-                  <div className="space-y-3 rounded-lg border border-primary/40 bg-primary/5 p-3">
-                    <div className="space-y-1">
-                      <Label htmlFor="login-organization">سازمان فعال این نشست</Label>
-                      <p className="text-xs text-muted-foreground">
-                        شما در چند سازمان عضو هستید؛ نقش شما بر پایهٔ سازمان انتخابی تعیین می‌شود.
-                        رمز عبور هر سازمان مستقل است؛ اگر رمز شما در سازمان انتخابی متفاوت است،
-                        رمز همان سازمان را در کادر بالا وارد کنید.
-                      </p>
-                    </div>
-                    <Select value={selectedOrgId} onValueChange={setSelectedOrgId}>
-                      <SelectTrigger id="login-organization">
-                        <SelectValue placeholder="سازمان را انتخاب کنید" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {orgChoices.map((option) => (
-                          <SelectItem
-                            key={option.organization_id}
-                            value={String(option.organization_id)}
-                          >
-                            {option.name} — {option.role_label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-
-                <Button
-                  className="w-full"
-                  disabled={busy || (orgChoices.length > 0 && !selectedOrgId)}
-                  onClick={() =>
-                    handleLogin(
-                      orgChoices.length > 0 && selectedOrgId ? Number(selectedOrgId) : undefined,
-                    )
-                  }
-                >
-                  {busy
-                    ? 'در حال ورود…'
-                    : orgChoices.length > 0
-                      ? 'ورود به سازمان انتخاب‌شده'
-                      : 'ورود به سامانه'}
+                <Button className="w-full" disabled={busy} onClick={handleLogin}>
+                  {busy ? 'در حال ورود…' : 'ورود به سامانه'}
                 </Button>
               </TabsContent>
 
@@ -344,13 +267,8 @@ export default function Login() {
             </Tabs>
 
             {error && (
-              <div className="surface-error mt-4 space-y-3 rounded-lg p-3">
+              <div className="surface-error mt-4 rounded-lg p-3">
                 <p className="text-sm text-error">{error}</p>
-                {duplicateAccount && (
-                  <Button type="button" variant="outline" size="sm" onClick={goToLogin}>
-                    رفتن به صفحهٔ ورود با همین حساب
-                  </Button>
-                )}
               </div>
             )}
           </CardContent>
