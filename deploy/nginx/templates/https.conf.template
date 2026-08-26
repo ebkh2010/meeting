@@ -63,6 +63,10 @@ server {
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
         proxy_request_buffering off;
+        # پاسخ‌های API هرگز نباید در هیچ کش واسط (CDN/پراکسی) بمانند؛
+        # دادهٔ هر سازمان محرمانه است و با توکن نشست تغییر می‌کند.
+        add_header Cache-Control "no-store, no-cache, must-revalidate, private" always;
+        add_header Pragma "no-cache" always;
     }
 
     location /health {
