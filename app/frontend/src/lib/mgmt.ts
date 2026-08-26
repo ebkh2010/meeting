@@ -24,6 +24,19 @@ export function errorMessage(error: unknown, fallback = 'انجام درخواس
   );
 }
 
+/**
+ * شکستن هر کش URL-keyed برای GETهای احرازشده.
+ *
+ * پاسخ‌های API وابسته به توکن نشست است؛ یک پراکسی/کش واسط که کلیدش فقط URL
+ * باشد می‌تواند پاسخ کاربر دیگری (مثلاً مدیر) را به این کاربر برگرداند. پارامتر
+ * یکتای زمان/تصادف باعث می‌شود هیچ کش واسطی پاسخ را از حافظهٔ خودش نخواند.
+ */
+function bustCache(url: string, method: HttpMethod): string {
+  if (method !== 'GET') return url;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}_ts=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 async function invoke<T>(
   url: string,
   method: HttpMethod = 'GET',
@@ -31,7 +44,7 @@ async function invoke<T>(
 ): Promise<T> {
   try {
     const response = await client.apiCall.invoke({
-      url,
+      url: bustCache(url, method),
       method,
       data,
       options: { headers: authHeaders() },

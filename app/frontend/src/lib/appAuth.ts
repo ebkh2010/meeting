@@ -12,6 +12,15 @@ const BASE = '/api/v1/app-auth';
 
 type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
+/**
+ * شکستن هر کش URL-keyed برای GETهای احرازشده (پاسخ‌ها وابسته به توکن نشست است).
+ */
+function bustCache(url: string, method: HttpMethod): string {
+  if (method !== 'GET') return url;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}_ts=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 async function call<T>(
   url: string,
   method: HttpMethod = 'GET',
@@ -19,7 +28,7 @@ async function call<T>(
 ): Promise<T> {
   try {
     const response = await client.apiCall.invoke({
-      url,
+      url: bustCache(url, method),
       method,
       data,
       options: { headers: authHeaders() },

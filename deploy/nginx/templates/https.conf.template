@@ -67,6 +67,7 @@ server {
         # دادهٔ هر سازمان محرمانه است و با توکن نشست تغییر می‌کند.
         add_header Cache-Control "no-store, no-cache, must-revalidate, private" always;
         add_header Pragma "no-cache" always;
+        add_header Vary "Authorization" always;
     }
 
     location /health {
