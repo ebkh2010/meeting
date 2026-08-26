@@ -63,7 +63,7 @@ export function gregorianToJalali(gy: number, gm: number, gd: number): [number, 
 export function jalaliToGregorian(jy: number, jm: number, jd: number): [number, number, number] {
   let jyy = jy + 1595;
   let days =
-    -1128 + 365 * jyy + div(jyy, 33) * 8 + div((jyy % 33) + 3, 4) + jd + (jm < 7 ? (jm - 1) * 31 : (jm - 7) * 30 + 186);
+    -355668 + 365 * jyy + div(jyy, 33) * 8 + div((jyy % 33) + 3, 4) + jd + (jm < 7 ? (jm - 1) * 31 : (jm - 7) * 30 + 186);
   let gy = 400 * div(days, 146097);
   days %= 146097;
   if (days > 36524) {
@@ -85,7 +85,6 @@ export function jalaliToGregorian(jy: number, jm: number, jd: number): [number, 
     gd -= monthLengths[gm];
     gm++;
   }
-  jyy = 0; // پاک‌سازی متغیر کمکی برای خوانایی
   return [gy, gm + 1, gd];
 }
 

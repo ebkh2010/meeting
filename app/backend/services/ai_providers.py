@@ -110,7 +110,7 @@ LLM_CATALOG: List[Dict[str, Any]] = [
         "auth_mode": AUTH_API_KEY,
         "supports_diarization": False,
         "enabled_by_default": False,
-        "note": "سازگار با OpenAI؛ مقرون‌به‌صرفه برای تهیهٔ پیش‌نویس صورتجلسه.",
+        "note": "مدل زبانی پیش‌فرض سامانه؛ سازگار با OpenAI و مقرون‌به‌صرفه برای تهیهٔ پیش‌نویس صورتجلسه.",
     },
     {
         "provider_key": "avalai",
@@ -291,6 +291,11 @@ DEFAULT_HARF_ENABLED = _env_flag("DEFAULT_HARF_ENABLED", True)
 DEFAULT_HARF_AUTH_USERNAME = os.environ.get("DEFAULT_HARF_AUTH_USERNAME", "samim2")
 DEFAULT_HARF_AUTH_PASSWORD = os.environ.get("DEFAULT_HARF_AUTH_PASSWORD", "samim2_14050527")
 
+# کلید پیش‌فرض سامانه برای مدل زبانی DeepSeek؛ اگر تعریف شده باشد، ردیف DeepSeek
+# هر سازمانی که هنوز کلید ندارد فعال می‌شود و با همین کلید کار می‌کند (مدیر می‌تواند
+# بعداً کلید سازمان خودش را جایگزین کند یا سرویس را خاموش کند).
+DEFAULT_DEEPSEEK_API_KEY = os.environ.get("DEFAULT_DEEPSEEK_API_KEY", "").strip()
+
 
 def _apply_default_harf(row: Org_ai_providers) -> None:
     """فعال‌سازی «حرف» با اعتبارنامهٔ پیش‌فرض روی ردیفی که هنوز پیکربندی نشده است."""
@@ -310,6 +315,27 @@ def _harf_unconfigured(row: Org_ai_providers) -> bool:
     if row.enabled is False:
         return False
     return not ((row.auth_username or "").strip() or (row.auth_password_enc or "").strip())
+
+
+def _apply_default_deepseek(row: Org_ai_providers) -> bool:
+    """فعال‌سازی DeepSeek با کلید پیش‌فرض سامانه روی ردیف بدون کلید.
+
+    فقط وقتی اثری دارد که ``DEFAULT_DEEPSEEK_API_KEY`` در محیط تعریف شده باشد.
+    پس از اعمال، ردیف کلید دارد و پیش‌فرض دوباره روی آن اعمال نمی‌شود؛ بنابراین
+    غیرفعال‌سازی بعدی توسط مدیر سازمان پایدار می‌ماند.
+    """
+    if not DEFAULT_DEEPSEEK_API_KEY:
+        return False
+    row.enabled = True
+    row.api_key_enc = encrypt_secret(DEFAULT_DEEPSEEK_API_KEY)
+    return True
+
+
+def _deepseek_unconfigured(row: Org_ai_providers) -> bool:
+    """ردیف DeepSeek (مدل زبانی) که هنوز هیچ کلیدی برایش ثبت نشده است."""
+    if row.kind != KIND_LLM or (row.provider_key or "") != "deepseek":
+        return False
+    return not (row.api_key_enc or "").strip()
 
 
 async def ensure_defaults(db: AsyncSession, organization_id: int) -> List[Org_ai_providers]:
@@ -353,11 +379,14 @@ async def ensure_defaults(db: AsyncSession, organization_id: int) -> List[Org_ai
             rows.append(row)
             created = True
     # پشتیبانی از ردیف‌های «حرف» قدیمی که بدون اعتبارنامه ساخته شده‌اند
+    # و فعال‌سازی پیش‌فرض سامانه (DeepSeek) روی ردیف‌های مدل زبانی بدون کلید.
     changed = False
     for row in rows:
         if _harf_unconfigured(row):
             _apply_default_harf(row)
             changed = True
+        if _deepseek_unconfigured(row):
+            changed = _apply_default_deepseek(row) or changed
     if created or changed:
         await db.flush()
     rows.sort(key=lambda row: (row.kind, int(row.priority or 99), int(row.id or 0)))
