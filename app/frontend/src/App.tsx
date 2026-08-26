@@ -1,6 +1,7 @@
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { DirectionProvider } from '@radix-ui/react-direction';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
 import CompleteProfile from './pages/CompleteProfile';
@@ -39,17 +40,25 @@ const AppRoutes = () => (
 );
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    {/* MODULE_PROVIDERS_START */}
-    {/* MODULE_PROVIDERS_END */}
-    <TooltipProvider>
-      <Toaster />
-      <BrowserRouter>
-        <AppRoutes />
-      </BrowserRouter>
-    </TooltipProvider>
-    {/* MODULE_PROVIDERS_CLOSE */}
-  </QueryClientProvider>
+  /*
+   * همهٔ اجزای Radix (تب‌ها، منوی انتخابی، دیالوگ، پاپ‌اور، سوییچ و …) بدون
+   * DirectionProvider به‌صورت پیش‌فرض با dir="ltr" رندر می‌شوند و صفت dir روی
+   * <html> را نادیده می‌گیرند؛ همین موضوع ساختار صفحات را چپ‌به‌راست می‌کرد.
+   * این provider جهت راست‌به‌چپ را به کل درخت Radix تزریق می‌کند.
+   */
+  <DirectionProvider dir="rtl">
+    <QueryClientProvider client={queryClient}>
+      {/* MODULE_PROVIDERS_START */}
+      {/* MODULE_PROVIDERS_END */}
+      <TooltipProvider>
+        <Toaster />
+        <BrowserRouter>
+          <AppRoutes />
+        </BrowserRouter>
+      </TooltipProvider>
+      {/* MODULE_PROVIDERS_CLOSE */}
+    </QueryClientProvider>
+  </DirectionProvider>
 );
 
 export default App;
