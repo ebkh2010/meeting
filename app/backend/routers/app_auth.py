@@ -531,7 +531,11 @@ async def request_mobile_verification(
         subject="",
         text_body="",
         html_body="",
-        sms_text="کد تأیید ویدارا: {code}\nاین کد تا ۱۰ دقیقه معتبر است.",
+        sms_text=(
+            "کد تأیید ویدارا: {code}\n"
+            "این کد تا ۱۰ دقیقه معتبر است.\n"
+            "لغو ۱۱"
+        ),
     )
 
 
