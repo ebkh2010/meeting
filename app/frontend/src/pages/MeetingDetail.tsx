@@ -587,6 +587,13 @@ function AgendaAndAttendance({
 
 function JobRow({ job, onRetry }: { job: Job; onRetry: (job: Job) => void }) {
   const isActive = job.status === 'queued' || job.status === 'running';
+  // مصرف این کار برای نمایش شفاف به کاربر
+  const result = (job.result || {}) as Record<string, unknown>;
+  const minutesCharged = Number(result.minutes_charged || 0);
+  const tokensIn = Number(result.tokens_in || 0);
+  const tokensOut = Number(result.tokens_out || 0);
+  const costCents = Number(result.cost_cents || 0);
+  const hasUsage = minutesCharged > 0 || tokensIn + tokensOut > 0;
   return (
     <div className="rounded-md border border-border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -602,6 +609,16 @@ function JobRow({ job, onRetry }: { job: Job; onRetry: (job: Job) => void }) {
         تلاش {toPersianDigits(job.attempts)} از {toPersianDigits(job.max_attempts)} • ثبت‌کننده:{' '}
         {job.created_by_name || '—'} • {formatDateTime(job.created_at)}
       </p>
+      {hasUsage && job.status === 'succeeded' && (
+        <p className="mt-1 text-xs font-medium text-primary">
+          مصرف هوش مصنوعی این کار:{' '}
+          {minutesCharged > 0
+            ? `${toPersianDigits(minutesCharged)} دقیقه رونویسی`
+            : `${toPersianDigits(tokensIn + tokensOut)} توکن ≈ ${toPersianDigits(
+                (costCents / 100).toFixed(2),
+              )} دلار`}
+        </p>
+      )}
       {job.error_message && <p className="mt-1 text-xs text-destructive">{job.error_message}</p>}
       {job.status === 'failed' && (
         <Button size="sm" variant="outline" className="!bg-transparent mt-2 gap-2" onClick={() => onRetry(job)}>

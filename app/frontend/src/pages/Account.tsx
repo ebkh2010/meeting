@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import { toast } from 'sonner';
 import AppShell from '@/components/AppShell';
+import AiUsagePanel from '@/components/AiUsagePanel';
 import { errorMessage } from '@/lib/mgmt';
 import { authApi, AppUser, GENDER_OPTIONS } from '@/lib/appAuth';
 
@@ -425,6 +426,9 @@ function AccountView() {
           </CardContent>
         </Card>
       </div>
+
+      {/* سهمیه و مصرف هوش مصنوعی این کاربر */}
+      <AiUsagePanel />
     </div>
   );
 }

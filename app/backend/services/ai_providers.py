@@ -781,7 +781,8 @@ STT_ADAPTERS = {
 
 async def openai_chat(
     row: Org_ai_providers, *, system_prompt: str, user_prompt: str, json_mode: bool = False
-) -> str:
+) -> Tuple[str, Dict[str, int]]:
+    """فراخوان مدل سازگار با OpenAI؛ متن پاسخ و سنجهٔ مصرف (توکن ورودی/خروجی)."""
     api_key = decrypt_secret(row.api_key_enc or "")
     if not api_key:
         raise AIGatewayError(f"کلید API سرویس {row.display_name or row.provider_key} ثبت نشده است.")
@@ -806,6 +807,11 @@ async def openai_chat(
             f"فراخوان مدل زبانی {row.display_name or row.provider_key} ناموفق بود (کد {response.status_code})."
         )
     payload = response.json() or {}
+    usage_payload = payload.get("usage") or {}
+    usage: Dict[str, int] = {
+        "tokens_in": int(usage_payload.get("prompt_tokens") or 0),
+        "tokens_out": int(usage_payload.get("completion_tokens") or 0),
+    }
     choices = payload.get("choices") or []
     if not choices:
         raise AIGatewayError("مدل زبانی پاسخی برنگرداند.")
@@ -813,7 +819,7 @@ async def openai_chat(
     text = str(content).strip()
     if not text:
         raise AIGatewayError("مدل زبانی پاسخ خالی برگرداند.")
-    return text
+    return text, usage
 
 
 # ---------------------------------------------------------------------------
@@ -924,24 +930,24 @@ async def run_chat(
     system_prompt: str,
     user_prompt: str,
     json_mode: bool = False,
-) -> Tuple[str, str, List[Dict[str, Any]]]:
-    """فراخوان مدل زبانی با زنجیرهٔ اولویت سازمان؛ متن خام و نام تأمین‌کننده برمی‌گردد."""
+) -> Tuple[str, str, List[Dict[str, Any]], Dict[str, int]]:
+    """فراخوان مدل زبانی با زنجیرهٔ اولویت سازمان؛ متن، تأمین‌کننده و مصرف برمی‌گردد."""
     attempts: List[Dict[str, Any]] = []
     rows = await enabled_providers(db, organization_id, KIND_LLM)
     for row in rows:
         try:
-            text = await openai_chat(
+            text, usage = await openai_chat(
                 row, system_prompt=system_prompt, user_prompt=user_prompt, json_mode=json_mode
             )
             attempts.append({"provider": row.provider_key, "ok": True, "error": ""})
-            return text, row.provider_key or "", attempts
+            return text, row.provider_key or "", attempts, usage
         except AIGatewayError as exc:
             attempts.append({"provider": row.provider_key, "ok": False, "error": str(exc)})
             logger.warning("مدل زبانی %s ناموفق بود: %s", row.provider_key, exc)
         except Exception as exc:  # pragma: no cover - وابسته به سرویس بیرونی
             attempts.append({"provider": row.provider_key, "ok": False, "error": str(exc)[:200]})
             logger.exception("خطای مدل زبانی %s", row.provider_key)
-    return "", "", attempts
+    return "", "", attempts, {"tokens_in": 0, "tokens_out": 0}
 
 
 _MINUTES_SYSTEM_PROMPT = (
@@ -993,7 +999,7 @@ async def run_minutes_draft(
         "مصوبات را فقط از متن استخراج کن و برای هر مصوبه حداکثر دو اقدام با مسئول پیشنهاد بده."
     )
 
-    text, provider_key, attempts = await run_chat(
+    text, provider_key, attempts, usage = await run_chat(
         db,
         organization_id,
         system_prompt=_MINUTES_SYSTEM_PROMPT,
@@ -1028,6 +1034,10 @@ async def run_minutes_draft(
                 if (row.provider_key or "") == provider_key:
                     row_model = row.model or ""
                     break
+            tokens_in = int(usage.get("tokens_in") or 0)
+            tokens_out = int(usage.get("tokens_out") or 0)
+            from services.ai_usage import cost_cents_for
+
             return (
                 MinutesDraftResult(
                     summary=_clean_text(payload.get("summary"), 1500),
@@ -1035,6 +1045,10 @@ async def run_minutes_draft(
                     decisions=decisions[:12],
                     action_items=actions[:20],
                     model=f"{provider_key}:{row_model}" if row_model else provider_key,
+                    provider_key=provider_key or "",
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                    cost_cents=cost_cents_for(provider_key, tokens_in, tokens_out),
                 ),
                 attempts,
             )

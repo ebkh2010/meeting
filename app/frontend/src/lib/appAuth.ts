@@ -203,6 +203,44 @@ export interface VerifyConfirmResult {
   detail: string;
 }
 
+/** رویداد مصرف هوش مصنوعی یک کار (برای پنل کاربر). */
+export interface AiUsageEvent {
+  id: number;
+  kind: string;
+  kind_label: string;
+  provider: string;
+  model: string;
+  minutes_charged: number;
+  tokens_in: number;
+  tokens_out: number;
+  cost_cents: number;
+  detail: string;
+  job_id: number | null;
+  meeting_id: number | null;
+  created_at: string;
+}
+
+/** نمای سهمیهٔ هوش مصنوعی کاربر جاری. */
+export interface AiUsageQuota {
+  period: string;
+  llm: {
+    limit_cents: number;
+    used_cents: number;
+    remaining_cents: number;
+    currency: string;
+  };
+  stt: {
+    limit_minutes: number;
+    used_minutes: number;
+    remaining_minutes: number;
+  };
+}
+
+export interface AiUsagePayload {
+  quota: AiUsageQuota;
+  events: AiUsageEvent[];
+}
+
 /* ------------------------------------------------------------------ */
 /* توابع API                                                           */
 /* ------------------------------------------------------------------ */
@@ -235,6 +273,9 @@ export const authApi = {
   },
 
   me: () => call<MePayload>(`${BASE}/me`),
+
+  /** سهمیه و مصرف هوش مصنوعی خودِ کاربر (دلار مدل زبانی + دقیقهٔ رونویسی). */
+  aiUsage: () => call<AiUsagePayload>(`${BASE}/me/ai-usage`),
 
   /** ویرایش مشخصات خودِ کاربر — برای همهٔ نقش‌ها (مدیر، دبیر، عضو) باز است. */
   updateMe: (payload: Record<string, unknown>) =>

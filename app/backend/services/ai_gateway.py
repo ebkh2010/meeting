@@ -94,6 +94,11 @@ class MinutesDraftResult:
     decisions: List[Dict[str, str]] = field(default_factory=list)
     action_items: List[Dict[str, str]] = field(default_factory=list)
     model: str = MINUTES_MODEL
+    # سنجه‌های مصرف کاربر (در صورت گزارش تأمین‌کننده)
+    provider_key: str = ""
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_cents: int = 0
 
 
 # ---------------------------------------------------------------------------

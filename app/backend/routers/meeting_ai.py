@@ -40,6 +40,7 @@ from models.participants import Participants
 from models.recordings import Recordings
 from models.transcripts import Transcripts
 from services import ai_providers
+from services import ai_usage
 from services import mgmt_core as core
 from services import upload_limits as limits_service
 from services.ai_gateway import (
@@ -311,6 +312,9 @@ async def start_transcribe(
 
     minutes_needed = max(1, (int(recording.duration_seconds or 0) + 59) // 60)
     core.ensure_quota(ctx.organization, minutes_needed)
+    await ai_usage.ensure_user_budget(
+        db, ctx.organization_id, ctx.user_id, stt_minutes_needed=minutes_needed
+    )
     await _ensure_capacity(db, ctx)
 
     provider = get_transcription_port()
@@ -328,6 +332,7 @@ async def start_transcribe(
                 "bucket_name": recording.bucket_name or AUDIO_BUCKET,
                 "object_key": recording.object_key,
                 "duration_seconds": int(recording.duration_seconds or 0),
+                "user_id": ctx.user_id,
             },
             ensure_ascii=False,
         ),
@@ -381,6 +386,12 @@ async def start_minutes_draft(
         return dump(running, JOB_FIELDS)
 
     core.ensure_quota(ctx.organization, 1)
+    # برآورد هزینهٔ مدل زبانی این کار بر پایهٔ طول متن رونویسی و سهمیهٔ دلاری کاربر
+    estimated_tokens = ai_usage.estimate_minutes_tokens(transcript.full_text or "")
+    estimated_cost = ai_usage.cost_cents_for("deepseek", estimated_tokens, 1800)
+    await ai_usage.ensure_user_budget(
+        db, ctx.organization_id, ctx.user_id, llm_cost_cents_needed=estimated_cost
+    )
     await _ensure_capacity(db, ctx)
 
     job = Jobs(
@@ -391,7 +402,9 @@ async def start_minutes_draft(
         progress=0,
         attempts=0,
         max_attempts=3,
-        payload_json=json.dumps({"transcript_id": int(transcript.id)}, ensure_ascii=False),
+        payload_json=json.dumps(
+            {"transcript_id": int(transcript.id), "user_id": ctx.user_id}, ensure_ascii=False
+        ),
         provider=get_minutes_port().name,
         created_by_name=ctx.actor_name,
     )
@@ -446,6 +459,15 @@ async def suggest_decision_items(
         p.full_name for p in participants
     ]
 
+    # برآورد هزینهٔ مدل زبانی و بررسی سهمیهٔ دلاری کاربر پیش از فراخوان
+    estimated_tokens = ai_usage.estimate_minutes_tokens(transcript.full_text or "")
+    await ai_usage.ensure_user_budget(
+        db,
+        ctx.organization_id,
+        ctx.user_id,
+        llm_cost_cents_needed=ai_usage.cost_cents_for("deepseek", estimated_tokens, 1800),
+    )
+
     try:
         draft, attempts = await ai_providers.run_minutes_draft(
             db,
@@ -458,6 +480,20 @@ async def suggest_decision_items(
         )
     except AIGatewayError as exc:
         raise bad_request(str(exc)) from exc
+
+    await ai_usage.record_user_usage(
+        db,
+        organization_id=ctx.organization_id,
+        user_id=ctx.user_id,
+        kind=ai_usage.KIND_MINUTES,
+        provider=getattr(draft, "provider_key", "") or getattr(draft, "provider", "") or ai_providers.PLATFORM_PROVIDER,
+        model=getattr(draft, "model", "") or "",
+        tokens_in=int(getattr(draft, "tokens_in", 0) or 0),
+        tokens_out=int(getattr(draft, "tokens_out", 0) or 0),
+        cost_cents=int(getattr(draft, "cost_cents", 0) or 0),
+        meeting_id=int(meeting.id),
+        detail="پیشنهاد مصوبات و اقدامات از روی رونویسی",
+    )
 
     members = await list_owned(db, Memberships, ctx, Memberships.status == "active")
     member_by_name = {core.fa_normalize(member.full_name): member for member in members}
@@ -643,6 +679,7 @@ async def _execute_transcribe(session: AsyncSession, job: Jobs) -> None:
     bucket = payload.get("bucket_name") or AUDIO_BUCKET
     object_key = payload.get("object_key") or ""
     duration_hint = int(payload.get("duration_seconds") or 0)
+    creator_user_id = str(payload.get("user_id") or "")
     organization_id = int(job.organization_id)
     meeting_id = int(job.meeting_id or 0)
     job_id = int(job.id)
@@ -714,6 +751,18 @@ async def _execute_transcribe(session: AsyncSession, job: Jobs) -> None:
             meeting_id=meeting_id,
             detail="رونویسی فایل صوتی جلسه",
         )
+    await ai_usage.record_user_usage(
+        session,
+        organization_id=organization_id,
+        user_id=creator_user_id,
+        kind=ai_usage.KIND_TRANSCRIBE,
+        provider=result.provider,
+        model=result.model or "",
+        minutes=minutes_charged,
+        job_id=job_id,
+        meeting_id=meeting_id,
+        detail="رونویسی فایل صوتی جلسه",
+    )
 
     meeting_result = await session.execute(select(Meetings).where(Meetings.id == meeting_id))
     meeting = meeting_result.scalars().first()
@@ -755,6 +804,11 @@ async def _execute_transcribe(session: AsyncSession, job: Jobs) -> None:
 
 async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:
     """پیش‌نویس صورتجلسه + مصوبات + اقدامات در یک فراخوان AI."""
+    try:
+        payload = json.loads(job.payload_json or "{}")
+    except (TypeError, ValueError):
+        payload = {}
+    creator_user_id = str(payload.get("user_id") or "")
     organization_id = int(job.organization_id)
     meeting_id = int(job.meeting_id or 0)
     job_id = int(job.id)
@@ -925,18 +979,37 @@ async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:
 
     org_result = await session.execute(select(Organizations).where(Organizations.id == organization_id))
     organization = org_result.scalars().first()
+    draft_provider = getattr(draft, "provider_key", "") or getattr(draft, "provider", "") or ai_providers.PLATFORM_PROVIDER
+    draft_model = getattr(draft, "model", "") or ""
+    draft_tokens_in = int(getattr(draft, "tokens_in", 0) or 0)
+    draft_tokens_out = int(getattr(draft, "tokens_out", 0) or 0)
+    draft_cost_cents = int(getattr(draft, "cost_cents", 0) or 0)
     if organization is not None:
         await core.record_usage(
             session,
             organization,
             kind="minutes_draft",
-            provider=getattr(draft, "provider", "") or ai_providers.PLATFORM_PROVIDER,
-            model=getattr(draft, "model", "") or "",
+            provider=draft_provider,
+            model=draft_model,
             minutes=1,
             job_id=job_id,
             meeting_id=meeting_id,
             detail="تولید پیش‌نویس صورتجلسه و مصوبات",
         )
+    await ai_usage.record_user_usage(
+        session,
+        organization_id=organization_id,
+        user_id=creator_user_id,
+        kind=ai_usage.KIND_MINUTES,
+        provider=draft_provider,
+        model=draft_model,
+        tokens_in=draft_tokens_in,
+        tokens_out=draft_tokens_out,
+        cost_cents=draft_cost_cents,
+        job_id=job_id,
+        meeting_id=meeting_id,
+        detail="تولید پیش‌نویس صورتجلسه و مصوبات",
+    )
 
     if meeting.secretary_membership_id:
         await notify(
@@ -964,6 +1037,9 @@ async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:
             "actions": len(draft.action_items),
             "provider": draft.model,
             "provider_attempts": minutes_attempts_line,
+            "tokens_in": draft_tokens_in,
+            "tokens_out": draft_tokens_out,
+            "cost_cents": draft_cost_cents,
         },
         ensure_ascii=False,
     )

@@ -45,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.action_items import Action_items
 from models.agenda_items import Agenda_items
 from models.ai_usage_events import Ai_usage_events
+from models.ai_user_usage import Ai_user_quotas, Ai_user_usage
 from models.app_users import App_users
 from models.audit_logs import Audit_logs
 from models.decisions import Decisions
@@ -315,6 +316,21 @@ async def me(
     }
     await db.commit()
     return payload
+
+
+@router.get("/me/ai-usage")
+async def me_ai_usage(
+    principal: app_auth.AppPrincipal = Depends(get_app_principal),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """سهمیه و مصرف هوش مصنوعی خودِ کاربر: سقف دلاری مدل زبانی، سقف دقیقهٔ
+    رونویسی، مصرف دورهٔ جاری و آخرین رویدادهای مصرف (هر کار چقدر مصرف کرده)."""
+    from services import ai_usage
+
+    snapshot = await ai_usage.usage_snapshot(db, principal.organization_id, principal.id)
+    events = await ai_usage.recent_user_usage(db, principal.organization_id, principal.id, limit=20)
+    await db.commit()
+    return {"quota": snapshot, "events": events}
 
 
 @router.patch("/me")
@@ -909,6 +925,8 @@ ORG_DELETION_TABLES = (
     ("org_notify_settings", Org_notify_settings),
     ("org_storage_targets", Org_storage_targets),
     ("org_upload_limits", Org_upload_limits),
+    ("ai_user_quotas", Ai_user_quotas),
+    ("ai_user_usage", Ai_user_usage),
     ("user_verification_codes", User_verification_codes),
     ("memberships", Memberships),
     ("app_users", App_users),

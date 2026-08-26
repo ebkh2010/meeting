@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services import ai_providers, app_auth, assistant
+from services import ai_providers, ai_usage, app_auth, assistant
 from services.mgmt_core import (
     ROLE_ADMIN,
     ROLE_SECRETARY,
@@ -103,22 +103,39 @@ async def assistant_ask(
 
     answer = ""
     provider_key = ""
+    usage: Dict[str, int] = {"tokens_in": 0, "tokens_out": 0}
     attempts: List[Dict[str, Any]] = []
     model_available = True
 
     if chunks:
         prompt = assistant.build_prompt(mode, question, chunks, ctx)
+        estimated = ai_usage.estimate_minutes_tokens(
+            "", system_prompt=prompt["system"], user_prompt=prompt["user"]
+        )
+        estimated_cost = ai_usage.cost_cents_for("deepseek", estimated, 500)
+        budget_ok = True
         try:
-            answer, provider_key, attempts = await ai_providers.run_chat(
+            await ai_usage.ensure_user_budget(
                 db,
                 ctx.organization_id,
-                system_prompt=prompt["system"],
-                user_prompt=prompt["user"],
+                ctx.user_id,
+                llm_cost_cents_needed=estimated_cost,
             )
-        except Exception as exc:  # pragma: no cover - وابسته به سرویس بیرونی
-            logger.exception("فراخوان دستیار هوشمند ناموفق بود")
-            attempts = [{"provider": "llm", "ok": False, "error": str(exc)[:200]}]
-            answer = ""
+        except Exception:
+            # سهمیهٔ کاربر تمام شده؛ دستیار با پاسخ راهنما ادامه می‌دهد تا از کار نیفتد.
+            budget_ok = False
+        if budget_ok:
+            try:
+                answer, provider_key, attempts, usage = await ai_providers.run_chat(
+                    db,
+                    ctx.organization_id,
+                    system_prompt=prompt["system"],
+                    user_prompt=prompt["user"],
+                )
+            except Exception as exc:  # pragma: no cover - وابسته به سرویس بیرونی
+                logger.exception("فراخوان دستیار هوشمند ناموفق بود")
+                attempts = [{"provider": "llm", "ok": False, "error": str(exc)[:200]}]
+                answer = ""
 
     if not answer:
         model_available = False
@@ -132,6 +149,20 @@ async def assistant_ask(
             provider=provider_key,
             model="",
             minutes=0,
+            detail=f"دستیار هوشمند ({assistant.MODE_LABELS[mode]}): {question[:160]}",
+        )
+        await ai_usage.record_user_usage(
+            db,
+            organization_id=ctx.organization_id,
+            user_id=ctx.user_id,
+            kind=ai_usage.KIND_ASSISTANT,
+            provider=provider_key,
+            model="",
+            tokens_in=int(usage.get("tokens_in") or 0),
+            tokens_out=int(usage.get("tokens_out") or 0),
+            cost_cents=ai_usage.cost_cents_for(
+                provider_key, int(usage.get("tokens_in") or 0), int(usage.get("tokens_out") or 0)
+            ),
             detail=f"دستیار هوشمند ({assistant.MODE_LABELS[mode]}): {question[:160]}",
         )
 
