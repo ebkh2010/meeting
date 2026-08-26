@@ -268,7 +268,7 @@ function ProviderCard({
             <Label htmlFor={`base-${provider.id}`}>نشانی سرویس</Label>
             <Input
               id={`base-${provider.id}`}
-              dir="ltr"
+              dir="rtl"
               value={baseUrl}
               onChange={(event) => setBaseUrl(event.target.value)}
             />
@@ -277,7 +277,7 @@ function ProviderCard({
             <Label htmlFor={`model-${provider.id}`}>نام مدل</Label>
             <Input
               id={`model-${provider.id}`}
-              dir="ltr"
+              dir="rtl"
               value={model}
               onChange={(event) => setModel(event.target.value)}
             />
@@ -288,7 +288,7 @@ function ProviderCard({
               <Label htmlFor={`user-${provider.id}`}>نام کاربری سرویس</Label>
               <Input
                 id={`user-${provider.id}`}
-                dir="ltr"
+                dir="rtl"
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
               />
@@ -300,7 +300,7 @@ function ProviderCard({
               <Label htmlFor={`key-${provider.id}`}>کلید API</Label>
               <Input
                 id={`key-${provider.id}`}
-                dir="ltr"
+                dir="rtl"
                 type="password"
                 autoComplete="new-password"
                 placeholder={
@@ -319,7 +319,7 @@ function ProviderCard({
               <Label htmlFor={`pass-${provider.id}`}>رمز عبور سرویس</Label>
               <Input
                 id={`pass-${provider.id}`}
-                dir="ltr"
+                dir="rtl"
                 type="password"
                 autoComplete="new-password"
                 placeholder={
@@ -425,7 +425,7 @@ function ChainSection({
                   {item.display_name}
                   {item.diarization && <Badge variant="secondary">تفکیک گوینده</Badge>}
                 </span>
-                <span dir="ltr" className="text-xs text-muted-foreground">
+                <span dir="rtl" className="text-xs text-muted-foreground">
                   {item.model}
                 </span>
               </div>
@@ -435,7 +435,7 @@ function ChainSection({
                 <Badge variant="outline">آخرین</Badge>
                 جانشین پیش‌فرض پلتفرم
               </span>
-              <span dir="ltr" className="text-xs text-muted-foreground">
+              <span dir="rtl" className="text-xs text-muted-foreground">
                 {chain.platform_fallback}
               </span>
             </div>

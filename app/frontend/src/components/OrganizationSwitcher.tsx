@@ -212,7 +212,7 @@ export default function OrganizationSwitcher({
                 <Label htmlFor="switch-username">نام کاربری حساب شما در فضای کاری مقصد</Label>
                 <Input
                   id="switch-username"
-                  dir="ltr"
+                  dir="rtl"
                   autoComplete="username"
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
@@ -222,7 +222,7 @@ export default function OrganizationSwitcher({
                 <Label htmlFor="switch-password">رمز عبور حساب شما در فضای کاری مقصد</Label>
                 <Input
                   id="switch-password"
-                  dir="ltr"
+                  dir="rtl"
                   type="password"
                   autoComplete="current-password"
                   value={password}

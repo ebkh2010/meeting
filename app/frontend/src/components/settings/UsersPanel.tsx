@@ -121,7 +121,7 @@ export default function UsersPanel() {
           <CardDescription>
             فقط نام، نام خانوادگی و شمارهٔ موبایل کافی است. نام کاربری، شمارهٔ موبایل او است و رمز
             عبور، همان رمزی است که تعیین می‌کنید؛ اگر رمزی ندهید، رمز پیش‌فرض سیستم (
-            <span dir="ltr" className="font-mono text-xs">
+            <span dir="rtl" className="font-mono text-xs">
               {DEFAULT_PASSWORD}
             </span>
             ) استفاده می‌شود. کاربر در نخستین ورود باید نام کاربری جدید، رمز عبور جدید و کد ملی
@@ -161,7 +161,7 @@ export default function UsersPanel() {
               <Input
                 id="u-password"
                 type="text"
-                dir="ltr"
+                dir="rtl"
                 placeholder={DEFAULT_PASSWORD}
                 value={form.password}
                 onChange={(event) => setForm({ ...form, password: event.target.value })}
@@ -220,7 +220,7 @@ export default function UsersPanel() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold">{user.full_name}</p>
-                      <p dir="ltr" className="truncate text-xs text-muted-foreground">
+                      <p dir="rtl" className="truncate text-xs text-muted-foreground">
                         {user.username}
                       </p>
                       {user.must_change_password && (
@@ -243,14 +243,14 @@ export default function UsersPanel() {
                   <dl className="space-y-1 text-xs">
                     <div className="flex items-center justify-between gap-2">
                       <dt className="text-muted-foreground">موبایل</dt>
-                      <dd dir="ltr" className="flex items-center gap-1 truncate">
+                      <dd dir="rtl" className="flex items-center gap-1 truncate">
                         {user.mobile || '—'}
                         <VerifyMark ok={user.mobile_verified} />
                       </dd>
                     </div>
                     <div className="flex items-center justify-between gap-2">
                       <dt className="text-muted-foreground">ایمیل</dt>
-                      <dd dir="ltr" className="flex items-center gap-1 truncate">
+                      <dd dir="rtl" className="flex items-center gap-1 truncate">
                         {user.email || '—'}
                         <VerifyMark ok={user.email_verified} />
                       </dd>
@@ -328,7 +328,7 @@ export default function UsersPanel() {
                       {user.must_change_password && (
                         <Badge
                           variant="outline"
-                          className="mr-2 border-amber-200 bg-amber-50 text-amber-700"
+                          className="ms-2 border-amber-200 bg-amber-50 text-amber-700"
                         >
                           در انتظار تکمیل مشخصات
                         </Badge>

@@ -118,7 +118,7 @@ export function EmailSettingsPanel() {
             <Label htmlFor="smtp-host">میزبان SMTP</Label>
             <Input
               id="smtp-host"
-              dir="ltr"
+              dir="rtl"
               value={settings.smtp_host}
               onChange={(event) => setSettings({ ...settings, smtp_host: event.target.value })}
             />
@@ -127,7 +127,7 @@ export function EmailSettingsPanel() {
             <Label htmlFor="smtp-port">پورت</Label>
             <Input
               id="smtp-port"
-              dir="ltr"
+              dir="rtl"
               inputMode="numeric"
               value={settings.smtp_port}
               onChange={(event) =>
@@ -139,7 +139,7 @@ export function EmailSettingsPanel() {
             <Label htmlFor="smtp-user">نام کاربری</Label>
             <Input
               id="smtp-user"
-              dir="ltr"
+              dir="rtl"
               value={settings.smtp_username}
               onChange={(event) => setSettings({ ...settings, smtp_username: event.target.value })}
             />
@@ -150,7 +150,7 @@ export function EmailSettingsPanel() {
             </Label>
             <Input
               id="smtp-pass"
-              dir="ltr"
+              dir="rtl"
               type="password"
               value={smtpPassword}
               onChange={(event) => setSmtpPassword(event.target.value)}
@@ -160,7 +160,7 @@ export function EmailSettingsPanel() {
             <Label htmlFor="smtp-from">ایمیل فرستنده</Label>
             <Input
               id="smtp-from"
-              dir="ltr"
+              dir="rtl"
               type="email"
               value={settings.smtp_from_email}
               onChange={(event) => setSettings({ ...settings, smtp_from_email: event.target.value })}
@@ -201,7 +201,7 @@ export function EmailSettingsPanel() {
             <Label htmlFor="test-email">ایمیل مقصد آزمایش</Label>
             <Input
               id="test-email"
-              dir="ltr"
+              dir="rtl"
               type="email"
               className="w-64"
               value={testEmail}
@@ -276,7 +276,7 @@ export function SmsSettingsPanel() {
             </Label>
             <Input
               id="sms-key"
-              dir="ltr"
+              dir="rtl"
               type="password"
               value={smsApiKey}
               onChange={(event) => setSmsApiKey(event.target.value)}
@@ -286,7 +286,7 @@ export function SmsSettingsPanel() {
             <Label htmlFor="sms-line">شمارهٔ خط ارسال</Label>
             <Input
               id="sms-line"
-              dir="ltr"
+              dir="rtl"
               value={settings.sms_line_number}
               onChange={(event) => setSettings({ ...settings, sms_line_number: event.target.value })}
             />
@@ -301,7 +301,7 @@ export function SmsSettingsPanel() {
             <Label htmlFor="test-sms">موبایل مقصد آزمایش</Label>
             <Input
               id="test-sms"
-              dir="ltr"
+              dir="rtl"
               className="w-64"
               value={testMobile}
               onChange={(event) => setTestMobile(event.target.value)}
@@ -371,7 +371,7 @@ export function DeliveriesPanel() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{item.recipient_name || '—'}</p>
-                    <p dir="ltr" className="truncate text-xs text-muted-foreground">
+                    <p dir="rtl" className="truncate text-xs text-muted-foreground">
                       {item.recipient}
                     </p>
                   </div>
@@ -420,7 +420,7 @@ export function DeliveriesPanel() {
                   <TableCell>
                     <div className="flex flex-col">
                       <span>{item.recipient_name || '—'}</span>
-                      <span dir="ltr" className="text-xs text-muted-foreground">
+                      <span dir="rtl" className="text-xs text-muted-foreground">
                         {item.recipient}
                       </span>
                     </div>

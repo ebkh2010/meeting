@@ -392,7 +392,7 @@ export default function ExternalStoragePanel() {
               <div className="space-y-1.5 md:col-span-2">
                 <Label>نشانی WebDAV</Label>
                 <Input
-                  dir="ltr"
+                  dir="rtl"
                   value={form.webdav_base_url}
                   onChange={(event) => update('webdav_base_url', event.target.value)}
                   placeholder="https://cloud.example.com/remote.php/dav/files/username"
@@ -401,7 +401,7 @@ export default function ExternalStoragePanel() {
               <div className="space-y-1.5">
                 <Label>نام کاربری</Label>
                 <Input
-                  dir="ltr"
+                  dir="rtl"
                   value={form.webdav_username}
                   onChange={(event) => update('webdav_username', event.target.value)}
                 />
@@ -409,7 +409,7 @@ export default function ExternalStoragePanel() {
               <div className="space-y-1.5">
                 <Label>گذرواژه یا App Password</Label>
                 <Input
-                  dir="ltr"
+                  dir="rtl"
                   type="password"
                   value={form.webdav_password}
                   onChange={(event) => update('webdav_password', event.target.value)}
@@ -426,7 +426,7 @@ export default function ExternalStoragePanel() {
               <div className="space-y-1.5 md:col-span-2">
                 <Label>نشانی سرویس (Endpoint)</Label>
                 <Input
-                  dir="ltr"
+                  dir="rtl"
                   value={form.endpoint}
                   onChange={(event) => update('endpoint', event.target.value)}
                   placeholder="https://s3.example.com"
@@ -435,7 +435,7 @@ export default function ExternalStoragePanel() {
               <div className="space-y-1.5">
                 <Label>نام باکت</Label>
                 <Input
-                  dir="ltr"
+                  dir="rtl"
                   value={form.bucket}
                   onChange={(event) => update('bucket', event.target.value)}
                 />
@@ -443,7 +443,7 @@ export default function ExternalStoragePanel() {
               <div className="space-y-1.5">
                 <Label>منطقه (Region)</Label>
                 <Input
-                  dir="ltr"
+                  dir="rtl"
                   value={form.region}
                   onChange={(event) => update('region', event.target.value)}
                 />
@@ -451,7 +451,7 @@ export default function ExternalStoragePanel() {
               <div className="space-y-1.5">
                 <Label>کلید دسترسی (Access Key)</Label>
                 <Input
-                  dir="ltr"
+                  dir="rtl"
                   value={form.access_key}
                   onChange={(event) => update('access_key', event.target.value)}
                 />
@@ -459,7 +459,7 @@ export default function ExternalStoragePanel() {
               <div className="space-y-1.5">
                 <Label>کلید محرمانه (Secret Key)</Label>
                 <Input
-                  dir="ltr"
+                  dir="rtl"
                   type="password"
                   value={form.secret_key}
                   onChange={(event) => update('secret_key', event.target.value)}
@@ -489,19 +489,19 @@ export default function ExternalStoragePanel() {
             <div className="space-y-1.5">
               <Label>پیشوند مسیر در مقصد</Label>
               <Input
-                dir="ltr"
+                dir="rtl"
                 value={form.path_prefix}
                 onChange={(event) => update('path_prefix', event.target.value)}
               />
               <p className="text-xs text-muted-foreground">
                 مسیر نهایی هر سازمان جدا نگه داشته می‌شود:{' '}
-                <span dir="ltr">{target?.tenant_prefix || `${form.path_prefix}/org-<id>`}</span>
+                <span dir="rtl">{target?.tenant_prefix || `${form.path_prefix}/org-<id>`}</span>
               </p>
             </div>
             <div className="space-y-1.5">
               <Label>مدت اعتبار نسخهٔ بازیابی‌شده (روز)</Label>
               <Input
-                dir="ltr"
+                dir="rtl"
                 inputMode="numeric"
                 value={form.restore_retention_days}
                 onChange={(event) => update('restore_retention_days', event.target.value)}
@@ -541,7 +541,7 @@ export default function ExternalStoragePanel() {
 
           {activeFields.length > 0 ? (
             <p className="text-xs text-muted-foreground">
-              فیلدهای لازم برای این سرویس: <span dir="ltr">{activeFields.join(' · ')}</span>
+              فیلدهای لازم برای این سرویس: <span dir="rtl">{activeFields.join(' · ')}</span>
             </p>
           ) : null}
         </CardContent>
@@ -665,7 +665,7 @@ export default function ExternalStoragePanel() {
                       {file.remote_path ? (
                         <>
                           {' · '}
-                          <span dir="ltr">{file.remote_path}</span>
+                          <span dir="rtl">{file.remote_path}</span>
                         </>
                       ) : null}
                     </p>
@@ -674,7 +674,7 @@ export default function ExternalStoragePanel() {
                     ) : null}
                     {file.status === 'restored' && file.restore_expires_at ? (
                       <p className="text-xs text-emerald-700">
-                        نسخهٔ محلی تا <span dir="ltr">{file.restore_expires_at}</span> در دسترس است.
+                        نسخهٔ محلی تا <span dir="rtl">{file.restore_expires_at}</span> در دسترس است.
                       </p>
                     ) : null}
                   </div>
