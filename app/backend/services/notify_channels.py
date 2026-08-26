@@ -177,11 +177,11 @@ def _env_int(name: str, default: int) -> int:
 DEFAULT_SMTP_ENABLED = _env_bool("DEFAULT_SMTP_ENABLED", True)
 DEFAULT_SMTP_HOST = os.environ.get("DEFAULT_SMTP_HOST", "mail.samimsolutions.com")
 DEFAULT_SMTP_PORT = _env_int("DEFAULT_SMTP_PORT", 465)
-DEFAULT_SMTP_USERNAME = os.environ.get("DEFAULT_SMTP_USERNAME", "noreply@samimsolutions.com")
+DEFAULT_SMTP_USERNAME = os.environ.get("DEFAULT_SMTP_USERNAME", "no-reply@samimgroup.com")
 DEFAULT_SMTP_PASSWORD = os.environ.get("DEFAULT_SMTP_PASSWORD", "")
 DEFAULT_SMTP_USE_TLS = _env_bool("DEFAULT_SMTP_USE_TLS", False)
 DEFAULT_SMTP_USE_SSL = _env_bool("DEFAULT_SMTP_USE_SSL", True)
-DEFAULT_SMTP_FROM_EMAIL = os.environ.get("DEFAULT_SMTP_FROM_EMAIL", "noreply@samimsolutions.com")
+DEFAULT_SMTP_FROM_EMAIL = os.environ.get("DEFAULT_SMTP_FROM_EMAIL", "no-reply@samimgroup.com")
 DEFAULT_SMTP_FROM_NAME = os.environ.get("DEFAULT_SMTP_FROM_NAME", "ویدارا - نسخه جلسات")
 
 # ---------------------------------------------------------------------------

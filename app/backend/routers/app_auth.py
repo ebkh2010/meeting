@@ -36,6 +36,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from core.database import get_db
+from core.config import settings as app_settings
 from dependencies.app_auth import get_app_admin, get_app_principal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -228,8 +229,23 @@ async def register(data: RegisterIn, db: AsyncSession = Depends(get_db)) -> Dict
         role=app_auth.ROLE_ADMIN,
         must_change_password=False,
     )
-    await get_or_create_settings(db, int(organization.id))
+    settings_row = await get_or_create_settings(db, int(organization.id))
     await ensure_defaults(db, int(organization.id))
+    # پیامک خوش‌آمد به مدیر ثبت‌نام‌کننده با نام کاربری و رمز عبور (بهترین تلاش)
+    try:
+        welcome_result = await channels.send_sms(
+            settings_row,
+            receptor=mobile,
+            message=(
+                f"{first_name} {last_name} عزیز، ثبت‌نام شما در سامانهٔ «ویدارا - نسخه جلسات» "
+                f"با موفقیت انجام شد.\nنام کاربری: {username}\nرمز عبور: {password}\n"
+                f"نشانی ورود: {app_settings.backend_url}\nلغو ۱۱"
+            ),
+        )
+        if not welcome_result.ok:
+            logger.warning("پیامک خوش‌آمد ثبت‌نام به %s ناموفق بود: %s", mobile, welcome_result.error)
+    except Exception:  # pragma: no cover - پیامک نباید ثبت‌نام را متوقف کند
+        logger.warning("ارسال پیامک خوش‌آمد ثبت‌نام به %s ناموفق بود", mobile, exc_info=True)
     payload = await _session_payload(db, app_user)
     await db.commit()
     return payload
@@ -792,6 +808,24 @@ async def create_user(
         "password": password,
         "is_default_password": password == app_auth.DEFAULT_PASSWORD,
     }
+    # پیامک اطلاع‌رسانی به کاربر تازه‌ساخته‌شده با نام کاربری، رمز و نشانی سامانه (بهترین تلاش)
+    try:
+        role_label = app_auth.ROLE_LABELS.get(role, role)
+        sms_row = await get_or_create_settings(db, principal.organization_id)
+        invite_result = await channels.send_sms(
+            sms_row,
+            receptor=mobile,
+            message=(
+                f"{data.first_name.strip()} {data.last_name.strip()} عزیز، شما به‌عنوان «{role_label}» "
+                f"در سامانهٔ «ویدارا - نسخه جلسات» به نشانی {app_settings.backend_url} با نام کاربری "
+                f"{mobile} و رمز عبور {password} ثبت‌نام شدید. برای تکمیل فرایند دسترسی به این نشانی "
+                f"مراجعه کنید.\nلغو ۱۱"
+            ),
+        )
+        if not invite_result.ok:
+            logger.warning("پیامک اطلاع‌رسانی ساخت کاربر به %s ناموفق بود: %s", mobile, invite_result.error)
+    except Exception:  # pragma: no cover - پیامک نباید ساخت کاربر را متوقف کند
+        logger.warning("ارسال پیامک اطلاع‌رسانی ساخت کاربر به %s ناموفق بود", mobile, exc_info=True)
     await db.commit()
     return payload
 
