@@ -1,13 +1,14 @@
-"""کانال‌های اعلان بیرونی: ایمیل (SMTP) و پیامک (قاصدک).
+"""کانال‌های اعلان بیرونی: ایمیل (SMTP) و پیامک (پارسااس‌ام‌اس).
 
 قواعد اصلی:
 
 * تنظیمات هر سازمان جدا نگه‌داری می‌شود (``org_notify_settings`` با ``organization_id``).
-* رمز SMTP و کلید API قاصدک رمزنگاری‌شده ذخیره می‌شوند و هرگز به فرانت‌اند بازنمی‌گردند.
-* قرارداد پیامک دقیقاً از مستند رسمی قاصدک پیروی می‌کند:
-  ``POST https://gateway.ghasedak.me/rest/api/v1/WebService/SendSingleSMS``
-  با هدرهای ``ApiKey`` و ``Content-Type: application/json`` و بدنهٔ
-  ``message`` / ``lineNumber`` / ``receptor`` / ``clientReferenceId``.
+* رمز SMTP و کلید API پیامک رمزنگاری‌شده ذخیره می‌شوند و هرگز به فرانت‌اند بازنمی‌گردند.
+* قرارداد پیامک از وب‌سرویس پارسااس‌ام‌اس پیروی می‌کند:
+  ``POST https://api.parsasms.com/v2/sms/send/simple``
+  با هدر ``apikey`` و بدنهٔ ``message`` / ``receptor`` / ``sender``.
+* متن فارسی پیامک باید عبارت انصراف «لغو ۱۱» را داشته باشد؛ بدون آن اپراتور
+  پیامک را فیلتر می‌کند و پنل وضعیت «۲۷» برمی‌گرداند و هزینه را پس می‌دهد.
 * شکست ارسال هرگز جریان اصلی (ایجاد جلسه) را متوقف نمی‌کند؛ نتیجه در
   ``notify_deliveries`` ثبت می‌شود و امکان «ارسال دوباره» وجود دارد.
 """
@@ -34,12 +35,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.org_notify_settings import Org_notify_settings
-from services.app_auth import GENDER_SALUTATION, decrypt_secret, encrypt_secret
+from services.app_auth import (
+    GENDER_FEMALE,
+    GENDER_MALE,
+    GENDER_SALUTATION,
+    decrypt_secret,
+    encrypt_secret,
+)
 
 logger = logging.getLogger(__name__)
 
-GHASEDAK_BASE_URL = "https://gateway.ghasedak.me/rest/api/v1/WebService"
-SEND_SINGLE_SMS_PATH = "/SendSingleSMS"
+PARSASMS_BASE_URL = os.environ.get("SMS_API_BASE_URL", "https://api.parsasms.com/v2")
+SEND_SIMPLE_SMS_PATH = "/sms/send/simple"
 SMS_TIMEOUT_SECONDS = 20.0
 SMTP_TIMEOUT_SECONDS = 20.0
 
@@ -74,23 +81,25 @@ def to_persian_digits(value: str) -> str:
 
 def gregorian_to_jalali(year: int, month: int, day: int) -> Tuple[int, int, int]:
     """تبدیل تاریخ میلادی به هجری شمسی (الگوریتم استاندارد بدون وابستگی بیرونی)."""
-    g_days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    jy = 0 if year <= 1600 else 979
-    gy = year - (621 if year <= 1600 else 1600)
+    if year <= 1600:
+        jy, gy = 0, 621
+    else:
+        jy, gy = 979, 1600
     gm = month - 1
     gd = day - 1
 
-    g_day_no = 365 * gy + (gy + 3) // 4 - (gy + 99) // 100 + (gy + 399) // 400
+    g_day_no = 365 * (year - gy) + (year - gy + 3) // 4 - (year - gy + 99) // 100 + (year - gy + 399) // 400
+    g_days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     for i in range(gm):
         g_day_no += g_days_in_month[i]
-    if gm > 1 and ((gy % 4 == 0 and gy % 100 != 0) or (gy % 400 == 0)):
+    if gm > 1 and ((year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)):
         g_day_no += 1
     g_day_no += gd
 
     j_day_no = g_day_no - 79
     j_np = j_day_no // 12053
     j_day_no %= 12053
-    jy += 979 * j_np + 33 * (j_day_no // 1461)
+    jy += 33 * j_np + 4 * (j_day_no // 1461)
     j_day_no %= 1461
     if j_day_no >= 366:
         jy += (j_day_no - 1) // 365
@@ -175,6 +184,40 @@ DEFAULT_SMTP_USE_SSL = _env_bool("DEFAULT_SMTP_USE_SSL", True)
 DEFAULT_SMTP_FROM_EMAIL = os.environ.get("DEFAULT_SMTP_FROM_EMAIL", "noreply@samimsolutions.com")
 DEFAULT_SMTP_FROM_NAME = os.environ.get("DEFAULT_SMTP_FROM_NAME", "ویدارا - نسخه جلسات")
 
+# ---------------------------------------------------------------------------
+# تنظیمات پیش‌فرض پیامک برای سازمان‌های تازه‌ثبت‌نام‌کرده
+# ---------------------------------------------------------------------------
+#
+# سازمان‌های جدید بدون هیچ پیکربندی‌ای از این پنل (پارسااس‌ام‌اس) برای ارسال
+# پیامک استفاده می‌کنند تا مدیر سازمان برای شروع کار نیازی به تنظیمات اولیه
+# نداشته باشد. مقادیر از متغیرهای محیطی قابل بازنویسی هستند.
+
+DEFAULT_SMS_ENABLED = _env_bool("DEFAULT_SMS_ENABLED", True)
+DEFAULT_SMS_API_KEY = os.environ.get(
+    "DEFAULT_SMS_API_KEY", "v6zgNiPwfm+GGlZymilBmSnsheRs2YPdFfMone6tC3c"
+)
+DEFAULT_SMS_LINE_NUMBER = os.environ.get("DEFAULT_SMS_LINE_NUMBER", "10002000100246")
+
+
+def _apply_default_sms(row: Org_notify_settings) -> None:
+    """پر کردن تنظیمات پیامک پیش‌فرض روی رکوردی که هنوز پیکربندی نشده است."""
+    row.sms_enabled = DEFAULT_SMS_ENABLED
+    row.sms_api_key_enc = encrypt_secret(DEFAULT_SMS_API_KEY)
+    row.sms_line_number = DEFAULT_SMS_LINE_NUMBER
+
+
+def _sms_configured(row: Org_notify_settings) -> bool:
+    """آیا سازمان تنظیمات پیامک خودش را انجام داده است؟
+
+    اگر مدیر تنظیمات را لمس کرده باشد (کلید یا شمارهٔ خط یا کلید فعال‌سازی ثبت
+    شده باشد)، پیش‌فرض روی آن اعمال نمی‌شود.
+    """
+    return bool(
+        row.sms_enabled
+        or (row.sms_api_key_enc or "").strip()
+        or (row.sms_line_number or "").strip()
+    )
+
 
 def _apply_default_smtp(row: Org_notify_settings) -> None:
     """پر کردن تنظیمات SMTP پیش‌فرض روی رکوردی که هنوز پیکربندی نشده است."""
@@ -207,8 +250,8 @@ async def get_or_create_settings(db: AsyncSession, organization_id: int) -> Org_
     """خواندن idempotent تنظیمات اعلان سازمان؛ در نبود رکورد، پیش‌فرض ساخته می‌شود.
 
     سازمان‌هایی که هنوز هیچ تنظیمی انجام نداده‌اند (اعم از تازه‌ثبت‌نام‌کرده و
-    قدیمیِ دست‌نخورده) به‌صورت خودکار SMTP پیش‌فرض را دریافت می‌کنند تا ایمیل
-    بدون نیاز به پیکربندی ارسال شود.
+    قدیمیِ دست‌نخورده) به‌صورت خودکار پیش‌فرض‌های SMTP و پیامک را دریافت
+    می‌کنند تا ایمیل و پیامک بدون نیاز به پیکربندی ارسال شوند.
     """
     result = await db.execute(
         select(Org_notify_settings).where(Org_notify_settings.organization_id == organization_id)
@@ -217,7 +260,9 @@ async def get_or_create_settings(db: AsyncSession, organization_id: int) -> Org_
     if row is not None:
         if not _smtp_configured(row):
             _apply_default_smtp(row)
-            await db.flush()
+        if not _sms_configured(row):
+            _apply_default_sms(row)
+        await db.flush()
         return row
     row = Org_notify_settings(
         organization_id=organization_id,
@@ -226,6 +271,7 @@ async def get_or_create_settings(db: AsyncSession, organization_id: int) -> Org_
         sms_line_number="",
     )
     _apply_default_smtp(row)
+    _apply_default_sms(row)
     db.add(row)
     await db.flush()
     return row
@@ -383,8 +429,24 @@ async def send_email(
 
 
 # ---------------------------------------------------------------------------
-# پیامک قاصدک
+# پیامک پارسااس‌ام‌اس
 # ---------------------------------------------------------------------------
+
+_SMS_ERROR_CODES: Dict[str, str] = {
+    "1": "نام کاربری یا رمز عبور معتبر نیست.",
+    "6": "حساب کاربری غیرفعال است.",
+    "7": "دسترسی به خط فرستنده وجود ندارد.",
+    "8": "شماره گیرنده نامعتبر است.",
+    "9": "اعتبار حساب کافی نیست.",
+    "11": "آدرس IP مجاز نیست.",
+    "20": "شماره مخاطب فیلتر شده است.",
+    "21": "ارتباط با سرویس‌دهنده قطع است.",
+    "29": "شماره فرستنده معتبر نیست.",
+}
+
+
+def _sms_error_detail(code: Any) -> str:
+    return _SMS_ERROR_CODES.get(str(code), f"کد خطای {code} از سرویس پیامک")
 
 
 async def send_sms(
@@ -394,34 +456,34 @@ async def send_sms(
     message: str,
     client_reference_id: str = "",
 ) -> SendResult:
-    """ارسال پیامک تکی مطابق مستند قاصدک (``POST /SendSingleSMS``)."""
+    """ارسال پیامک تکی از طریق وب‌سرویس پارسااس‌ام‌اس (``POST /v2/sms/send/simple``)."""
     if not row.sms_enabled:
         return SendResult(ok=False, error="ارسال پیامک برای این سازمان فعال نیست.")
     api_key = decrypt_secret(row.sms_api_key_enc or "")
     if not api_key:
-        return SendResult(ok=False, error="کلید API قاصدک ثبت نشده است.")
+        return SendResult(ok=False, error="کلید API پیامک ثبت نشده است.")
     if not row.sms_line_number:
-        return SendResult(ok=False, error="شماره خط فرستندهٔ قاصدک ثبت نشده است.")
+        return SendResult(ok=False, error="شماره خط فرستندهٔ پیامک ثبت نشده است.")
     if not receptor:
         return SendResult(ok=False, error="شماره موبایل گیرنده ثبت نشده است.")
 
     payload: Dict[str, Any] = {
-        "lineNumber": row.sms_line_number,
-        "receptor": receptor,
         "message": message,
-        "udh": False,
+        "receptor": receptor,
+        "sender": row.sms_line_number,
     }
-    if client_reference_id:
-        payload["clientReferenceId"] = client_reference_id
+    # شناسهٔ پیگیری یکتا از طرف کاربر؛ پنل فقط مقدار عددی می‌پذیرد.
+    if client_reference_id and str(client_reference_id).isdigit():
+        payload["checkmessageids"] = str(client_reference_id)
 
-    headers = {"ApiKey": api_key, "Content-Type": "application/json"}
-    url = f"{GHASEDAK_BASE_URL}{SEND_SINGLE_SMS_PATH}"
+    headers = {"apikey": api_key, "Content-Type": "application/json"}
+    url = f"{PARSASMS_BASE_URL}{SEND_SIMPLE_SMS_PATH}"
 
     try:
         async with httpx.AsyncClient(timeout=SMS_TIMEOUT_SECONDS) as http_client:
             response = await http_client.post(url, json=payload, headers=headers)
     except httpx.TimeoutException:
-        return SendResult(ok=False, error="سرویس پیامک قاصدک در زمان مجاز پاسخ نداد.")
+        return SendResult(ok=False, error="سرویس پیامک در زمان مجاز پاسخ نداد.")
     except httpx.HTTPError as exc:
         return SendResult(ok=False, error=f"اتصال به سرویس پیامک برقرار نشد: {exc.__class__.__name__}")
 
@@ -430,24 +492,26 @@ async def send_sms(
     except ValueError:
         body = {}
 
-    # پاسخ سرویس در مستند با هر دو حالت PascalCase و camelCase نمونه داده شده است.
-    is_success = body.get("IsSuccess")
-    if is_success is None:
-        is_success = body.get("isSuccess")
-    status_code = body.get("StatusCode") or body.get("statusCode") or response.status_code
-    provider_message = body.get("Message") or body.get("message") or ""
-    data = body.get("Data") or body.get("data") or {}
-    message_id = ""
-    if isinstance(data, dict):
-        message_id = str(data.get("MessageId") or data.get("messageId") or "")
-
-    if response.status_code >= 400 or is_success is False:
-        detail = provider_message or f"کد وضعیت {status_code}"
+    if response.status_code >= 400:
+        detail = body.get("Message") or body.get("message") or f"کد وضعیت {response.status_code}"
         return SendResult(ok=False, error=f"سرویس پیامک درخواست را نپذیرفت ({detail}).")
-    if is_success is None and response.status_code >= 300:
-        return SendResult(ok=False, error=f"پاسخ نامعتبر از سرویس پیامک (کد {response.status_code}).")
 
-    return SendResult(ok=True, provider_message_id=message_id)
+    result = body.get("result")
+    if result == "success":
+        raw_ids = body.get("messageids")
+        try:
+            numeric_ids = int(raw_ids)
+        except (TypeError, ValueError):
+            numeric_ids = 0
+        # طبق مستند: مقدار بزرگ‌تر از ۱۰۰۰ یعنی ارسال موفق؛ وگرنه کد خطا است.
+        if numeric_ids > 1000:
+            return SendResult(ok=True, provider_message_id=str(numeric_ids))
+        return SendResult(ok=False, error=_sms_error_detail(raw_ids))
+    if result == "error":
+        detail = body.get("message") or _sms_error_detail(body.get("messageids"))
+        return SendResult(ok=False, error=f"سرویس پیامک درخواست را نپذیرفت ({detail}).")
+
+    return SendResult(ok=False, error="پاسخ نامعتبر از سرویس پیامک.")
 
 
 # ---------------------------------------------------------------------------
@@ -460,26 +524,51 @@ def salutation(gender: str, full_name: str) -> str:
     return f"{prefix} {full_name}".strip() if prefix else full_name
 
 
+def sms_addressee(gender: str, full_name: str) -> str:
+    """خطاب گیرنده در پیامک: «آقای …» یا «خانم …» بر اساس جنسیت."""
+    name = (full_name or "").strip()
+    lowered = (gender or "").lower()
+    if lowered == GENDER_MALE:
+        return f"آقای {name}" if name else "کاربر گرامی"
+    if lowered == GENDER_FEMALE:
+        return f"خانم {name}" if name else "کاربر گرامی"
+    return name or "کاربر گرامی"
+
+
+def format_jalali_date_and_time(value: datetime) -> Tuple[str, str]:
+    """خروجی: (تاریخ شمسی با ارقام فارسی، ساعت با ارقام فارسی).
+
+    نمونه: ``("۲۸ مرداد ۱۴۰۵", "۱۰:۳۰")``.
+    """
+    local = to_tehran(value)
+    jy, jm, jd = gregorian_to_jalali(local.year, local.month, local.day)
+    date_str = f"{jd} {_JALALI_MONTHS[jm - 1]} {jy}"
+    time_str = f"{local.hour:02d}:{local.minute:02d}"
+    return to_persian_digits(date_str), to_persian_digits(time_str)
+
+
 def build_invite_sms(
     *,
     recipient_name: str,
     gender: str,
-    organization_name: str,
-    meeting_title: str,
     starts_at: datetime,
-    location: str,
-    online_url: str,
 ) -> str:
-    lines = [
-        f"{salutation(gender, recipient_name)}؛",
-        f"به جلسهٔ «{meeting_title}» در {organization_name} دعوت شده‌اید.",
-        f"زمان: {format_jalali_datetime(starts_at)}",
-    ]
-    if location:
-        lines.append(f"محل: {location}")
-    elif online_url:
-        lines.append("این جلسه برخط برگزار می‌شود.")
-    lines.append("ویدارا - نسخه جلسات")
+    """متن پیامک دعوت به جلسه.
+
+    قالب ثابت (مطابق الگوی مصوب):
+    «کاربر گرامی / آقای|خانم … / شما به یک جلسه در تاریخ … ساعت … دعوت شده‌اید /
+    برای اطلاع از جزئیات به ایمیل یا حساب کاربری در ویدارا نسخه جلسات مراجعه
+    بفرمایید. / لغو ۱۱»
+    عبارت «لغو ۱۱» الزامی است؛ بدون آن اپراتور پیامک را فیلتر می‌کند.
+    """
+    date_str, time_str = format_jalali_date_and_time(starts_at)
+    lines = ["کاربر گرامی"]
+    addressee = sms_addressee(gender, recipient_name)
+    if addressee and addressee != "کاربر گرامی":
+        lines.append(addressee)
+    lines.append(f"شما به یک جلسه در تاریخ {date_str} ساعت {time_str} دعوت شده اید")
+    lines.append("برای اطلاع از جزییات به ایمیل یا حساب کاربری در ویدارا نسخه جلسات مراجعه بفرمایید.")
+    lines.append("لغو ۱۱")
     return "\n".join(lines)
 
 

@@ -1,4 +1,4 @@
-"""روتر تنظیمات اعلان سازمان: SMTP و پیامک قاصدک + ارسال آزمایشی و گزارش ارسال."""
+"""روتر تنظیمات اعلان سازمان: SMTP و پیامک پارسا‌اس‌ام‌اس + ارسال آزمایشی و گزارش ارسال."""
 
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ async def update_settings(
         row.sms_line_number = app_auth.to_latin_digits(data.sms_line_number.strip())
     if data.sms_enabled is not None:
         if data.sms_enabled and not (row.sms_api_key_enc and row.sms_line_number):
-            raise app_auth.bad_request("برای فعال‌سازی پیامک، کلید API قاصدک و شمارهٔ خط الزامی است.")
+            raise app_auth.bad_request("برای فعال‌سازی پیامک، کلید API پیامک و شمارهٔ خط الزامی است.")
         row.sms_enabled = bool(data.sms_enabled)
 
     payload = channels.settings_payload(row)
@@ -144,7 +144,7 @@ async def test_sms(
     principal: app_auth.AppPrincipal = Depends(get_app_admin),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    """ارسال پیامک آزمایشی از سرویس قاصدک."""
+    """ارسال پیامک آزمایشی از سرویس پارسااس‌ام‌اس."""
     row = await channels.get_or_create_settings(db, principal.organization_id)
     target = app_auth.normalize_mobile(data.to_mobile) if data.to_mobile else (principal.mobile or "")
     if not target:
@@ -157,7 +157,7 @@ async def test_sms(
     result = await channels.send_sms(
         row,
         receptor=target,
-        message=f"پیامک آزمایشی ویدارا - نسخه جلسات\nزمان: {now_label}",
+        message=f"پیامک آزمایشی ویدارا - نسخه جلسات\nزمان: {now_label}\nلغو ۱۱",
         client_reference_id=f"test-{principal.organization_id}",
     )
     if not result.ok:

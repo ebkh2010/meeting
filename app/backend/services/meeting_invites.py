@@ -245,11 +245,7 @@ async def send_meeting_invites(
             sms_text = channels.build_invite_sms(
                 recipient_name=recipient["full_name"],
                 gender=recipient["gender"],
-                organization_name=organization_name,
-                meeting_title=meeting_snapshot["title"],
                 starts_at=meeting_snapshot["starts_at"],
-                location=meeting_snapshot["location"],
-                online_url=meeting_snapshot["online_url"],
             )
             sms_result = await channels.send_sms(
                 settings_row,
