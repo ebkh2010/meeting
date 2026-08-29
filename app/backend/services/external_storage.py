@@ -327,16 +327,15 @@ async def download_file(cfg: TargetConfig, remote_path: str, sink: Any) -> Tuple
                     *_webdav_auth(cfg)
                 )._auth_header
             response = await client.send(request, stream=True)
-            async with response:
-                if response.status_code >= 400:
-                    body = (await response.aread()).decode("utf-8", "ignore")
-                    raise _http_error("دریافت فایل از مقصد خارجی", response.status_code, body)
-                async for chunk in response.aiter_bytes(CHUNK_SIZE):
-                    if not chunk:
-                        continue
-                    digest.update(chunk)
-                    total += len(chunk)
-                    sink.write(chunk)
+            if response.status_code >= 400:
+                body = (await response.aread()).decode("utf-8", "ignore")
+                raise _http_error("دریافت فایل از مقصد خارجی", response.status_code, body)
+            async for chunk in response.aiter_bytes(CHUNK_SIZE):
+                if not chunk:
+                    continue
+                digest.update(chunk)
+                total += len(chunk)
+                sink.write(chunk)
     except httpx.HTTPError as exc:
         raise ExternalStorageError(
             "دریافت فایل از مقصد ذخیره‌سازی خارجی ناموفق بود؛ دسترسی شبکه را بررسی کنید."

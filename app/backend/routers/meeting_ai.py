@@ -516,7 +516,7 @@ async def suggest_decision_items(
         db,
         ctx,
         action="meeting.suggest_items",
-        entity="meetings",
+        entity_type="meetings",
         entity_id=int(meeting.id),
         detail="پیشنهاد هوشمند مصوبات و اقدامات از متن رونویسی",
     )

@@ -420,6 +420,10 @@ async def retry_job(
         raise app_auth.bad_request("کار درخواستی در سازمان شما یافت نشد.")
     if job.status in ACTIVE_JOB_STATUSES:
         return core.dump(job, JOB_FIELDS)
+    if job.status == JOB_SUCCEEDED:
+        raise app_auth.bad_request(
+            "این کار با موفقیت پایان یافته و نیازی به تلاش دوباره ندارد."
+        )
     if int(job.attempts or 0) >= int(job.max_attempts or 3):
         raise app_auth.bad_request(
             "سقف تلاش دوبارهٔ این کار به پایان رسیده است. لطفاً تنظیمات مقصد را بررسی کنید."
