@@ -48,7 +48,9 @@ logger = logging.getLogger(__name__)
 PARSASMS_BASE_URL = os.environ.get("SMS_API_BASE_URL", "https://api.parsasms.com/v2")
 SEND_SIMPLE_SMS_PATH = "/sms/send/simple"
 SMS_TIMEOUT_SECONDS = 20.0
-SMTP_TIMEOUT_SECONDS = 20.0
+# برخی سرورهای ایمیل (مانند cPanel با recipient-verification) برای هر گیرنده
+# تا ~۳۰ ثانیه معطل می‌کنند؛ تایماوت کوتاه باعث قطع جعلی اتصال می‌شد.
+SMTP_TIMEOUT_SECONDS = 180.0
 
 TEHRAN_OFFSET = timedelta(hours=3, minutes=30)
 
