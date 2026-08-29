@@ -171,6 +171,22 @@ export interface TranscriptSegment {
   text: string;
   start?: number;
   end?: number;
+  start_ms?: number;
+  end_ms?: number;
+  speaker?: string;
+}
+
+/** گویندهٔ تفکیک‌شده در رونویسی + نام دلخواه کاربر (در نبودش برچسب پیش‌فرض). */
+export interface MeetingSpeaker {
+  id: number;
+  meeting_id: number;
+  transcript_id: number | null;
+  speaker_key: string;
+  display_name: string | null;
+  default_label: string;
+  segment_count: number;
+  total_ms: number;
+  first_start_ms: number;
 }
 
 export interface Transcript {
@@ -593,6 +609,23 @@ export const api = {
   meetingJobs: (meetingId: number) =>
     invoke<{ jobs: Job[]; transcript: Transcript | null }>(`${AI}/meetings/${meetingId}/jobs`),
   retryJob: (jobId: number) => invoke<Job>(`${AI}/jobs/${jobId}/retry`, 'POST'),
+
+  meetingSpeakers: (meetingId: number) =>
+    invoke<{
+      transcript_id: number | null;
+      speakers: MeetingSpeaker[];
+      segments: TranscriptSegment[];
+    }>(`${AI}/meetings/${meetingId}/speakers`),
+  renameSpeaker: (speakerId: number, displayName: string) =>
+    invoke<MeetingSpeaker>(`${AI}/speakers/${speakerId}`, 'PATCH', { display_name: displayName }),
+  speakerClipUrl: (speakerId: number) =>
+    invoke<{
+      clip_url: string;
+      expires_at: string;
+      start_ms: number;
+      end_ms: number;
+      speaker_key: string;
+    }>(`${AI}/speakers/${speakerId}/clip-url`),
 
   saveMinutes: (payload: {
     meeting_id: number;

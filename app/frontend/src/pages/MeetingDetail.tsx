@@ -53,6 +53,7 @@ import {
   JOB_TYPE_LABELS,
   MEETING_STATUS_LABELS,
   MeetingDetail as MeetingDetailData,
+  MeetingSpeaker,
   MINUTES_STATUS_LABELS,
   Member,
   MinuteVersion,
@@ -75,6 +76,7 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
   const [detail, setDetail] = useState<MeetingDetailData | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [transcript, setTranscript] = useState<Transcript | null>(null);
+  const [speakers, setSpeakers] = useState<MeetingSpeaker[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [versions, setVersions] = useState<MinuteVersion[]>([]);
   const [error, setError] = useState('');
@@ -100,15 +102,25 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
     }
   }, [id]);
 
+  const loadSpeakers = useCallback(async () => {
+    try {
+      const data = await api.meetingSpeakers(id);
+      setSpeakers(data.speakers);
+    } catch {
+      setSpeakers([]);
+    }
+  }, [id]);
+
   useEffect(() => {
     if (!Number.isFinite(id)) return;
     loadDetail();
     loadJobs();
+    loadSpeakers();
     api
       .members()
       .then((data) => setMembers(data.members))
       .catch(() => setMembers([]));
-  }, [id, loadDetail, loadJobs]);
+  }, [id, loadDetail, loadJobs, loadSpeakers]);
 
   // پیگیری کارهای در جریان: هر ۶ ثانیه وضعیت صف بررسی می‌شود.
   useEffect(() => {
@@ -128,6 +140,7 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
       );
       if (!stillActive) {
         await loadDetail();
+        await loadSpeakers();
         if (pollRef.current) {
           window.clearInterval(pollRef.current);
           pollRef.current = null;
@@ -140,7 +153,7 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
         pollRef.current = null;
       }
     };
-  }, [jobs, loadDetail, loadJobs]);
+  }, [jobs, loadDetail, loadJobs, loadSpeakers]);
 
   const loadVersions = useCallback(async () => {
     try {
@@ -280,12 +293,15 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
             detail={detail}
             jobs={jobs}
             transcript={transcript}
+            speakers={speakers}
             canManage={canManage}
             quotaRemaining={bootstrap.quota.remaining_minutes}
             onDone={async () => {
               await loadDetail();
               await loadJobs();
+              await loadSpeakers();
             }}
+            onSpeakersChanged={loadSpeakers}
           />
         </TabsContent>
 
@@ -634,21 +650,31 @@ function AudioAndTranscript({
   detail,
   jobs,
   transcript,
+  speakers,
   canManage,
   quotaRemaining,
   onDone,
+  onSpeakersChanged,
 }: {
   detail: MeetingDetailData;
   jobs: Job[];
   transcript: Transcript | null;
+  speakers: MeetingSpeaker[];
   canManage: boolean;
   quotaRemaining: number;
   onDone: () => Promise<void>;
+  onSpeakersChanged: () => Promise<void>;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [consent, setConsent] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
+  /** کلیپ آمادهٔ پخش هر گوینده (شناسهٔ گوینده → نشانی امضاشده). */
+  const [clipUrls, setClipUrls] = useState<Record<number, string>>({});
+  const [loadingClip, setLoadingClip] = useState<number | null>(null);
+  /** نام در حال ویرایش هر گوینده (تا پیش از ذخیره). */
+  const [nameDrafts, setNameDrafts] = useState<Record<number, string>>({});
+  const [savingName, setSavingName] = useState<number | null>(null);
   /**
    * درصد پیشرفت بارگذاری صوت.
    *
@@ -736,6 +762,57 @@ function AudioAndTranscript({
       await onDone();
     } catch (err) {
       toast.error(errorMessage(err, 'اجرای دوبارهٔ کار ناموفق بود.'));
+    }
+  };
+
+  /** نمایش زمان قطعه به شکل دقیقه:ثانیه (فارسی). */
+  const formatMs = (ms?: number) => {
+    if (ms === undefined || ms === null) return '--:--';
+    const total = Math.max(Math.floor(ms / 1000), 0);
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return `${toPersianDigits(String(minutes).padStart(2, '0'))}:${toPersianDigits(
+      String(seconds).padStart(2, '0'),
+    )}`;
+  };
+
+  /** نام قابل نمایش هر گوینده: نام کاربر یا برچسب پیش‌فرض. */
+  const speakerNameOf = (key?: string) => {
+    if (!key) return '';
+    const speaker = speakers.find((item) => item.speaker_key === key);
+    return speaker?.display_name || speaker?.default_label || key;
+  };
+
+  const segments = transcript?.segments || [];
+  const hasSpeakerSegments = segments.some((segment) => Boolean(segment.speaker));
+
+  const playClip = async (speakerId: number) => {
+    setLoadingClip(speakerId);
+    try {
+      const data = await api.speakerClipUrl(speakerId);
+      setClipUrls((prev) => ({ ...prev, [speakerId]: data.clip_url }));
+    } catch (err) {
+      toast.error(errorMessage(err, 'دریافت نمونهٔ صدای گوینده ناموفق بود.'));
+    } finally {
+      setLoadingClip(null);
+    }
+  };
+
+  const saveSpeakerName = async (speakerId: number) => {
+    const name = (nameDrafts[speakerId] ?? '').trim();
+    if (!name) {
+      toast.error('نام گوینده را وارد کنید.');
+      return;
+    }
+    setSavingName(speakerId);
+    try {
+      await api.renameSpeaker(speakerId, name);
+      toast.success('نام گوینده ذخیره شد.');
+      await onSpeakersChanged();
+    } catch (err) {
+      toast.error(errorMessage(err, 'ذخیرهٔ نام گوینده ناموفق بود.'));
+    } finally {
+      setSavingName(null);
     }
   };
 
@@ -877,6 +954,75 @@ function AudioAndTranscript({
           </CardContent>
         </Card>
 
+        {speakers.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">گوینده‌های جلسه</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                برای تشخیص اینکه هر گوینده کیست، چند ثانیه از صدای او را بشنوید و نامش را وارد
+                کنید. نام‌ها در متن رونویسی جایگزین برچسب گوینده می‌شوند.
+              </p>
+              {speakers.map((speaker) => {
+                const draft = nameDrafts[speaker.id] ?? speaker.display_name ?? '';
+                const clipUrl = clipUrls[speaker.id];
+                return (
+                  <div key={speaker.id} className="rounded-md border border-border p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-sm font-medium">
+                        {speakerNameOf(speaker.speaker_key)}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {toPersianDigits(speaker.segment_count)} قطعه · {formatMs(speaker.total_ms)}{' '}
+                        صحبت
+                      </span>
+                    </div>
+                    {canManage && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <Input
+                          value={draft}
+                          placeholder={speaker.default_label}
+                          className="h-8 max-w-xs text-sm"
+                          onChange={(event) =>
+                            setNameDrafts((prev) => ({
+                              ...prev,
+                              [speaker.id]: event.target.value,
+                            }))
+                          }
+                        />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={savingName === speaker.id || !draft.trim()}
+                          onClick={() => saveSpeakerName(speaker.id)}
+                        >
+                          {savingName === speaker.id ? 'در حال ذخیره…' : 'ذخیرهٔ نام'}
+                        </Button>
+                      </div>
+                    )}
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={loadingClip === speaker.id}
+                        onClick={() => playClip(speaker.id)}
+                      >
+                        {loadingClip === speaker.id
+                          ? 'در حال ساخت نمونه…'
+                          : clipUrl
+                            ? 'نمونهٔ صدا'
+                            : 'شنیدن نمونهٔ صدا'}
+                      </Button>
+                      {clipUrl && <audio controls src={clipUrl} className="h-9 min-w-0 flex-1" />}
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
+
         <Card>
           <CardHeader>
             <CardTitle className="text-base">متن رونویسی</CardTitle>
@@ -904,9 +1050,27 @@ function AudioAndTranscript({
                     کنید.
                   </p>
                 )}
-                <div className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-md border border-border p-3 text-sm leading-7">
-                  {transcript.full_text || 'متنی ثبت نشده است.'}
-                </div>
+                {hasSpeakerSegments ? (
+                  <div className="max-h-96 space-y-2 overflow-y-auto rounded-md border border-border p-3">
+                    {segments.map((segment, index) => (
+                      <div key={index} className="text-sm leading-7">
+                        <span className="me-2 inline-flex items-center gap-1 align-top">
+                          <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">
+                            {speakerNameOf(segment.speaker) || 'بدون گوینده'}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {formatMs(segment.start_ms)}
+                          </span>
+                        </span>
+                        <span className="whitespace-pre-wrap">{segment.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-md border border-border p-3 text-sm leading-7">
+                    {transcript.full_text || 'متنی ثبت نشده است.'}
+                  </div>
+                )}
               </>
             )}
           </CardContent>

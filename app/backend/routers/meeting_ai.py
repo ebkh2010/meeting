@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.agenda_items import Agenda_items
 from models.jobs import Jobs
 from models.meetings import Meetings
+from models.meeting_speakers import Meeting_speakers
 from models.minute_versions import Minute_versions
 from models.minutes import Minutes
 from models.decisions import Decisions
@@ -41,6 +42,7 @@ from models.recordings import Recordings
 from models.transcripts import Transcripts
 from services import ai_providers
 from services import ai_usage
+from services import meeting_speakers as speakers_service
 from services import mgmt_core as core
 from services import upload_limits as limits_service
 from services.ai_gateway import (
@@ -574,6 +576,114 @@ async def meeting_jobs(
         "jobs": [dump(job, JOB_FIELDS) for job in jobs],
         "transcript": core.transcript_payload(transcript) if transcript else None,
     }
+
+
+class SpeakerRenameIn(BaseModel):
+    """نام دلخواه کاربر برای گویندهٔ ناشناس (فقط مدیر جلسه)."""
+
+    display_name: str = Field(..., min_length=1, max_length=100)
+
+
+async def _latest_transcript(db: AsyncSession, organization_id: int, meeting_id: int) -> Optional[Transcripts]:
+    result = await db.execute(
+        select(Transcripts)
+        .where(
+            Transcripts.organization_id == organization_id,
+            Transcripts.meeting_id == meeting_id,
+        )
+        .order_by(Transcripts.id.desc())
+    )
+    return result.scalars().first()
+
+
+@router.get("/meetings/{meeting_id}/speakers")
+async def meeting_speakers(
+    meeting_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """گوینده‌های تفکیک‌شدهٔ رونویسی جلسه + قطعات زمان‌دار برای نمایش تفکیک‌شده."""
+    ctx = await resolve_context(db, current_user)
+    await get_owned(db, Meetings, meeting_id, ctx, "جلسه")
+    transcript = await _latest_transcript(db, ctx.organization_id, meeting_id)
+    segments = speakers_service.segments_of(transcript)
+    rows = await speakers_service.ensure_meeting_speakers(
+        db,
+        organization_id=ctx.organization_id,
+        meeting_id=meeting_id,
+        transcript=transcript,
+    )
+    await db.commit()
+    return {
+        "transcript_id": int(transcript.id) if transcript else None,
+        "speakers": speakers_service.speakers_payload(rows, segments),
+        "segments": segments,
+    }
+
+
+@router.patch("/speakers/{speaker_id}")
+async def rename_speaker(
+    speaker_id: int,
+    payload: SpeakerRenameIn,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """نام‌گذاری گوینده توسط مدیر جلسه؛ در نمایش رونویسی بلافاصله جایگزین برچسب می‌شود."""
+    ctx = await resolve_context(db, current_user)
+    speaker = await get_owned(db, Meeting_speakers, speaker_id, ctx, "گوینده")
+    meeting = await get_owned(db, Meetings, int(speaker.meeting_id), ctx, "جلسه")
+    require_meeting_manager(ctx, meeting)
+    display_name = payload.display_name.strip()
+    if not display_name:
+        raise bad_request("نام گوینده نمی‌تواند خالی باشد.")
+    speaker.display_name = display_name
+    await audit(
+        db,
+        ctx,
+        "speaker.renamed",
+        entity_type="meeting_speaker",
+        entity_id=int(speaker.id),
+        detail=f"{speaker.speaker_key} → {display_name}",
+    )
+    await db.commit()
+    return {
+        "id": int(speaker.id),
+        "meeting_id": int(speaker.meeting_id),
+        "transcript_id": speaker.transcript_id,
+        "speaker_key": speaker.speaker_key,
+        "display_name": speaker.display_name,
+        "default_label": speakers_service.default_speaker_label(speaker.speaker_key),
+    }
+
+
+@router.get("/speakers/{speaker_id}/clip-url")
+async def speaker_clip_url(
+    speaker_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """کلیپ کوتاه صدای گوینده برای شناسایی؛ در نبودش ساخته و در استوریج خصوصی ذخیره می‌شود."""
+    ctx = await resolve_context(db, current_user)
+    speaker = await get_owned(db, Meeting_speakers, speaker_id, ctx, "گوینده")
+    await get_owned(db, Meetings, int(speaker.meeting_id), ctx, "جلسه")
+    transcript = await _latest_transcript(db, ctx.organization_id, int(speaker.meeting_id))
+    recording = None
+    if transcript is not None and transcript.recording_id:
+        result = await db.execute(
+            select(Recordings).where(
+                Recordings.organization_id == ctx.organization_id,
+                Recordings.id == int(transcript.recording_id),
+            )
+        )
+        recording = result.scalars().first()
+    try:
+        payload = await speakers_service.ensure_speaker_clip(
+            db, speaker=speaker, transcript=transcript, recording=recording
+        )
+    except ValueError as exc:
+        raise bad_request(str(exc))
+    await db.commit()
+    return payload
 
 
 @router.post("/jobs/{job_id}/retry")
