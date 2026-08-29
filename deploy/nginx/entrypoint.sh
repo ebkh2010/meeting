@@ -21,17 +21,31 @@ MAX_UPLOAD_SIZE="${MAX_UPLOAD_SIZE:-2048m}"
 STORAGE_PORT="${STORAGE_PORT:-8443}"
 export APP_DOMAIN STORAGE_DOMAIN MAX_UPLOAD_SIZE STORAGE_PORT
 
-CERT_DIR="/etc/letsencrypt/live/${APP_DOMAIN}"
-if [ -s "${CERT_DIR}/fullchain.pem" ] && [ -s "${CERT_DIR}/privkey.pem" ]; then
+# گواهی دستی (تأمین‌شده توسط مدیر) اولویت دارد؛ در نبودش به مسیر Let's Encrypt
+# نگاه می‌کنیم و اگر هیچ گواهی‌ای نبود فقط HTTP بالا می‌آید.
+CERT_FULLCHAIN=""
+CERT_PRIVKEY=""
+if [ -s "/etc/nginx/certs/fullchain.pem" ] && [ -s "/etc/nginx/certs/privkey.pem" ]; then
+    CERT_FULLCHAIN="/etc/nginx/certs/fullchain.pem"
+    CERT_PRIVKEY="/etc/nginx/certs/privkey.pem"
+    echo "[اطلاع] گواهی دستی یافت شد؛ پیکربندی HTTPS فعال می‌شود."
+elif [ -s "/etc/letsencrypt/live/${APP_DOMAIN}/fullchain.pem" ] && [ -s "/etc/letsencrypt/live/${APP_DOMAIN}/privkey.pem" ]; then
+    CERT_FULLCHAIN="/etc/letsencrypt/live/${APP_DOMAIN}/fullchain.pem"
+    CERT_PRIVKEY="/etc/letsencrypt/live/${APP_DOMAIN}/privkey.pem"
+    echo "[اطلاع] گواهی Let's Encrypt یافت شد؛ پیکربندی HTTPS فعال می‌شود."
+else
+    echo "[هشدار] گواهی SSL یافت نشد؛ فعلاً فقط HTTP فعال است."
+fi
+export CERT_FULLCHAIN CERT_PRIVKEY
+
+if [ -n "${CERT_FULLCHAIN}" ]; then
     TEMPLATE="/etc/nginx/templates/https.conf.template"
-    echo "[اطلاع] گواهی SSL برای ${APP_DOMAIN} یافت شد؛ پیکربندی HTTPS فعال می‌شود."
 else
     TEMPLATE="/etc/nginx/templates/http.conf.template"
-    echo "[هشدار] گواهی SSL یافت نشد؛ فعلاً فقط HTTP فعال است. پس از صدور گواهی، سرویس پروکسی را دوباره راه‌اندازی کنید."
 fi
 
 mkdir -p /var/www/certbot
-envsubst '${APP_DOMAIN} ${STORAGE_DOMAIN} ${MAX_UPLOAD_SIZE} ${STORAGE_PORT}' \
+envsubst '${APP_DOMAIN} ${STORAGE_DOMAIN} ${MAX_UPLOAD_SIZE} ${STORAGE_PORT} ${CERT_FULLCHAIN} ${CERT_PRIVKEY}' \
     < "${TEMPLATE}" > /etc/nginx/conf.d/default.conf
 
 nginx -t

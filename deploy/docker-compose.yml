@@ -114,10 +114,9 @@ services:
     <<: *common
     image: nginx:1.27-alpine
     ports:
-      - "80:80"
-      # پورت storage: بدون دامنه = ۸۴۴۳ (دسترسی مستقیم با IP)؛
-      # با دامنه و SSL آن را ۴۴۳ بگذارید تا روی همان پورت اپ بنشیند.
-      - "${STORAGE_PORT:-8443}:${STORAGE_PORT:-8443}"
+      # اپ روی پورت‌های سفارشی ۷۰۸۰/۷۴۴۳ اکسپوز می‌شود؛ ۸۰ و ۸۴۴۳ آزادند.
+      - "7080:80"
+      - "7443:${STORAGE_PORT:-8443}"
     environment:
       APP_DOMAIN: ${APP_DOMAIN:?متغیر APP_DOMAIN تنظیم نشده است}
       STORAGE_DOMAIN: ${STORAGE_DOMAIN:?متغیر STORAGE_DOMAIN تنظیم نشده است}
@@ -128,26 +127,12 @@ services:
     volumes:
       - ./nginx/entrypoint.sh:/etc/nginx/entrypoint.sh:ro
       - ./nginx/templates:/etc/nginx/templates:ro
-      - letsencrypt:/etc/letsencrypt
-      - certbot_webroot:/var/www/certbot
+      # گواهی دستی سایت: fullchain.pem و privkey.pem را در deploy/nginx/certs بگذارید
+      - ./nginx/certs:/etc/nginx/certs:ro
     depends_on:
       - backend
       - frontend
       - minio
-
-  # تمدید خودکار گواهی؛ صدور اولیه با اسکریپت نصب انجام می‌شود.
-  certbot:
-    <<: *common
-    image: certbot/certbot:v3.3.0
-    entrypoint: >
-      /bin/sh -c "trap exit TERM;
-      while :; do
-        certbot renew --webroot --webroot-path /var/www/certbot --quiet;
-        sleep 12h & wait $${!};
-      done"
-    volumes:
-      - letsencrypt:/etc/letsencrypt
-      - certbot_webroot:/var/www/certbot
 
 networks:
   internal:
@@ -156,6 +141,4 @@ networks:
 volumes:
   db_data:
   minio_data:
-  letsencrypt:
-  certbot_webroot:
   backend_logs:

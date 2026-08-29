@@ -34,8 +34,8 @@ server {
     http2 on;
     server_name ${APP_DOMAIN} www.${APP_DOMAIN};
 
-    ssl_certificate /etc/letsencrypt/live/${APP_DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${APP_DOMAIN}/privkey.pem;
+    ssl_certificate ${CERT_FULLCHAIN};
+    ssl_certificate_key ${CERT_PRIVKEY};
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
     ssl_session_cache shared:SSL:10m;
@@ -89,8 +89,8 @@ server {
     http2 on;
     server_name ${STORAGE_DOMAIN};
 
-    ssl_certificate /etc/letsencrypt/live/${APP_DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${APP_DOMAIN}/privkey.pem;
+    ssl_certificate ${CERT_FULLCHAIN};
+    ssl_certificate_key ${CERT_PRIVKEY};
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_session_cache shared:SSL:10m;
 
