@@ -91,10 +91,16 @@ if [ -d "${WORK_DIR}/storage" ]; then
     MINIO_CID="$(compose ps -q minio)"
     if [ -n "${MINIO_CID}" ]; then
         docker exec "${MINIO_CID}" rm -rf /tmp/restore-storage >/dev/null 2>&1 || true
-        docker cp "${WORK_DIR}/storage" "${MINIO_CID}:/tmp/restore-storage" >/dev/null
+        # کپی محتوای پوشهٔ storage (با/.) تا باکت‌ها مستقیماً زیر /tmp/restore-storage
+        # بنشینند و mc mirror آن‌ها را به همان نام باکت اصلی برگرداند.
+        docker cp "${WORK_DIR}/storage/." "${MINIO_CID}:/tmp/restore-storage" >/dev/null
         compose exec -T minio mc alias set local http://127.0.0.1:9000 \
             "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}" >/dev/null
-        compose exec -T minio mc mirror --overwrite --quiet /tmp/restore-storage local >/dev/null 2>&1 || true
+        if ! MC_LOG="$(compose exec -T minio mc mirror --overwrite --quiet /tmp/restore-storage local 2>&1)"; then
+            echo "[خطا] بازگرداندن فایل‌های ذخیره‌سازی ناموفق بود؛ بازیابی متوقف شد تا وضعیت ناقص نماند." >&2
+            echo "${MC_LOG}" | tail -5 >&2 || true
+            exit 1
+        fi
         docker exec "${MINIO_CID}" rm -rf /tmp/restore-storage >/dev/null 2>&1 || true
         echo "[موفق] فایل‌ها بازگردانده شدند."
     fi
@@ -106,7 +112,9 @@ echo "[اطلاع] راه‌اندازی دوبارهٔ سرویس‌ها..."
 compose up -d
 
 for _ in $(seq 1 60); do
-    if compose exec -T backend curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+    # ایمیج بک‌اند (python:3.11-slim) شامل curl نیست؛ بررسی سلامت با خودِ پایتون
+    # انجام می‌شود تا نتیجهٔ بازیابی همیشه درست گزارش شود.
+    if compose exec -T backend python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status==200 else 1)" >/dev/null 2>&1; then
         echo "[موفق] بازیابی کامل شد و سامانه سالم است."
         exit 0
     fi

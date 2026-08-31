@@ -49,12 +49,26 @@ echo "[اطلاع] کپی فایل‌های فضای ذخیره‌سازی..."
 mkdir -p "${WORK_DIR}/storage"
 compose exec -T minio mc alias set local http://127.0.0.1:9000 \
     "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}" >/dev/null
-compose exec -T minio mc mirror --overwrite --quiet local /tmp/backup-storage >/dev/null 2>&1 || true
-MINIO_CID="$(compose ps -q minio)"
-if [ -n "${MINIO_CID}" ]; then
-    docker cp "${MINIO_CID}:/tmp/backup-storage" "${WORK_DIR}/storage" >/dev/null 2>&1 || true
-    docker exec "${MINIO_CID}" rm -rf /tmp/backup-storage >/dev/null 2>&1 || true
+# شکست در این مرحله باید پشتیبان‌گیری را متوقف کند؛ پشتیبان ناقص نباید بی‌صدا
+# به‌عنوان «موفق» گزارش شود.
+if ! MC_LOG="$(compose exec -T minio mc mirror --overwrite --quiet local /tmp/backup-storage 2>&1)"; then
+    echo "[خطا] کپی فایل‌های فضای ذخیره‌سازی ناموفق بود؛ پشتیبان‌گیری متوقف شد تا پشتیبان ناقص ساخته نشود." >&2
+    echo "${MC_LOG}" | tail -5 >&2 || true
+    echo "        بررسی کنید: bash scripts/status.sh و bash scripts/logs.sh minio" >&2
+    exit 1
 fi
+MINIO_CID="$(compose ps -q minio)"
+if [ -z "${MINIO_CID}" ]; then
+    echo "[خطا] کانتینر MinIO یافت نشد؛ پشتیبان‌گیری متوقف شد." >&2
+    exit 1
+fi
+# کپی محتوای پوشهٔ mirror (با/.) تا در بایگانی، باکت‌ها مستقیم زیر storage/ بنشینند
+# و restore.sh آن‌ها را به همان نام باکت اصلی برگرداند.
+if ! docker cp "${MINIO_CID}:/tmp/backup-storage/." "${WORK_DIR}/storage" >/dev/null 2>&1; then
+    echo "[خطا] انتقال فایل‌ها از کانتینر MinIO به میزبان ناموفق بود؛ پشتیبان‌گیری متوقف شد." >&2
+    exit 1
+fi
+docker exec "${MINIO_CID}" rm -rf /tmp/backup-storage >/dev/null 2>&1 || true
 echo "[موفق] فایل‌های ذخیره‌سازی کپی شدند."
 
 echo "[اطلاع] افزودن فایل کلیدها..."

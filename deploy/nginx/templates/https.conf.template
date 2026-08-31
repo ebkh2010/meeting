@@ -1,6 +1,12 @@
-# پیکربندی تولیدی با SSL
+# پیکربندی HTTPS با گواهی دستی (deploy/nginx/certs)
 # دامنهٔ برنامه: فرانت استاتیک + مسیر /api به بک‌اند
 # دامنهٔ ذخیره‌سازی: نشانی‌های امضاشدهٔ بارگذاری/دریافت فایل به MinIO
+#
+# نکتهٔ پورت‌ها: compose فقط پورت ۸۰ (روی میزبان با APP_PORT، پیش‌فرض ۷۰۸۰) و
+# پورت STORAGE_PORT (روی میزبان با STORAGE_HOST_PORT، پیش‌فرض ۷۴۴۳) را منتشر
+# می‌کند؛ بنابراین TLS اپ روی همین پورت ۸۰ کانتینر گوش می‌دهد (پورت ۴۴۳ کانتینر
+# جایی منتشر نمی‌شود). ریدایرکت HTTP هم پورت را از هدر Host حفظ می‌کند تا
+# در پورت‌های سفارشی درست کار کند.
 
 upstream vidara_backend {
     server backend:8000;
@@ -14,23 +20,18 @@ upstream vidara_storage {
     server minio:9000;
 }
 
-# هدایت همهٔ ترافیک HTTP به HTTPS (به‌جز چالش ACME)
+# هدایت همهٔ ترافیک HTTP به HTTPS (با حفظ پورت از هدر Host)
 server {
     listen 80;
     server_name ${APP_DOMAIN} ${STORAGE_DOMAIN};
 
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-        default_type "text/plain";
-    }
-
     location / {
-        return 301 https://$host$request_uri;
+        return 301 https://$http_host$request_uri;
     }
 }
 
 server {
-    listen 443 ssl;
+    listen 80 ssl;
     http2 on;
     server_name ${APP_DOMAIN} www.${APP_DOMAIN};
 
@@ -47,11 +48,6 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
     client_max_body_size ${MAX_UPLOAD_SIZE};
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-        default_type "text/plain";
-    }
 
     location /api/ {
         proxy_pass http://vidara_backend;
@@ -97,11 +93,6 @@ server {
     add_header Strict-Transport-Security "max-age=31536000" always;
 
     client_max_body_size ${MAX_UPLOAD_SIZE};
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-        default_type "text/plain";
-    }
 
     location / {
         proxy_pass http://vidara_storage;

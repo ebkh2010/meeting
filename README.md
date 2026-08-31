@@ -10,8 +10,8 @@
 - **Backend:** FastAPI (async) + SQLAlchemy 2 + PostgreSQL 16 + Alembic
 - **Frontend:** React 18 + TypeScript + Vite 5 + shadcn/ui + Tailwind (RTL فارسی)
 - **Storage:** MinIO (S3-compatible) از طریق دروازهٔ `oss-gateway` با نشانی‌های امضاشده
-- **Proxy/TLS:** nginx + certbot (Let's Encrypt)
-- **اجرا:** Docker + Docker Compose — تنها پورت‌های ۸۰/۴۴۳ منتشر می‌شوند
+- **Proxy/TLS:** nginx — گواهی به‌صورت دستی در `deploy/nginx/certs` قرار می‌گیرد، یا TLS در لبهٔ شبکه (nginx میزبان/CDN) خاتمه می‌یابد
+- **اجرا:** Docker + Docker Compose — فقط سرویس proxy پورت منتشر می‌کند (پیش‌فرض: ۷۰۸۰ سامانه و ۷۴۴۳ فایل‌ها؛ با متغیرهای `APP_PORT`/`STORAGE_HOST_PORT` قابل تغییر)
 
 ## استقرار سریع
 
@@ -28,8 +28,9 @@ bash scripts/install.sh      # بیلد ایمیج‌ها + اجرا + باکت�
 - **ساخت ایمیج‌ها بدون وابستگی به PyPI/apt:** بسته‌های pip از آینهٔ در دسترس
   (`mirror-pypi.runflare.com`) نصب می‌شوند و ffmpeg/فونت‌ها به‌صورت استاتیک در
   `app/backend/bundle/` باندل شده‌اند — مناسب سرورهای دارای شبکهٔ فیلترشده.
-- **حالت بدون دامنه:** با `STORAGE_PORT=8443` فایل‌ها از پورت جداگانه سرو
-  می‌شوند تا سامانه با IP هم کامل کار کند (جزئیات در `.env.example`).
+- **حالت بدون دامنه:** مسیر فایل‌ها از پورت جداگانهٔ میزبان سرو می‌شود
+  (پیش‌فرض `STORAGE_HOST_PORT=7443`) تا سامانه با IP هم کامل کار کند؛ اگر TLS را
+  در لبه خاتمه می‌دهید، لبه باید به پورت‌های ۷۰۸۰/۷۴۴۳ پراکسی کند (جزئیات در `.env.example`).
 - **سرویس رونویسی «حرف»** فقط با نام کاربری/رمز عبور (`/auth/glogin/`) کار
   می‌کند و فایل به‌صورت مستقیم multipart ارسال می‌شود.
 - فایل‌های محلی توسعه (کلیدهای SSH، فایل‌های تست و …) در `.gitignore` هستند و

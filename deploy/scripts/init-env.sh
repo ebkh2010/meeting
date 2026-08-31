@@ -38,10 +38,10 @@ if [ -z "${STORAGE_DOMAIN_INPUT}" ]; then
     STORAGE_DOMAIN_INPUT="${STORAGE_DOMAIN_INPUT:-storage.${APP_DOMAIN_INPUT}}"
 fi
 if [ -z "${LETSENCRYPT_EMAIL_INPUT}" ]; then
-    read -r -p "ایمیل معتبر برای گواهی SSL: " LETSENCRYPT_EMAIL_INPUT
+    read -r -p "ایمیل برای گواهی SSL (اختیاری؛ در حالت گواهی دستی لازم نیست): " LETSENCRYPT_EMAIL_INPUT
 fi
 
-for pair in "APP_DOMAIN:${APP_DOMAIN_INPUT}" "STORAGE_DOMAIN:${STORAGE_DOMAIN_INPUT}" "LETSENCRYPT_EMAIL:${LETSENCRYPT_EMAIL_INPUT}"; do
+for pair in "APP_DOMAIN:${APP_DOMAIN_INPUT}" "STORAGE_DOMAIN:${STORAGE_DOMAIN_INPUT}"; do
     name="${pair%%:*}"
     value="${pair#*:}"
     if [ -z "${value}" ]; then

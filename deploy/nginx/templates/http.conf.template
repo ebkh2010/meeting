@@ -1,5 +1,6 @@
-# پیکربندی مرحلهٔ راه‌اندازی (پیش از صدور گواهی SSL)
-# فقط برای بالا آوردن سامانه و پاسخ به چالش ACME استفاده می‌شود.
+# پیکربندی حالت بدون گواهی (فقط HTTP)
+# وقتی گواهی دستی در deploy/nginx/certs نیست، سامانه با HTTP کار می‌کند و
+# خاتمهٔ TLS به لایهٔ لبه (nginx میزبان یا CDN) واگذار می‌شود.
 
 upstream vidara_backend {
     server backend:8000;
@@ -18,11 +19,6 @@ server {
     server_name ${APP_DOMAIN};
 
     client_max_body_size ${MAX_UPLOAD_SIZE};
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-        default_type "text/plain";
-    }
 
     location /api/ {
         proxy_pass http://vidara_backend;
@@ -58,11 +54,6 @@ server {
     server_name ${STORAGE_DOMAIN};
 
     client_max_body_size ${MAX_UPLOAD_SIZE};
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-        default_type "text/plain";
-    }
 
     location / {
         proxy_pass http://vidara_storage;

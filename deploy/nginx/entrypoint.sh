@@ -1,9 +1,10 @@
 #!/bin/sh
-# انتخاب پیکربندی nginx بر پایهٔ وجود گواهی SSL.
+# انتخاب پیکربندی nginx بر پایهٔ وجود گواهی دستی SSL.
 #
-# پیش از صدور گواهی، پیکربندی HTTP بالا می‌آید تا هم سامانه قابل استفاده باشد و هم
-# مسیر چالش ACME پاسخ بدهد. پس از صدور گواهی، با یک بار راه‌اندازی دوبارهٔ سرویس،
-# پیکربندی HTTPS فعال می‌شود.
+# گواهی دستی از پوشهٔ deploy/nginx/certs خوانده می‌شود (fullchain.pem و privkey.pem).
+# در نبود گواهی، پیکربندی فقط-HTTP بالا می‌آید تا سامانه با HTTP کار کند و TLS در
+# لبه (nginx میزبان یا CDN) خاتمه یابد. پس از قرار دادن گواهی و راه‌اندازی دوبارهٔ
+# سرویس پروکسی، خودِ کانتینر هم TLS را روی پورت‌های منتشرشده خاتمه می‌دهد.
 set -eu
 
 if [ -z "${APP_DOMAIN:-}" ]; then
@@ -16,25 +17,21 @@ if [ -z "${STORAGE_DOMAIN:-}" ]; then
 fi
 
 MAX_UPLOAD_SIZE="${MAX_UPLOAD_SIZE:-2048m}"
-# پورت جداگانهٔ storage: در حالت بدون دامنه (دسترسی با IP) روی ۸۴۴۳ می‌نشیند؛
-# در حالت دامنه‌دار با SSL می‌توان آن را ۴۴۳ گذاشت تا مثل قبل روی همان پورت باشد.
+# پورت گوش‌دادن مسیر فایل‌ها داخل کانتینر؛ روی میزبان با STORAGE_HOST_PORT منتشر
+# می‌شود (پیش‌فرض ۷۴۴۳). در حالت با دامنهٔ مجزا و TLS در لبه، مقدار پیش‌فرض
+# مناسب است و معمولاً تغییر لازم نیست.
 STORAGE_PORT="${STORAGE_PORT:-8443}"
 export APP_DOMAIN STORAGE_DOMAIN MAX_UPLOAD_SIZE STORAGE_PORT
 
-# گواهی دستی (تأمین‌شده توسط مدیر) اولویت دارد؛ در نبودش به مسیر Let's Encrypt
-# نگاه می‌کنیم و اگر هیچ گواهی‌ای نبود فقط HTTP بالا می‌آید.
+# گواهی دستی (تأمین‌شده توسط مدیر)؛ در نبودش فقط HTTP بالا می‌آید.
 CERT_FULLCHAIN=""
 CERT_PRIVKEY=""
 if [ -s "/etc/nginx/certs/fullchain.pem" ] && [ -s "/etc/nginx/certs/privkey.pem" ]; then
     CERT_FULLCHAIN="/etc/nginx/certs/fullchain.pem"
     CERT_PRIVKEY="/etc/nginx/certs/privkey.pem"
     echo "[اطلاع] گواهی دستی یافت شد؛ پیکربندی HTTPS فعال می‌شود."
-elif [ -s "/etc/letsencrypt/live/${APP_DOMAIN}/fullchain.pem" ] && [ -s "/etc/letsencrypt/live/${APP_DOMAIN}/privkey.pem" ]; then
-    CERT_FULLCHAIN="/etc/letsencrypt/live/${APP_DOMAIN}/fullchain.pem"
-    CERT_PRIVKEY="/etc/letsencrypt/live/${APP_DOMAIN}/privkey.pem"
-    echo "[اطلاع] گواهی Let's Encrypt یافت شد؛ پیکربندی HTTPS فعال می‌شود."
 else
-    echo "[هشدار] گواهی SSL یافت نشد؛ فعلاً فقط HTTP فعال است."
+    echo "[هشدار] گواهی SSL یافت نشد؛ فعلاً فقط HTTP فعال است (TLS باید در لبه خاتمه یابد یا گواهی دستی اضافه شود)."
 fi
 export CERT_FULLCHAIN CERT_PRIVKEY
 
@@ -44,7 +41,6 @@ else
     TEMPLATE="/etc/nginx/templates/http.conf.template"
 fi
 
-mkdir -p /var/www/certbot
 envsubst '${APP_DOMAIN} ${STORAGE_DOMAIN} ${MAX_UPLOAD_SIZE} ${STORAGE_PORT} ${CERT_FULLCHAIN} ${CERT_PRIVKEY}' \
     < "${TEMPLATE}" > /etc/nginx/conf.d/default.conf
 
