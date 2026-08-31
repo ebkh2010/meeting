@@ -49,6 +49,8 @@ echo "[اطلاع] کپی فایل‌های فضای ذخیره‌سازی..."
 mkdir -p "${WORK_DIR}/storage"
 compose exec -T minio mc alias set local http://127.0.0.1:9000 \
     "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}" >/dev/null
+# mc mirror در این نسخه پوشهٔ مقصد را خودش نمی‌سازد؛ ساخت پیش از mirror الزامی است.
+compose exec -T minio sh -c 'mkdir -p /tmp/backup-storage'
 # شکست در این مرحله باید پشتیبان‌گیری را متوقف کند؛ پشتیبان ناقص نباید بی‌صدا
 # به‌عنوان «موفق» گزارش شود.
 if ! MC_LOG="$(compose exec -T minio mc mirror --overwrite --quiet local /tmp/backup-storage 2>&1)"; then
