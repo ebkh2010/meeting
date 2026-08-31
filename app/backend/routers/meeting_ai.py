@@ -44,6 +44,7 @@ from services import ai_providers
 from services import ai_usage
 from services import meeting_speakers as speakers_service
 from services import mgmt_core as core
+from services import minutes_settings as minutes_settings_service
 from services import upload_limits as limits_service
 from services.ai_gateway import (
     AIGatewayError,
@@ -439,10 +440,13 @@ async def suggest_decision_items(
         Transcripts,
         ctx,
         Transcripts.meeting_id == int(meeting.id),
-        order_by=Transcripts.id.desc(),
+        order_by=Transcripts.id.asc(),
     )
-    transcript = transcript_rows[0] if transcript_rows else None
-    if transcript is None or not (transcript.full_text or "").strip():
+    # همهٔ رونویسی‌های جلسه (چند فایل صوتی) ادغام می‌شوند.
+    merged_text = "\n\n".join(
+        (t.full_text or "").strip() for t in transcript_rows if (t.full_text or "").strip()
+    )
+    if not merged_text:
         raise bad_request(
             "برای پیشنهاد هوشمند، ابتدا باید فایل صوتی جلسه رونویسی شود یا متن رونویسی ثبت گردد."
         )
@@ -461,8 +465,13 @@ async def suggest_decision_items(
         p.full_name for p in participants
     ]
 
+    # تنظیمات تولید صورتجلسهٔ سازمان (دستور جلسه/مدعوین/طول/ملاحظات)
+    minutes_settings_row = await minutes_settings_service.get_settings(db, ctx.organization_id)
+    total_duration = sum(int(t.duration_seconds or 0) for t in transcript_rows)
+    target_words = minutes_settings_service.target_words_for(minutes_settings_row, total_duration)
+
     # برآورد هزینهٔ مدل زبانی و بررسی سهمیهٔ دلاری کاربر پیش از فراخوان
-    estimated_tokens = ai_usage.estimate_minutes_tokens(transcript.full_text or "")
+    estimated_tokens = ai_usage.estimate_minutes_tokens(merged_text)
     await ai_usage.ensure_user_budget(
         db,
         ctx.organization_id,
@@ -478,7 +487,11 @@ async def suggest_decision_items(
             meeting_type=meeting.meeting_type or "",
             agenda_titles=[item.title for item in agenda],
             attendee_names=attendee_names,
-            transcript_text=transcript.full_text or "",
+            transcript_text=merged_text,
+            use_agenda=bool(minutes_settings_row.use_agenda if minutes_settings_row.use_agenda is not None else minutes_settings_service.DEFAULT_USE_AGENDA),
+            use_attendees=bool(minutes_settings_row.use_attendees if minutes_settings_row.use_attendees is not None else minutes_settings_service.DEFAULT_USE_ATTENDEES),
+            target_words=target_words,
+            considerations=minutes_settings_row.considerations or "",
         )
     except AIGatewayError as exc:
         raise bad_request(str(exc)) from exc
@@ -932,10 +945,15 @@ async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:
     transcript_result = await session.execute(
         select(Transcripts)
         .where(Transcripts.organization_id == organization_id, Transcripts.meeting_id == meeting_id)
-        .order_by(Transcripts.id.desc())
+        .order_by(Transcripts.id.asc())
     )
-    transcript = transcript_result.scalars().first()
-    if transcript is None or not (transcript.full_text or "").strip():
+    transcripts = list(transcript_result.scalars().all())
+    # همهٔ رونویسی‌های جلسه (چند فایل صوتی) برای تولید صورتجلسه ادغام می‌شوند.
+    merged_text = "\n\n".join(
+        (t.full_text or "").strip() for t in transcripts if (t.full_text or "").strip()
+    )
+    total_duration = sum(int(t.duration_seconds or 0) for t in transcripts)
+    if not merged_text:
         await _fail_job(session, job, "متن رونویسی برای تولید صورتجلسه موجود نیست.")
         return
 
@@ -958,7 +976,13 @@ async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:
 
     meeting_title = meeting.title
     meeting_type = meeting.meeting_type or ""
-    transcript_text = transcript.full_text or ""
+    transcript_text = merged_text
+
+    # تنظیمات تولید صورتجلسهٔ سازمان: دستور جلسه/مدعوین/طول هدف/ملاحظات کاربر
+    minutes_settings_row = await minutes_settings_service.get_settings(session, organization_id)
+    target_words = minutes_settings_service.target_words_for(
+        minutes_settings_row, total_duration
+    )
 
     job.progress = 35
     await session.commit()  # پایان فاز پایگاه داده پیش از فراخوان کند
@@ -972,6 +996,10 @@ async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:
         agenda_titles=agenda_titles,
         attendee_names=attendee_names,
         transcript_text=transcript_text,
+        use_agenda=bool(minutes_settings_row.use_agenda if minutes_settings_row.use_agenda is not None else minutes_settings_service.DEFAULT_USE_AGENDA),
+        use_attendees=bool(minutes_settings_row.use_attendees if minutes_settings_row.use_attendees is not None else minutes_settings_service.DEFAULT_USE_ATTENDEES),
+        target_words=target_words,
+        considerations=minutes_settings_row.considerations or "",
     )
     minutes_attempts_line = ai_providers.format_attempts(minutes_attempts)
 
@@ -1150,6 +1178,13 @@ async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:
             "tokens_in": draft_tokens_in,
             "tokens_out": draft_tokens_out,
             "cost_cents": draft_cost_cents,
+            "minutes_settings": {
+                "use_agenda": bool(minutes_settings_row.use_agenda if minutes_settings_row.use_agenda is not None else minutes_settings_service.DEFAULT_USE_AGENDA),
+                "use_attendees": bool(minutes_settings_row.use_attendees if minutes_settings_row.use_attendees is not None else minutes_settings_service.DEFAULT_USE_ATTENDEES),
+                "words_per_hour": int(minutes_settings_row.words_per_hour or minutes_settings_service.DEFAULT_WORDS_PER_HOUR),
+                "target_words": target_words,
+                "considerations": (minutes_settings_row.considerations or "")[:200],
+            },
         },
         ensure_ascii=False,
     )

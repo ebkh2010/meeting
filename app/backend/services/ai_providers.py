@@ -978,8 +978,15 @@ async def run_minutes_draft(
     agenda_titles: List[str],
     attendee_names: List[str],
     transcript_text: str,
+    use_agenda: bool = True,
+    use_attendees: bool = False,
+    target_words: int = 0,
+    considerations: str = "",
 ) -> Tuple[Any, List[Dict[str, Any]]]:
     """پیش‌نویس صورتجلسه با زنجیرهٔ مدل زبانی سازمان و بازگشت به آداپتر پلتفرم.
+
+    پرامپت بر پایهٔ تنظیمات تولید صورتجلسهٔ سازمان ساخته می‌شود: لحاظ/عدم لحاظ
+    دستور جلسه و مدعوین، طول هدف (کلمه) و ملاحظات دلخواه کاربر.
 
     ابتدا مدل‌های زبانی فعال سازمان به ترتیب ``priority`` امتحان می‌شوند؛ اگر
     هیچ‌کدام پیکربندی/پاسخ معتبر نداشت، آداپتر پلتفرم اجرا می‌شود تا قابلیت
@@ -987,16 +994,37 @@ async def run_minutes_draft(
     """
     agenda_text = "\n".join(f"- {title}" for title in agenda_titles) or "- (دستور جلسه ثبت نشده)"
     attendees_text = "، ".join(attendee_names) or "(فهرست حاضران ثبت نشده)"
+
+    header_lines = [f"عنوان جلسه: {meeting_title}", f"نوع جلسه: {meeting_type or 'نامشخص'}"]
+    if use_attendees:
+        header_lines.append(f"حاضران: {attendees_text}")
+    if use_agenda:
+        header_lines.append(f"دستور جلسه:\n{agenda_text}")
+
+    target_instruction = ""
+    if target_words and int(target_words) > 0:
+        target_instruction = f" طول صورتجلسهٔ نهایی (body_markdown) حدود {int(target_words)} کلمه باشد."
+    considerations_text = ""
+    if (considerations or "").strip():
+        considerations_text = (
+            f"\n\nملاحظات کاربر برای تهیهٔ صورتجلسه — این موارد باید حتماً رعایت شوند:\n"
+            f"{considerations.strip()[:1500]}"
+        )
+
+    body_sections = (
+        "«## جمع‌بندی جلسه» و «## مذاکرات بر پایهٔ دستور جلسه»"
+        if use_agenda
+        else "«## جمع‌بندی جلسه» و «## مذاکرات»"
+    )
+
     user_prompt = (
-        f"عنوان جلسه: {meeting_title}\n"
-        f"نوع جلسه: {meeting_type or 'نامشخص'}\n"
-        f"حاضران: {attendees_text}\n"
-        f"دستور جلسه:\n{agenda_text}\n\n"
-        "متن رونویسی جلسه:\n"
-        f"{(transcript_text or '').strip()[:14000]}\n\n"
-        "بر پایهٔ متن بالا صورتجلسهٔ رسمی فارسی تهیه کن. در body_markdown دو بخش داشته باش: "
-        "«## جمع‌بندی جلسه» و «## مذاکرات بر پایهٔ دستور جلسه». "
-        "مصوبات را فقط از متن استخراج کن و برای هر مصوبه حداکثر دو اقدام با مسئول پیشنهاد بده."
+        "\n".join(header_lines)
+        + "\n\nمتن رونویسی جلسه:\n"
+        + f"{(transcript_text or '').strip()[:60000]}\n\n"
+        + f"بر پایهٔ متن بالا صورتجلسهٔ رسمی فارسی تهیه کن.{target_instruction} "
+        + f"در body_markdown دو بخش داشته باش: {body_sections}. "
+        + "مصوبات را فقط از متن استخراج کن و برای هر مصوبه حداکثر دو اقدام با مسئول پیشنهاد بده."
+        + considerations_text
     )
 
     text, provider_key, attempts, usage = await run_chat(

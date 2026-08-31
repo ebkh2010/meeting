@@ -39,6 +39,7 @@ from models.participants import Participants
 from models.recordings import Recordings
 from models.transcripts import Transcripts
 from services import mgmt_core as core
+from services import minutes_settings as minutes_settings_service
 from services import upload_limits as limits_service
 from services.mgmt_core import (
     ACTION_STATUSES,
@@ -172,6 +173,15 @@ class UploadLimitsIn(BaseModel):
     max_audio_minutes: Optional[int] = None
     max_audio_mb: Optional[int] = None
     max_attachment_mb: Optional[int] = None
+
+
+class MinutesSettingsIn(BaseModel):
+    """تنظیمات تولید صورتجلسه: لحاظ دستور جلسه/مدعوین، طول هدف و ملاحظات کاربر."""
+
+    use_agenda: Optional[bool] = None
+    use_attendees: Optional[bool] = None
+    words_per_hour: Optional[int] = None
+    considerations: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -924,6 +934,50 @@ async def update_upload_limits(
     )
     await db.commit()
     return data
+
+
+@router.get("/minutes-settings")
+async def read_minutes_settings(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """تنظیمات مؤثر تولید صورتجلسهٔ سازمان (فقط مدیر و دبیر)."""
+    ctx = await resolve_context(db, current_user)
+    require_role(ctx, ROLE_ADMIN, ROLE_SECRETARY)
+    row = await minutes_settings_service.get_settings(db, ctx.organization_id)
+    payload = minutes_settings_service.payload(row)
+    await db.commit()
+    return payload
+
+
+@router.patch("/minutes-settings")
+async def update_minutes_settings(
+    payload_in: MinutesSettingsIn,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """تغییر تنظیمات تولید صورتجلسه توسط مدیر سازمان (با ثبت در Audit)."""
+    ctx = await resolve_context(db, current_user)
+    require_role(ctx, ROLE_ADMIN)
+    try:
+        payload = await minutes_settings_service.save_settings(
+            db,
+            ctx.organization_id,
+            values=payload_in.model_dump(),
+            actor_name=ctx.actor_name,
+        )
+    except ValueError as exc:
+        raise bad_request(str(exc)) from exc
+    await audit(
+        db,
+        ctx,
+        "organization.minutes_settings_updated",
+        "organization",
+        ctx.organization_id,
+        "تنظیمات تولید صورتجلسه به‌روزرسانی شد",
+    )
+    await db.commit()
+    return payload
 
 
 @router.post("/demo-data/purge")

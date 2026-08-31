@@ -1214,7 +1214,9 @@ function MinutesPanel({
                 }
               >
                 <Sparkles className="h-4 w-4" />
-                پیش‌نویس هوشمند از رونویسی
+                {detail.minutes
+                  ? 'تولید مجدد پیش‌نویس و مصوبات/اقدامات'
+                  : 'پیش‌نویس هوشمند از رونویسی'}
               </Button>
             )}
             {canManage && status === 'draft' && (
