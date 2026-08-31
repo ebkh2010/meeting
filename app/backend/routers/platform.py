@@ -241,6 +241,13 @@ def _sms_welcome_message(first_name: str, last_name: str, org_name: str, usernam
     )
 
 
+def _sms_reference_id() -> str:
+    """شناسهٔ پیگیری یکتای پیامک (پنل فقط مقدار عددی می‌پذیرد)."""
+    import time
+
+    return str(int(time.time() * 1000))
+
+
 # ---------------------------------------------------------------------------
 # Endpointها
 # ---------------------------------------------------------------------------
@@ -290,16 +297,26 @@ async def create_org(
     await ai_providers.ensure_defaults(db, int(organization.id))
 
     # ارسال رمز با پیامک (بهترین تلاش — شکست آن ساخت سازمان را متوقف نمی‌کند)
-    sms_result: Dict[str, Any] = {"ok": False, "error": ""}
+    sms_result: Dict[str, Any] = {"ok": False, "error": "", "provider_message_id": ""}
     try:
         result = await channels.send_sms(
             settings_row,
             receptor=mobile,
             message=_sms_welcome_message(first_name, last_name, org_name, mobile, password),
+            client_reference_id=_sms_reference_id(),
         )
-        sms_result = {"ok": bool(result.ok), "error": result.error or ""}
+        sms_result = {
+            "ok": bool(result.ok),
+            "error": result.error or "",
+            "provider_message_id": result.provider_message_id or "",
+        }
         if not result.ok:
             logger.warning("پیامک رمز مدیر سازمان %s به %s ناموفق بود: %s", organization.id, mobile, result.error)
+        else:
+            logger.info(
+                "پیامک رمز مدیر سازمان %s به %s ارسال شد (messageid=%s)",
+                organization.id, mobile, result.provider_message_id,
+            )
     except Exception:  # pragma: no cover - پیامک نباید ساخت را متوقف کند
         logger.warning("ارسال پیامک رمز مدیر سازمان %s ناموفق بود", organization.id, exc_info=True)
 
@@ -324,6 +341,61 @@ async def create_org(
         "admin": app_auth.user_payload(app_user, int(membership.id) if membership else None),
         "default_credentials": {"username": mobile, "password": password, "is_default_password": False},
         "sms": sms_result,
+    }
+
+
+@router.post("/orgs/{org_id}/resend-admin-sms")
+async def resend_admin_sms(
+    org_id: int,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """تولید رمز جدید برای مدیر سازمان و ارسال دوبارهٔ آن با پیامک.
+
+    برای حالتی که پیامک نخست به هر دلیل (تأخیر اپراتور و …) نرسیده باشد؛ رمز
+    قبلی غیرقابل بازیابی است (هش‌شده)، پس رمز تازه ساخته و ارسال می‌شود و پرچم
+    «تکمیل مشخصات در نخستین ورود» دوباره فعال می‌گردد.
+    """
+    org = await _get_org(db, org_id)
+    admin = await _org_admin(db, org_id)
+    if admin is None:
+        raise _not_found("مدیر سازمان یافت نشد.")
+
+    password = secrets.token_hex(5)
+    admin.password_hash = app_auth.hash_password(password)
+    admin.must_change_password = True
+    settings_row = await channels.get_or_create_settings(db, org_id)
+
+    sms_result: Dict[str, Any] = {"ok": False, "error": "", "provider_message_id": ""}
+    try:
+        result = await channels.send_sms(
+            settings_row,
+            receptor=admin.mobile or "",
+            message=_sms_welcome_message(
+                admin.first_name or "", admin.last_name or "", org.name or "",
+                admin.username or admin.mobile or "", password,
+            ),
+            client_reference_id=_sms_reference_id(),
+        )
+        sms_result = {
+            "ok": bool(result.ok),
+            "error": result.error or "",
+            "provider_message_id": result.provider_message_id or "",
+        }
+        if not result.ok:
+            logger.warning("ارسال دوبارهٔ رمز مدیر سازمان %s به %s ناموفق بود: %s", org_id, admin.mobile, result.error)
+    except Exception:  # pragma: no cover - محافظ عملیاتی
+        logger.warning("ارسال دوبارهٔ رمز مدیر سازمان %s ناموفق بود", org_id, exc_info=True)
+
+    await _audit(
+        db, org_id, principal, "platform.org_admin_sms_resent", entity_id=org_id,
+        detail=f"رمز جدید برای مدیر «{admin.first_name} {admin.last_name}» ({admin.mobile}) ساخته و ارسال شد (ok={sms_result['ok']})",
+    )
+    await db.commit()
+    return {
+        "success": bool(sms_result["ok"]),
+        "sms": sms_result,
+        "default_credentials": {"username": admin.username or admin.mobile or "", "password": password},
     }
 
 

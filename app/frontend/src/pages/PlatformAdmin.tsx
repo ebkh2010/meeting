@@ -72,6 +72,7 @@ function OrgsView() {
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsOrg, setSettingsOrg] = useState<PlatformOrg | null>(null);
+  const [resendOrg, setResendOrg] = useState<PlatformOrg | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -150,6 +151,15 @@ function OrgsView() {
                   </div>
                 </div>
                 <div className="flex shrink-0 gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setResendOrg(org)}
+                    disabled={!org.admin}
+                  >
+                    <RefreshCcw className="ml-1 h-4 w-4" />
+                    ارسال دوبارهٔ رمز
+                  </Button>
                   <Button variant="outline" size="sm" onClick={() => setSettingsOrg(org)}>
                     <Settings2 className="ml-1 h-4 w-4" />
                     تنظیمات
@@ -171,10 +181,76 @@ function OrgsView() {
       )}
 
       {createOpen && <CreateOrgDialog open onClose={() => setCreateOpen(false)} onCreated={() => void load()} />}
+      {resendOrg && <ResendSmsDialog org={resendOrg} onClose={() => setResendOrg(null)} />}
       {settingsOrg && (
         <SettingsDialog org={settingsOrg} onClose={() => setSettingsOrg(null)} onChanged={() => void load()} />
       )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* دیالوگ ارسال دوبارهٔ رمز با پیامک                                    */
+/* ------------------------------------------------------------------ */
+
+function ResendSmsDialog({ org, onClose }: { org: PlatformOrg; onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{
+    success: boolean;
+    sms: { ok: boolean; error: string };
+    default_credentials: { username: string; password: string };
+  } | null>(null);
+
+  const handleSend = async () => {
+    setBusy(true);
+    try {
+      const data = await platformApi.resendAdminSms(org.id);
+      setResult(data);
+      toast.success('رمز جدید ساخته و ارسال شد.');
+    } catch (err) {
+      toast.error(errorMessage(err, 'ارسال دوبارهٔ رمز ناموفق بود.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(value) => !value && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>ارسال دوبارهٔ رمز برای مدیر «{org.name}»</DialogTitle>
+          <DialogDescription>
+            رمز قبلی قابل بازیابی نیست؛ یک رمز تازه ساخته و با پیامک به{' '}
+            <span dir="ltr">{org.admin?.mobile}</span> ارسال می‌شود.
+          </DialogDescription>
+        </DialogHeader>
+        {result ? (
+          <div className="space-y-3 rounded-md border p-3 text-sm">
+            <div className="space-y-1 rounded-md bg-muted p-3 font-mono text-sm" dir="ltr">
+              <p>username: {result.default_credentials.username}</p>
+              <p>password: {result.default_credentials.password}</p>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {result.sms.ok
+                ? 'پیامک با موفقیت به پنل تحویل شد؛ اگر تأخیر اپراتور بود، چند دقیقه صبر کنید.'
+                : `پیامک ارسال نشد (${result.sms.error || 'خطای نامشخص'}) — رمز بالا را خودتان اعلام کنید.`}
+            </p>
+            <div className="flex justify-end">
+              <Button onClick={onClose}>بستن</Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose}>
+              انصراف
+            </Button>
+            <Button disabled={busy} onClick={() => void handleSend()}>
+              {busy ? 'در حال ارسال…' : 'ساخت رمز جدید و ارسال پیامک'}
+            </Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

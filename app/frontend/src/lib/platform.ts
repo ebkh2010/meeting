@@ -197,6 +197,14 @@ export const platformApi = {
     mobile: string;
   }) => call<CreateOrgResult>(`${BASE}/orgs`, 'POST', payload),
 
+  /** تولید رمز جدید برای مدیر سازمان و ارسال دوبارهٔ آن با پیامک. */
+  resendAdminSms: (orgId: number) =>
+    call<{
+      success: boolean;
+      sms: { ok: boolean; error: string; provider_message_id: string };
+      default_credentials: { username: string; password: string };
+    }>(`${BASE}/orgs/${orgId}/resend-admin-sms`, 'POST'),
+
   updateNotify: (orgId: number, payload: Record<string, unknown>) =>
     call<PlatformNotify>(`${BASE}/orgs/${orgId}/notify`, 'PATCH', payload),
 
