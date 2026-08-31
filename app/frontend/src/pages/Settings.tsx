@@ -8,20 +8,18 @@
  * در هدر برای آن‌ها دیده نمی‌شود.
  */
 import { useSearchParams } from 'react-router-dom';
-import { Bell, FileText, HardDriveUpload, ShieldAlert, Users2 } from 'lucide-react';
+import { Bell, HardDriveUpload, ShieldAlert, Users2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import AppShell from '@/components/AppShell';
 import UsersPanel from '@/components/settings/UsersPanel';
 import UploadLimitsPanel from '@/components/settings/UploadLimitsPanel';
-import MinutesSettingsPanel from '@/components/settings/MinutesSettingsPanel';
 import DangerZonePanel from '@/components/settings/DangerZonePanel';
 import { DeliveriesPanel } from '@/components/settings/NotifyPanels';
 import { isAdminRole } from '@/lib/appAuth';
 
 const TABS = [
   { value: 'users', label: 'کاربران و نقش‌ها', icon: Users2 },
-  { value: 'minutes', label: 'تولید صورتجلسه', icon: FileText },
   { value: 'uploads', label: 'سقف‌های بارگذاری', icon: HardDriveUpload },
   { value: 'deliveries', label: 'گزارش ارسال', icon: Bell },
 ];
@@ -75,8 +73,9 @@ function SettingsView({ isAdmin, roleLabel }: { isAdmin: boolean; roleLabel: str
       <div>
         <h1>تنظیمات سازمان</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          تعریف کاربران و نقش‌ها، تنظیمات تولید صورتجلسه، سقف‌های بارگذاری و گزارش ارسال‌ها.
-          تنظیمات ایمیل، پیامک، هوش مصنوعی و استوریج خارجی توسط مدیریت پلتفرم انجام می‌شود.
+          تعریف کاربران و نقش‌ها، سقف‌های بارگذاری و گزارش ارسال‌ها. تنظیمات ایمیل، پیامک،
+          هوش مصنوعی و استوریج خارجی توسط مدیریت پلتفرم انجام می‌شود و تنظیمات تولید صورتجلسه
+          برای هر جلسه جداگانه در همان جلسه است.
         </p>
       </div>
 
@@ -95,9 +94,6 @@ function SettingsView({ isAdmin, roleLabel }: { isAdmin: boolean; roleLabel: str
 
         <TabsContent value="users" className="space-y-6">
           <UsersPanel />
-        </TabsContent>
-        <TabsContent value="minutes" className="space-y-6">
-          <MinutesSettingsPanel />
         </TabsContent>
         <TabsContent value="uploads" className="space-y-6">
           <UploadLimitsPanel />

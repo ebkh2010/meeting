@@ -981,12 +981,14 @@ async def run_minutes_draft(
     use_agenda: bool = True,
     use_attendees: bool = False,
     target_words: int = 0,
+    generate_items: bool = True,
     considerations: str = "",
 ) -> Tuple[Any, List[Dict[str, Any]]]:
     """پیش‌نویس صورتجلسه با زنجیرهٔ مدل زبانی سازمان و بازگشت به آداپتر پلتفرم.
 
-    پرامپت بر پایهٔ تنظیمات تولید صورتجلسهٔ سازمان ساخته می‌شود: لحاظ/عدم لحاظ
-    دستور جلسه و مدعوین، طول هدف (کلمه) و ملاحظات دلخواه کاربر.
+    پرامپت بر پایهٔ تنظیمات تولید همان جلسه ساخته می‌شود: لحاظ/عدم لحاظ دستور
+    جلسه و مدعوین، طول هدف (کلمه)، تولید یا عدم تولید مصوبات/اقدامات و ملاحظات
+    دلخواه کاربر.
 
     ابتدا مدل‌های زبانی فعال سازمان به ترتیب ``priority`` امتحان می‌شوند؛ اگر
     هیچ‌کدام پیکربندی/پاسخ معتبر نداشت، آداپتر پلتفرم اجرا می‌شود تا قابلیت
@@ -1016,6 +1018,11 @@ async def run_minutes_draft(
         if use_agenda
         else "«## جمع‌بندی جلسه» و «## مذاکرات»"
     )
+    items_instruction = (
+        "مصوبات را فقط از متن استخراج کن و برای هر مصوبه حداکثر دو اقدام با مسئول پیشنهاد بده."
+        if generate_items
+        else "مصوبات و اقدامات لازم نیست؛ آرایه‌های decisions و action_items را خالی برگردان."
+    )
 
     user_prompt = (
         "\n".join(header_lines)
@@ -1023,7 +1030,7 @@ async def run_minutes_draft(
         + f"{(transcript_text or '').strip()[:60000]}\n\n"
         + f"بر پایهٔ متن بالا صورتجلسهٔ رسمی فارسی تهیه کن.{target_instruction} "
         + f"در body_markdown دو بخش داشته باش: {body_sections}. "
-        + "مصوبات را فقط از متن استخراج کن و برای هر مصوبه حداکثر دو اقدام با مسئول پیشنهاد بده."
+        + items_instruction
         + considerations_text
     )
 
@@ -1040,23 +1047,31 @@ async def run_minutes_draft(
             body = _clean_text(payload.get("body_markdown"), 60000)
             if not body:
                 raise AIGatewayError("پاسخ مدل زبانی متن صورتجلسه نداشت.")
-            decisions = [
-                {
-                    "title": _clean_text(item.get("title"), 300),
-                    "description": _clean_text(item.get("description"), 1500),
-                }
-                for item in (payload.get("decisions") or [])
-                if isinstance(item, dict) and _clean_text(item.get("title"), 300)
-            ]
-            actions = [
-                {
-                    "title": _clean_text(item.get("title"), 300),
-                    "owner_name": _clean_text(item.get("owner_name"), 120),
-                    "due_hint": _clean_text(item.get("due_hint"), 120),
-                }
-                for item in (payload.get("action_items") or [])
-                if isinstance(item, dict) and _clean_text(item.get("title"), 300)
-            ]
+            decisions = (
+                [
+                    {
+                        "title": _clean_text(item.get("title"), 300),
+                        "description": _clean_text(item.get("description"), 1500),
+                    }
+                    for item in (payload.get("decisions") or [])
+                    if isinstance(item, dict) and _clean_text(item.get("title"), 300)
+                ]
+                if generate_items
+                else []
+            )
+            actions = (
+                [
+                    {
+                        "title": _clean_text(item.get("title"), 300),
+                        "owner_name": _clean_text(item.get("owner_name"), 120),
+                        "due_hint": _clean_text(item.get("due_hint"), 120),
+                    }
+                    for item in (payload.get("action_items") or [])
+                    if isinstance(item, dict) and _clean_text(item.get("title"), 300)
+                ]
+                if generate_items
+                else []
+            )
             row_model = ""
             for row in await enabled_providers(db, organization_id, KIND_LLM):
                 if (row.provider_key or "") == provider_key:

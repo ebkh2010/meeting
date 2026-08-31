@@ -13,6 +13,7 @@ import {
   Plus,
   Printer,
   RefreshCw,
+  Settings2,
   Sparkles,
   Trash2,
 } from 'lucide-react';
@@ -24,9 +25,17 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
+import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -57,6 +66,7 @@ import {
   MINUTES_STATUS_LABELS,
   Member,
   MinuteVersion,
+  MinutesSettings,
   RSVP_LABELS,
   SuggestedItems,
   toPersianDigits,
@@ -1100,6 +1110,7 @@ function MinutesPanel({
   const [summary, setSummary] = useState(minutes?.summary || '');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     setBody(detail.minutes?.body_markdown || '');
@@ -1128,6 +1139,12 @@ function MinutesPanel({
 
   return (
     <div className="grid gap-4 lg:grid-cols-3">
+      {settingsOpen && (
+        <MinutesSettingsDialog
+          meetingId={detail.meeting.id}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
       <Card className="lg:col-span-2">
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1202,22 +1219,33 @@ function MinutesPanel({
               </Button>
             )}
             {canManage && !isLocked && (
-              <Button
-                variant="outline"
-                className="!bg-transparent gap-2"
-                disabled={busy || !transcript}
-                onClick={() =>
-                  runAction(
-                    () => api.startMinutesDraft(detail.meeting.id),
-                    'ساخت پیش‌نویس هوشمند در صف قرار گرفت.',
-                  )
-                }
-              >
-                <Sparkles className="h-4 w-4" />
-                {detail.minutes
-                  ? 'تولید مجدد پیش‌نویس و مصوبات/اقدامات'
-                  : 'پیش‌نویس هوشمند از رونویسی'}
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  className="!bg-transparent gap-2"
+                  disabled={busy || !transcript}
+                  onClick={() =>
+                    runAction(
+                      () => api.startMinutesDraft(detail.meeting.id),
+                      'ساخت پیش‌نویس هوشمند در صف قرار گرفت.',
+                    )
+                  }
+                >
+                  <Sparkles className="h-4 w-4" />
+                  {detail.minutes
+                    ? 'تولید مجدد پیش‌نویس و مصوبات/اقدامات'
+                    : 'پیش‌نویس هوشمند از رونویسی'}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="!bg-transparent gap-2"
+                  disabled={busy}
+                  onClick={() => setSettingsOpen(true)}
+                >
+                  <Settings2 className="h-4 w-4" />
+                  تنظیمات تولید
+                </Button>
+              </>
             )}
             {canManage && status === 'draft' && (
               <Button
@@ -1887,5 +1915,155 @@ function DecisionsPanel({
         </CardContent>
       </Card>
     </div>
+  );
+}
+/* ------------------------------------------------------------------ */
+/* دیالوگ تنظیمات تولید صورتجلسهٔ همین جلسه                             */
+/* ------------------------------------------------------------------ */
+
+function MinutesSettingsDialog({
+  meetingId,
+  onClose,
+}: {
+  meetingId: number;
+  onClose: () => void;
+}) {
+  const [settings, setSettings] = useState<MinutesSettings | null>(null);
+  const [draft, setDraft] = useState({
+    use_agenda: true,
+    use_attendees: false,
+    words_per_hour: '1000',
+    generate_items: true,
+    considerations: '',
+  });
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api
+      .meetingMinutesSettings(meetingId)
+      .then((data) => {
+        setSettings(data);
+        setDraft({
+          use_agenda: data.use_agenda,
+          use_attendees: data.use_attendees,
+          words_per_hour: String(data.words_per_hour),
+          generate_items: data.generate_items,
+          considerations: data.considerations,
+        });
+      })
+      .catch((err) => toast.error(errorMessage(err, 'خواندن تنظیمات تولید ناموفق بود.')));
+  }, [meetingId]);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const data = await api.updateMeetingMinutesSettings(meetingId, {
+        use_agenda: draft.use_agenda,
+        use_attendees: draft.use_attendees,
+        words_per_hour: Number(draft.words_per_hour),
+        generate_items: draft.generate_items,
+        considerations: draft.considerations,
+      });
+      setSettings(data);
+      setDraft({
+        use_agenda: data.use_agenda,
+        use_attendees: data.use_attendees,
+        words_per_hour: String(data.words_per_hour),
+        generate_items: data.generate_items,
+        considerations: data.considerations,
+      });
+      toast.success('تنظیمات تولید این جلسه ذخیره شد.');
+    } catch (err) {
+      toast.error(errorMessage(err, 'ذخیرهٔ تنظیمات ناموفق بود.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(value) => !value && onClose()}>
+      <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>تنظیمات تولید صورتجلسهٔ این جلسه</DialogTitle>
+          <DialogDescription>
+            این تنظیمات فقط برای همین جلسه اعمال می‌شوند و هنگام تولید پیش‌نویس و پیشنهاد
+            مصوبات/اقدامات در پرامپت لحاظ می‌گردند.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <div>
+              <p className="text-sm font-medium">لحاظ دستور جلسه</p>
+              <p className="text-xs text-muted-foreground">پیش‌فرض: بله</p>
+            </div>
+            <Switch
+              checked={draft.use_agenda}
+              onCheckedChange={(value) => setDraft({ ...draft, use_agenda: value })}
+            />
+          </div>
+
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <div>
+              <p className="text-sm font-medium">لحاظ مدعوین</p>
+              <p className="text-xs text-muted-foreground">پیش‌فرض: خیر</p>
+            </div>
+            <Switch
+              checked={draft.use_attendees}
+              onCheckedChange={(value) => setDraft({ ...draft, use_attendees: value })}
+            />
+          </div>
+
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <div>
+              <p className="text-sm font-medium">تولید مصوبات و اقدامات</p>
+              <p className="text-xs text-muted-foreground">پیش‌فرض: بله</p>
+            </div>
+            <Switch
+              checked={draft.generate_items}
+              onCheckedChange={(value) => setDraft({ ...draft, generate_items: value })}
+            />
+          </div>
+
+          <div className="space-y-1">
+            <Label htmlFor="mds-words">طول هدف صورتجلسه (کلمه به ازای هر ساعت صوت)</Label>
+            <Input
+              id="mds-words"
+              type="number"
+              dir="ltr"
+              className="max-w-40 text-left"
+              min={settings?.bounds.min_words_per_hour ?? 100}
+              max={settings?.bounds.max_words_per_hour ?? 5000}
+              value={draft.words_per_hour}
+              onChange={(e) => setDraft({ ...draft, words_per_hour: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">پیش‌فرض: ۱۰۰۰ کلمه در ساعت</p>
+          </div>
+
+          <div className="space-y-1">
+            <Label htmlFor="mds-considerations">ملاحظات شما برای تهیهٔ صورتجلسه</Label>
+            <Textarea
+              id="mds-considerations"
+              rows={4}
+              placeholder="مثلاً: مذاکرات را بدون ذکر نام اشخاص بنویس؛ موارد مالی با دقت عددی ثبت شود…"
+              value={draft.considerations}
+              onChange={(e) => setDraft({ ...draft, considerations: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">
+              این ملاحظات عیناً به پرامپت تولید اضافه می‌شوند و مدل زبانی موظف به رعایت آن‌هاست.
+            </p>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose}>
+              بستن
+            </Button>
+            <Button disabled={busy} onClick={() => void save()}>
+              {busy ? 'در حال ذخیره…' : 'ذخیرهٔ تنظیمات'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

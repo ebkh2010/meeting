@@ -78,11 +78,13 @@ export interface QuotaSnapshot {
   usage_percent: number;
 }
 
-/** تنظیمات تولید صورتجلسهٔ سازمان (منبع حقیقت: بک‌اند). */
+/** تنظیمات تولید صورتجلسهٔ یک جلسه (منبع حقیقت: بک‌اند). */
 export interface MinutesSettings {
+  meeting_id: number;
   use_agenda: boolean;
   use_attendees: boolean;
   words_per_hour: number;
+  generate_items: boolean;
   considerations: string;
   updated_by_name: string;
   bounds: { min_words_per_hour: number; max_words_per_hour: number };
@@ -587,14 +589,19 @@ export const api = {
     max_audio_mb?: number;
     max_attachment_mb?: number;
   }) => invoke<UploadLimits>(`${WS}/upload-limits`, 'PATCH', payload),
-  /** تنظیمات تولید صورتجلسه: لحاظ دستور جلسه/مدعوین، طول هدف و ملاحظات. */
-  minutesSettings: () => invoke<MinutesSettings>(`${WS}/minutes-settings`),
-  updateMinutesSettings: (payload: {
-    use_agenda?: boolean;
-    use_attendees?: boolean;
-    words_per_hour?: number;
-    considerations?: string;
-  }) => invoke<MinutesSettings>(`${WS}/minutes-settings`, 'PATCH', payload),
+  /** تنظیمات تولید صورتجلسهٔ یک جلسه: دستور جلسه/مدعوین/طول/مصوبات/ملاحظات. */
+  meetingMinutesSettings: (meetingId: number) =>
+    invoke<MinutesSettings>(`${WS}/meetings/${meetingId}/minutes-settings`),
+  updateMeetingMinutesSettings: (
+    meetingId: number,
+    payload: {
+      use_agenda?: boolean;
+      use_attendees?: boolean;
+      words_per_hour?: number;
+      generate_items?: boolean;
+      considerations?: string;
+    },
+  ) => invoke<MinutesSettings>(`${WS}/meetings/${meetingId}/minutes-settings`, 'PATCH', payload),
   updateSettings: (payload: Record<string, unknown>) =>
     invoke<{ organization: Record<string, unknown>; quota: QuotaSnapshot }>(
       `${WS}/settings`,

@@ -176,11 +176,12 @@ class UploadLimitsIn(BaseModel):
 
 
 class MinutesSettingsIn(BaseModel):
-    """تنظیمات تولید صورتجلسه: لحاظ دستور جلسه/مدعوین، طول هدف و ملاحظات کاربر."""
+    """تنظیمات تولید صورتجلسهٔ یک جلسه: دستور جلسه/مدعوین/طول/مصوبات/ملاحظات."""
 
     use_agenda: Optional[bool] = None
     use_attendees: Optional[bool] = None
     words_per_hour: Optional[int] = None
+    generate_items: Optional[bool] = None
     considerations: Optional[str] = None
 
 
@@ -936,33 +937,38 @@ async def update_upload_limits(
     return data
 
 
-@router.get("/minutes-settings")
-async def read_minutes_settings(
+@router.get("/meetings/{meeting_id}/minutes-settings")
+async def read_meeting_minutes_settings(
+    meeting_id: int,
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    """تنظیمات مؤثر تولید صورتجلسهٔ سازمان (فقط مدیر و دبیر)."""
+    """تنظیمات تولید صورتجلسهٔ یک جلسه (قابل دسترسی برای مدیر و دبیر همان جلسه)."""
     ctx = await resolve_context(db, current_user)
-    require_role(ctx, ROLE_ADMIN, ROLE_SECRETARY)
-    row = await minutes_settings_service.get_settings(db, ctx.organization_id)
+    meeting = await get_owned(db, Meetings, meeting_id, ctx, "جلسه")
+    require_meeting_manager(ctx, meeting)
+    row = await minutes_settings_service.get_settings(db, ctx.organization_id, meeting_id)
     payload = minutes_settings_service.payload(row)
     await db.commit()
     return payload
 
 
-@router.patch("/minutes-settings")
-async def update_minutes_settings(
+@router.patch("/meetings/{meeting_id}/minutes-settings")
+async def update_meeting_minutes_settings(
+    meeting_id: int,
     payload_in: MinutesSettingsIn,
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    """تغییر تنظیمات تولید صورتجلسه توسط مدیر سازمان (با ثبت در Audit)."""
+    """تغییر تنظیمات تولید صورتجلسهٔ یک جلسه توسط مدیر/دبیر همان جلسه."""
     ctx = await resolve_context(db, current_user)
-    require_role(ctx, ROLE_ADMIN)
+    meeting = await get_owned(db, Meetings, meeting_id, ctx, "جلسه")
+    require_meeting_manager(ctx, meeting)
     try:
         payload = await minutes_settings_service.save_settings(
             db,
             ctx.organization_id,
+            meeting_id,
             values=payload_in.model_dump(),
             actor_name=ctx.actor_name,
         )
@@ -971,10 +977,10 @@ async def update_minutes_settings(
     await audit(
         db,
         ctx,
-        "organization.minutes_settings_updated",
-        "organization",
-        ctx.organization_id,
-        "تنظیمات تولید صورتجلسه به‌روزرسانی شد",
+        "meeting.minutes_settings_updated",
+        "meeting",
+        meeting_id,
+        "تنظیمات تولید صورتجلسهٔ جلسه به‌روزرسانی شد",
     )
     await db.commit()
     return payload

@@ -465,8 +465,10 @@ async def suggest_decision_items(
         p.full_name for p in participants
     ]
 
-    # تنظیمات تولید صورتجلسهٔ سازمان (دستور جلسه/مدعوین/طول/ملاحظات)
-    minutes_settings_row = await minutes_settings_service.get_settings(db, ctx.organization_id)
+    # تنظیمات تولید صورتجلسهٔ همین جلسه (دستور جلسه/مدعوین/طول/مصوبات/ملاحظات)
+    minutes_settings_row = await minutes_settings_service.get_settings(
+        db, ctx.organization_id, int(meeting.id)
+    )
     total_duration = sum(int(t.duration_seconds or 0) for t in transcript_rows)
     target_words = minutes_settings_service.target_words_for(minutes_settings_row, total_duration)
 
@@ -491,6 +493,7 @@ async def suggest_decision_items(
             use_agenda=bool(minutes_settings_row.use_agenda if minutes_settings_row.use_agenda is not None else minutes_settings_service.DEFAULT_USE_AGENDA),
             use_attendees=bool(minutes_settings_row.use_attendees if minutes_settings_row.use_attendees is not None else minutes_settings_service.DEFAULT_USE_ATTENDEES),
             target_words=target_words,
+            generate_items=bool(minutes_settings_row.generate_items if minutes_settings_row.generate_items is not None else minutes_settings_service.DEFAULT_GENERATE_ITEMS),
             considerations=minutes_settings_row.considerations or "",
         )
     except AIGatewayError as exc:
@@ -978,8 +981,10 @@ async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:
     meeting_type = meeting.meeting_type or ""
     transcript_text = merged_text
 
-    # تنظیمات تولید صورتجلسهٔ سازمان: دستور جلسه/مدعوین/طول هدف/ملاحظات کاربر
-    minutes_settings_row = await minutes_settings_service.get_settings(session, organization_id)
+    # تنظیمات تولید صورتجلسهٔ همین جلسه: دستور جلسه/مدعوین/طول/مصوبات/ملاحظات
+    minutes_settings_row = await minutes_settings_service.get_settings(
+        session, organization_id, meeting_id
+    )
     target_words = minutes_settings_service.target_words_for(
         minutes_settings_row, total_duration
     )
@@ -999,6 +1004,7 @@ async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:
         use_agenda=bool(minutes_settings_row.use_agenda if minutes_settings_row.use_agenda is not None else minutes_settings_service.DEFAULT_USE_AGENDA),
         use_attendees=bool(minutes_settings_row.use_attendees if minutes_settings_row.use_attendees is not None else minutes_settings_service.DEFAULT_USE_ATTENDEES),
         target_words=target_words,
+        generate_items=bool(minutes_settings_row.generate_items if minutes_settings_row.generate_items is not None else minutes_settings_service.DEFAULT_GENERATE_ITEMS),
         considerations=minutes_settings_row.considerations or "",
     )
     minutes_attempts_line = ai_providers.format_attempts(minutes_attempts)
@@ -1183,6 +1189,7 @@ async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:
                 "use_attendees": bool(minutes_settings_row.use_attendees if minutes_settings_row.use_attendees is not None else minutes_settings_service.DEFAULT_USE_ATTENDEES),
                 "words_per_hour": int(minutes_settings_row.words_per_hour or minutes_settings_service.DEFAULT_WORDS_PER_HOUR),
                 "target_words": target_words,
+                "generate_items": bool(minutes_settings_row.generate_items if minutes_settings_row.generate_items is not None else minutes_settings_service.DEFAULT_GENERATE_ITEMS),
                 "considerations": (minutes_settings_row.considerations or "")[:200],
             },
         },
