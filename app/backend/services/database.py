@@ -61,6 +61,43 @@ async def ensure_app_user_verification_columns() -> None:
         logger.warning("Failed to ensure verification columns on app_users: %s", exc)
 
 
+async def ensure_platform_columns() -> None:
+    """ستون‌های مدیر پلتفرم را به جدول‌های موجود اضافه می‌کند (idempotent).
+
+    ``create_all`` فقط جدول‌های تازه را می‌سازد؛ ستون‌های جدید مدل‌ها روی
+    دیتابیس‌های از قبل مستقرشده باید با همین الگو اضافه شوند.
+    """
+    if not db_manager.async_session_maker:
+        return
+    additions = {
+        "organizations": ("ai_llm_limit_cents", "INTEGER"),
+    }
+    try:
+        dialect = (db_manager.engine.dialect.name if db_manager.engine else "") or ""
+        async with db_manager.async_session_maker() as session:
+            for table_name, (column, sql_type) in additions.items():
+                if dialect == "sqlite":
+                    result = await session.execute(text(f"PRAGMA table_info({table_name})"))
+                    existing = {str(row[1]) for row in result.fetchall()}
+                else:
+                    result = await session.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns "
+                            f"WHERE table_name = '{table_name}'"
+                        )
+                    )
+                    existing = {str(row[0]) for row in result.fetchall()}
+                if column in existing:
+                    continue
+                await session.execute(
+                    text(f"ALTER TABLE {table_name} ADD COLUMN {column} {sql_type}")
+                )
+                logger.info("Added column %s to %s", column, table_name)
+            await session.commit()
+    except Exception as exc:  # pragma: no cover - بالا آمدن سامانه نباید بشکند
+        logger.warning("Failed to ensure platform columns: %s", exc)
+
+
 async def initialize_database():
     """Initialize database and create tables"""
     if "MGX_IGNORE_INIT_DB" in os.environ:
@@ -75,6 +112,7 @@ async def initialize_database():
         await db_manager.create_tables()
         logger.info("🔧 Table creation completed")
         await ensure_app_user_verification_columns()
+        await ensure_platform_columns()
         logger.info("Database initialized successfully")
         logger.debug(f"[DB_OP] Database initialization completed in {time.time() - start_time:.4f}s")
     except Exception as e:

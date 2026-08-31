@@ -20,6 +20,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.ai_user_usage import Ai_user_quotas, Ai_user_usage
+from models.organizations import Organizations
 from services.mgmt_core import conflict, current_period
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,17 @@ async def _sum_since(db: AsyncSession, model: Any, organization_id: int, user_id
     return int(result.scalar_one() or 0)
 
 
+async def _sum_org_since(db: AsyncSession, organization_id: int, column: Any) -> int:
+    """مجموع مصرف یک ستون برای همهٔ کاربران سازمان در دورهٔ جاری."""
+    result = await db.execute(
+        select(func.coalesce(func.sum(column), 0)).where(
+            Ai_user_usage.organization_id == organization_id,
+            Ai_user_usage.created_at >= _period_start(),
+        )
+    )
+    return int(result.scalar_one() or 0)
+
+
 def _period_start() -> datetime:
     """شروع دورهٔ جاری (روز اول ماه میلادی) برای مقایسهٔ مستقیم با ستون زمانی."""
     return datetime.strptime(current_period() + "-01", "%Y-%m-%d")
@@ -159,6 +171,23 @@ async def ensure_user_budget(
             f"{(llm_cost_cents_needed / 100):.2f} دلار. برای افزایش سهمیه با مدیر سازمان "
             "یا پلتفرم تماس بگیرید."
         )
+
+    # سقف دلاری کل سازمان (تنظیم‌شده توسط مدیر پلتفرم؛ خالی/صفر = بدون سقف)
+    if llm_cost_cents_needed > 0:
+        org_limit_result = await db.execute(
+            select(Organizations.ai_llm_limit_cents).where(
+                Organizations.id == organization_id
+            )
+        )
+        org_limit = int(org_limit_result.scalars().first() or 0)
+        if org_limit > 0:
+            org_used = await _sum_org_since(db, organization_id, Ai_user_usage.cost_cents)
+            if org_used + llm_cost_cents_needed > org_limit:
+                raise conflict(
+                    "سهمیهٔ مدل زبانی سازمان برای این دوره تمام شده است. "
+                    f"مصرف کل سازمان: {(org_used / 100):.2f} دلار از {(org_limit / 100):.2f} دلار. "
+                    "برای افزایش سهمیه با مدیر پلتفرم تماس بگیرید."
+                )
 
 
 async def record_user_usage(

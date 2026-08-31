@@ -64,13 +64,14 @@ class StorageService:
             logger.error(f"Failed to list buckets: {e}")
             raise
 
-    async def list_objects(self, request: OSSBaseModel) -> ObjectListResponse:
+    async def list_objects(self, request: OSSBaseModel, prefix: str = "") -> ObjectListResponse:
         """
-        List objests from the bucket
+        List objects from the bucket (اختیاری: فیلتر بر پایهٔ پیشوند کلید).
         """
         endpoint = f"api/v1/infra/client/oss/buckets/{request.bucket_name}/objects"
+        params = {"prefix": prefix} if prefix else {}
         try:
-            result = await self._aget_oss_service(endpoint=endpoint, params={})
+            result = await self._aget_oss_service(endpoint=endpoint, params=params)
             list_objs = ObjectListResponse()
             for item in result["objects"]:
                 list_objs.objects.append(

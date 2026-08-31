@@ -54,6 +54,7 @@ from models.invitations import Invitations
 from models.jobs import Jobs
 from models.meeting_archive_files import Meeting_archive_files
 from models.meeting_attachments import Meeting_attachments
+from models.meeting_speakers import Meeting_speakers
 from models.meetings import Meetings
 from models.memberships import Memberships
 from models.minute_versions import Minute_versions
@@ -71,6 +72,7 @@ from models.transcripts import Transcripts
 from models.user_verification_codes import User_verification_codes
 from services import app_auth
 from services import notify_channels as channels
+from services import platform_admin
 from services import verification
 from services.ai_providers import ensure_defaults
 from services.notify_channels import get_or_create_settings
@@ -150,10 +152,11 @@ class UserIn(BaseModel):
 class CompleteProfileIn(BaseModel):
     """تکمیل اجباری مشخصات در نخستین ورود کاربرِ ساخته‌شده توسط مدیر.
 
-    نام کاربری جدید، رمز عبور جدید و کد ملی الزامی‌اند؛ جنسیت و ایمیل اختیاری.
+    رمز عبور جدید و کد ملی الزامی‌اند؛ نام کاربری (در صورت خالی ماندن، موبایل
+    فعلی حفظ می‌شود)، جنسیت و ایمیل اختیاری.
     """
 
-    username: str
+    username: Optional[str] = None
     new_password: str
     national_id: str
     gender: Optional[str] = None
@@ -281,6 +284,17 @@ async def login(data: LoginIn, db: AsyncSession = Depends(get_db)) -> Dict[str, 
     identifier = app_auth.to_latin_digits((data.username or "").strip()).lower()
     if not identifier or not data.password:
         raise app_auth.bad_request("نام کاربری و رمز عبور را وارد کنید.")
+
+    # ورود مدیر پلتفرم: نام کاربری دقیقاً با حساب پلتفرم یکی باشد و رمز هم مطابقت
+    # کند؛ در غیر این صورت جریان عادی ورود سازمانی ادامه می‌یابد.
+    padmin = await platform_admin.authenticate(db, identifier, data.password)
+    if padmin is not None:
+        await db.commit()
+        return {
+            "token": platform_admin.issue_token(padmin),
+            "user": platform_admin.admin_payload(padmin),
+            "organization": None,
+        }
 
     candidates = await app_auth.find_login_candidates(db, identifier)
     active = [row for row in candidates if (row.status or "active") == "active"]
@@ -686,7 +700,12 @@ async def complete_profile(
     """
     app_user = await app_auth.load_app_user(db, principal.app_user_id)
 
-    username = app_auth.normalize_username(data.username)
+    # نام کاربری اختیاری است؛ اگر خالی باشد، نام کاربری فعلی (موبایل) حفظ می‌شود.
+    username = (
+        app_auth.normalize_username(data.username)
+        if (data.username or "").strip()
+        else (app_user.username or "").strip()
+    )
     if await app_auth.username_taken(
         db, username, exclude_id=int(app_user.id), organization_id=principal.organization_id
     ):
@@ -966,6 +985,7 @@ ORG_DELETION_TABLES = (
     ("ai_user_quotas", Ai_user_quotas),
     ("ai_user_usage", Ai_user_usage),
     ("user_verification_codes", User_verification_codes),
+    ("meeting_speakers", Meeting_speakers),
     ("memberships", Memberships),
     ("app_users", App_users),
 )

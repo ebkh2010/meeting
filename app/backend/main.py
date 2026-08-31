@@ -124,6 +124,11 @@ async def lifespan(app: FastAPI):
     await recover_orphan_jobs()
     await initialize_mock_data()
     await initialize_admin_user()
+    # ساخت حساب مدیر پلتفرم (idempotent) — اعتبارنامه از متغیرهای محیطی
+    from services import platform_admin
+    from core.database import db_manager as _db_manager
+    async with _db_manager.async_session_maker() as _session:
+        await platform_admin.ensure_platform_admin(_session)
     # MODULE_STARTUP_END
 
     logger.info("=== Application startup completed successfully ===")

@@ -6,7 +6,7 @@
  * یکسان است تا هیچ نگاشت میانی لازم نباشد.
  */
 import { client } from '@/lib/mgmt';
-import { authHeaders, clearToken, isUnauthorized, setToken } from '@/lib/session';
+import { authHeaders, clearToken, isUnauthorized, setSessionUser, setToken } from '@/lib/session';
 
 const BASE = '/api/v1/app-auth';
 
@@ -52,6 +52,8 @@ async function call<T>(
 export const ROLE_ADMIN = 'org_admin';
 export const ROLE_SECRETARY = 'secretary';
 export const ROLE_MEMBER = 'member';
+/** نقش مدیر پلتفرم — نشست پلتفرم هیچ دسترسی به فضای کاری ندارد. */
+export const ROLE_PLATFORM_ADMIN = 'platform_admin';
 
 /** نگارش‌های قدیمی/معادل نقش مدیر که ممکن است در دادهٔ پیشین مانده باشد. */
 const LEGACY_ADMIN_ROLES = ['admin', 'owner', 'org-admin', 'orgadmin'];
@@ -66,6 +68,11 @@ export const ROLE_OPTIONS = [
 export function isAdminRole(role: string | null | undefined): boolean {
   const value = (role || '').trim().toLowerCase();
   return value === ROLE_ADMIN || LEGACY_ADMIN_ROLES.includes(value);
+}
+
+/** تشخیص نشست مدیر پلتفرم. */
+export function isPlatformAdminRole(role: string | null | undefined): boolean {
+  return (role || '').trim().toLowerCase() === ROLE_PLATFORM_ADMIN;
 }
 
 export const GENDER_OPTIONS = [
@@ -121,8 +128,24 @@ export interface SessionPayload {
   organization: AppOrganization;
 }
 
+/** کاربر نشست — برای ورود پلتفرم شکل متفاوتی دارد (بدون فیلدهای سازمانی). */
+export interface SessionUser {
+  id?: number;
+  username?: string;
+  display_name?: string;
+  full_name?: string;
+  role?: string;
+  role_label?: string;
+  must_change_password?: boolean;
+  is_platform_admin?: boolean;
+}
+
 /** پاسخ ورود همیشه یک نشست کامل است؛ رمز عبور هر فضا، حساب مقصد را مشخص می‌کند. */
-export type LoginResult = SessionPayload;
+export type LoginResult = {
+  token: string;
+  user: SessionUser;
+  organization: AppOrganization | null;
+};
 
 export interface MePayload {
   user: AppUser;
@@ -278,6 +301,11 @@ export const authApi = {
       password,
     });
     setToken(result.token);
+    // خلاصهٔ کاربر نشست برای تشخیص مسیر (پلتفرم یا فضای کاری) ذخیره می‌شود.
+    setSessionUser({
+      role: result.user?.role || '',
+      username: result.user?.username || username,
+    });
     return result;
   },
 

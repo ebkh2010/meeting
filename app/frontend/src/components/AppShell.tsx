@@ -46,8 +46,8 @@ import {
   toPersianDigits,
 } from '@/lib/mgmt';
 import LoadingGif from '@/components/LoadingGif';
-import { authApi, isAdminRole, ROLE_SECRETARY } from '@/lib/appAuth';
-import { isSignedIn } from '@/lib/session';
+import { authApi, isAdminRole, isPlatformAdminRole, ROLE_SECRETARY } from '@/lib/appAuth';
+import { getSessionUser, isSignedIn } from '@/lib/session';
 import VidaraBranding from '@/components/VidaraBranding';
 import OrganizationSwitcher from '@/components/OrganizationSwitcher';
 import AssistantPanel from '@/components/AssistantPanel';
@@ -220,6 +220,12 @@ export default function AppShell({ children }: AppShellProps) {
     const check = async () => {
       if (!isSignedIn()) {
         if (active) setAuthState('anonymous');
+        return;
+      }
+      // نشست مدیر پلتفرم به پوستهٔ فضای کاری تعلق ندارد.
+      const sessionUser = getSessionUser();
+      if (sessionUser && isPlatformAdminRole(String(sessionUser.role ?? ''))) {
+        navigate('/platform', { replace: true });
         return;
       }
       try {

@@ -355,7 +355,20 @@ async def load_app_user(db: AsyncSession, app_user_id: int) -> App_users:
         raise unauthorized("حساب کاربری یافت نشد. دوباره وارد شوید.")
     if (app_user.status or "active") != "active":
         raise forbidden("حساب کاربری شما توسط مدیر سازمان غیرفعال شده است.")
+    # سازمان منتقل‌شده به سطل آشغال پلتفرم از دسترس همهٔ اعضا خارج است.
+    if await org_is_trashed(db, int(app_user.organization_id)):
+        raise forbidden(
+            "سازمان شما توسط مدیریت پلتفرم به سطل آشغال منتقل شده و در دسترس نیست."
+        )
     return app_user
+
+
+async def org_is_trashed(db: AsyncSession, organization_id: int) -> bool:
+    """آیا سازمان به سطل آشغال پلتفرم منتقل شده است؟ (NULL = فعال)"""
+    result = await db.execute(
+        select(Organizations.status).where(Organizations.id == organization_id)
+    )
+    return (result.scalars().first() or "active") == "trashed"
 
 
 # ---------------------------------------------------------------------------
@@ -383,8 +396,24 @@ async def username_taken(
     return result.scalars().first() is not None
 
 
+async def _exclude_trashed_orgs(db: AsyncSession, rows: list[App_users]) -> list[App_users]:
+    """حذف حساب‌هایی که سازمانشان به سطل آشغال پلتفرم منتقل شده است."""
+    if not rows:
+        return rows
+    org_ids = {int(row.organization_id) for row in rows}
+    result = await db.execute(
+        select(Organizations.id).where(
+            Organizations.id.in_(org_ids), Organizations.status == "trashed"
+        )
+    )
+    trashed = {int(row[0]) for row in result.all()}
+    if not trashed:
+        return rows
+    return [row for row in rows if int(row.organization_id) not in trashed]
+
+
 async def find_login_candidates(db: AsyncSession, raw_identifier: str) -> list[App_users]:
-    """همهٔ حساب‌های فعال یک شخص در سازمان‌های مختلف برای مرحلهٔ انتخاب سازمان."""
+    """همهٔ حساب‌های فعال یک شخص در سازمان‌های فعال برای مرحلهٔ انتخاب سازمان."""
     identifier = to_latin_digits((raw_identifier or "").strip()).lower()
     if not identifier:
         return []
@@ -395,7 +424,7 @@ async def find_login_candidates(db: AsyncSession, raw_identifier: str) -> list[A
     result = await db.execute(
         select(App_users).where(or_(*conditions)).order_by(App_users.id.asc())
     )
-    return list(result.scalars().all())
+    return await _exclude_trashed_orgs(db, list(result.scalars().all()))
 
 
 async def find_sibling_accounts(db: AsyncSession, app_user: App_users) -> list[App_users]:
@@ -427,6 +456,7 @@ async def find_sibling_accounts(db: AsyncSession, app_user: App_users) -> list[A
         select(App_users).where(or_(*conditions)).order_by(App_users.id.asc())
     )
     rows = [row for row in result.scalars().all() if (row.status or "active") == "active"]
+    rows = await _exclude_trashed_orgs(db, rows)
 
     if national_id:
         rows = [
@@ -461,7 +491,8 @@ async def ensure_national_id_identity(
     if exclude_id is not None:
         stmt = stmt.where(App_users.id != int(exclude_id))
     result = await db.execute(stmt.order_by(App_users.id.asc()))
-    rows = list(result.scalars().all())
+    # سوابق سازمان‌های سطل‌آشغالی مانع هویت‌سازی تازه نمی‌شوند.
+    rows = await _exclude_trashed_orgs(db, list(result.scalars().all()))
     if not rows:
         return None
 

@@ -11,6 +11,8 @@ import MeetingDetail from './pages/MeetingDetail';
 import Settings from './pages/Settings';
 import Account from './pages/Account';
 import PrintMinutes from './pages/PrintMinutes';
+import PlatformAdmin from './pages/PlatformAdmin';
+import PlatformShell from './components/PlatformShell';
 
 const queryClient = new QueryClient();
 
@@ -34,6 +36,15 @@ const AppRoutes = () => (
     {/* کنسول قدیمی مدیریت حذف شد؛ نقطهٔ ورود واحد، بخش تنظیمات است. */}
     <Route path="/admin" element={<Navigate to="/settings?tab=users" replace />} />
     <Route path="/print/:meetingId" element={<PrintMinutes />} />
+    {/* کنسول مدیریت پلتفرم — فقط برای نشست مدیر پلتفرم (بدون دسترسی به جلسات) */}
+    <Route
+      path="/platform"
+      element={
+        <PlatformShell>
+          <PlatformAdmin />
+        </PlatformShell>
+      }
+    />
     {/* MODULE_ROUTES_START */}
     {/* MODULE_ROUTES_END */}
   </Routes>

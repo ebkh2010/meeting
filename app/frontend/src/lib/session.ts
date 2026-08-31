@@ -7,8 +7,10 @@
  */
 
 const TOKEN_KEY = 'vidara.session.token';
+const USER_KEY = 'vidara.session.user';
 
 let cachedToken: string | null = null;
+let cachedUser: Record<string, unknown> | null = null;
 const listeners = new Set<() => void>();
 
 /** خواندن توکن نشست؛ در نخستین فراخوان از حافظهٔ مرورگر بازیابی می‌شود. */
@@ -20,6 +22,31 @@ export function getToken(): string {
     cachedToken = '';
   }
   return cachedToken;
+}
+
+/** کاربر نشست (نقش و مشخصات خلاصه) — برای تشخیص مسیر پلتفرم/فضای کاری. */
+export function getSessionUser(): Record<string, unknown> | null {
+  if (cachedUser !== null) return cachedUser;
+  try {
+    const raw = window.localStorage.getItem(USER_KEY);
+    cachedUser = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+  } catch {
+    cachedUser = null;
+  }
+  return cachedUser;
+}
+
+export function setSessionUser(user: Record<string, unknown> | null): void {
+  cachedUser = user ?? null;
+  try {
+    if (cachedUser) {
+      window.localStorage.setItem(USER_KEY, JSON.stringify(cachedUser));
+    } else {
+      window.localStorage.removeItem(USER_KEY);
+    }
+  } catch {
+    /* حالت مرور خصوصی */
+  }
 }
 
 export function setToken(token: string): void {
@@ -38,6 +65,7 @@ export function setToken(token: string): void {
 
 export function clearToken(): void {
   setToken('');
+  setSessionUser(null);
 }
 
 export function isSignedIn(): boolean {

@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/select';
 import { errorMessage } from '@/lib/mgmt';
 import { authApi, GENDER_OPTIONS } from '@/lib/appAuth';
-import { isSignedIn } from '@/lib/session';
+import { getSessionUser, isSignedIn } from '@/lib/session';
 import VidaraBranding from '@/components/VidaraBranding';
 
 const EMPTY_REGISTER = {
@@ -44,7 +44,12 @@ export default function Login() {
   useEffect(() => {
     document.documentElement.setAttribute('dir', 'rtl');
     document.documentElement.setAttribute('lang', 'fa');
-    if (isSignedIn()) navigate('/dashboard', { replace: true });
+    if (isSignedIn()) {
+      const sessionUser = getSessionUser();
+      const target =
+        sessionUser && String(sessionUser.role) === 'platform_admin' ? '/platform' : '/dashboard';
+      navigate(target, { replace: true });
+    }
   }, [navigate]);
 
   /**
@@ -56,6 +61,11 @@ export default function Login() {
     setError('');
     try {
       const result = await authApi.login(loginForm.username.trim(), loginForm.password);
+      // نشست مدیر پلتفرم به کنسول پلتفرم می‌رود؛ بدون دسترسی به فضای کاری.
+      if (result.user?.role === 'platform_admin') {
+        navigate('/platform', { replace: true });
+        return;
+      }
       // کاربری که مدیر ساخته است پیش از ورود به فضای کاری باید مشخصاتش را تکمیل کند.
       if (result.user?.must_change_password) {
         navigate('/complete-profile', { replace: true });

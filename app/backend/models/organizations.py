@@ -16,6 +16,8 @@ class Organizations(Base):
     monthly_ai_minutes_quota = Column(Integer, nullable=True)
     ai_minutes_used = Column(Integer, nullable=True)
     quota_period = Column(String, nullable=True)
+    # سقف دلاری مدل زبانی کل سازمان در هر دوره (سنت؛ خالی/صفر = بدون سقف)
+    ai_llm_limit_cents = Column(Integer, nullable=True)
     max_concurrent_ai_jobs = Column(Integer, nullable=True)
     audio_retention_days = Column(Integer, nullable=True)
     max_audio_mb = Column(Integer, nullable=True)
