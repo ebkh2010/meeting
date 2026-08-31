@@ -132,6 +132,16 @@ class PlatformTrashIn(BaseModel):
     confirm_org_name: str
 
 
+class PlatformMeUpdateIn(BaseModel):
+    username: Optional[str] = None
+    display_name: Optional[str] = None
+
+
+class PlatformChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str
+
+
 # ---------------------------------------------------------------------------
 # ابزارها
 # ---------------------------------------------------------------------------
@@ -335,6 +345,49 @@ async def platform_me(
 ) -> Dict[str, Any]:
     admin = await platform_admin.load_admin(db, principal.admin_id)
     return {"user": platform_admin.admin_payload(admin)}
+
+
+@router.patch("/me")
+async def platform_update_me(
+    data: PlatformMeUpdateIn,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """تغییر نام کاربری / نام نمایشی مدیر پلتفرم توسط خودش."""
+    admin = await platform_admin.load_admin(db, principal.admin_id)
+
+    if data.username is not None and data.username.strip():
+        new_username = data.username.strip().lower()
+        if new_username != (admin.username or ""):
+            existing = await platform_admin.find_by_username(db, new_username)
+            if existing is not None and int(existing.id) != int(admin.id):
+                raise app_auth.conflict("این نام کاربری قبلاً برای مدیر پلتفرم دیگری ثبت شده است.")
+            admin.username = new_username
+    if data.display_name is not None:
+        admin.display_name = data.display_name.strip() or admin.display_name
+
+    await db.commit()
+    return {"user": platform_admin.admin_payload(admin)}
+
+
+@router.post("/change-password")
+async def platform_change_password(
+    data: PlatformChangePasswordIn,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """تغییر رمز عبور مدیر پلتفرم توسط خودش."""
+    admin = await platform_admin.load_admin(db, principal.admin_id)
+
+    if not app_auth.verify_password(data.current_password, admin.password_hash or ""):
+        raise app_auth.bad_request("رمز عبور فعلی نادرست است.")
+    new_password = app_auth.validate_password(data.new_password)
+    if app_auth.verify_password(new_password, admin.password_hash or ""):
+        raise app_auth.bad_request("رمز عبور جدید باید با رمز فعلی متفاوت باشد.")
+    admin.password_hash = app_auth.hash_password(new_password)
+    await db.commit()
+    logger.info("رمز عبور مدیر پلتفرم %s تغییر کرد", admin.username)
+    return {"ok": True, "detail": "رمز عبور با موفقیت تغییر کرد."}
 
 
 @router.post("/orgs")

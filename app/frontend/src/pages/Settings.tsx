@@ -1,43 +1,26 @@
 /**
  * بخش یکپارچهٔ «تنظیمات» سازمان — فقط برای نقش «مدیر سازمان».
  *
- * زبانه‌ها: کاربران و نقش‌ها، ایمیل (SMTP)، پیامک (قاصدک)، گزارش ارسال.
+ * زبانه‌ها: کاربران و نقش‌ها، سقف‌های بارگذاری، گزارش ارسال.
+ * تنظیمات ایمیل، پیامک، هوش مصنوعی و استوریج خارجی از این بخش حذف شده و
+ * فقط توسط مدیریت پلتفرم انجام می‌شود.
  * برای دبیر جلسات و عضو، پیام دسترسی ممنوع (۴۰۳) نمایش داده می‌شود و آیکون تنظیمات
  * در هدر برای آن‌ها دیده نمی‌شود.
  */
 import { useSearchParams } from 'react-router-dom';
-import {
-  Bell,
-  BrainCircuit,
-  HardDriveUpload,
-  Mail,
-  MessageSquare,
-  Server,
-  ShieldAlert,
-  Users2,
-} from 'lucide-react';
+import { Bell, HardDriveUpload, ShieldAlert, Users2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import AppShell from '@/components/AppShell';
 import UsersPanel from '@/components/settings/UsersPanel';
-import AiProvidersPanel from '@/components/settings/AiProvidersPanel';
 import UploadLimitsPanel from '@/components/settings/UploadLimitsPanel';
-import ExternalStoragePanel from '@/components/settings/ExternalStoragePanel';
 import DangerZonePanel from '@/components/settings/DangerZonePanel';
-import {
-  DeliveriesPanel,
-  EmailSettingsPanel,
-  SmsSettingsPanel,
-} from '@/components/settings/NotifyPanels';
+import { DeliveriesPanel } from '@/components/settings/NotifyPanels';
 import { isAdminRole } from '@/lib/appAuth';
 
 const TABS = [
   { value: 'users', label: 'کاربران و نقش‌ها', icon: Users2 },
-  { value: 'email', label: 'ایمیل (SMTP)', icon: Mail },
-  { value: 'sms', label: 'پیامک (قاصدک)', icon: MessageSquare },
-  { value: 'ai', label: 'هوش مصنوعی', icon: BrainCircuit },
   { value: 'uploads', label: 'سقف‌های بارگذاری', icon: HardDriveUpload },
-  { value: 'archive', label: 'استوریج خارجی و آرشیو', icon: Server },
   { value: 'deliveries', label: 'گزارش ارسال', icon: Bell },
 ];
 
@@ -90,8 +73,8 @@ function SettingsView({ isAdmin, roleLabel }: { isAdmin: boolean; roleLabel: str
       <div>
         <h1>تنظیمات سازمان</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          همهٔ تنظیمات مدیریتی در یک جا: تعریف کاربران و نقش‌ها، پیکربندی ارسال ایمیل و پیامک و
-          پیگیری وضعیت ارسال‌ها.
+          تعریف کاربران و نقش‌ها، سقف‌های بارگذاری و گزارش ارسال‌ها. تنظیمات ایمیل، پیامک،
+          هوش مصنوعی و استوریج خارجی توسط مدیریت پلتفرم انجام می‌شود.
         </p>
       </div>
 
@@ -111,20 +94,8 @@ function SettingsView({ isAdmin, roleLabel }: { isAdmin: boolean; roleLabel: str
         <TabsContent value="users" className="space-y-6">
           <UsersPanel />
         </TabsContent>
-        <TabsContent value="email" className="space-y-6">
-          <EmailSettingsPanel />
-        </TabsContent>
-        <TabsContent value="sms" className="space-y-6">
-          <SmsSettingsPanel />
-        </TabsContent>
-        <TabsContent value="ai" className="space-y-6">
-          <AiProvidersPanel />
-        </TabsContent>
         <TabsContent value="uploads" className="space-y-6">
           <UploadLimitsPanel />
-        </TabsContent>
-        <TabsContent value="archive" className="space-y-6">
-          <ExternalStoragePanel />
         </TabsContent>
         <TabsContent value="deliveries" className="space-y-6">
           <DeliveriesPanel />

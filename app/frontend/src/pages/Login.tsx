@@ -113,6 +113,11 @@ export default function Login() {
               {busy ? 'در حال ورود…' : 'ورود به سامانه'}
             </Button>
 
+            <p className="text-center text-xs text-muted-foreground">
+              برای ثبت‌نام با شماره تماس ۰۲۱۴۱۰۲۱۰۰۰ داخلی ۱۱۴ یا ۳۳۷ پشتیبانی ویدارا تماس
+              حاصل فرمایید.
+            </p>
+
             {error && (
               <div className="surface-error mt-4 rounded-lg p-3">
                 <p className="text-sm text-error">{error}</p>

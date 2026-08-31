@@ -190,6 +190,17 @@ export interface CreateOrgResult {
 export const platformApi = {
   me: () => call<{ user: PlatformMe }>(`${BASE}/me`),
 
+  /** تغییر نام کاربری / نام نمایشی مدیر پلتفرم. */
+  updateMe: (payload: { username?: string; display_name?: string }) =>
+    call<{ user: PlatformMe }>(`${BASE}/me`, 'PATCH', payload),
+
+  /** تغییر رمز عبور مدیر پلتفرم. */
+  changePassword: (currentPassword: string, newPassword: string) =>
+    call<{ ok: boolean; detail: string }>(`${BASE}/change-password`, 'POST', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+
   listOrgs: () => call<{ items: PlatformOrg[]; total: number }>(`${BASE}/orgs`),
   listTrash: () => call<{ items: PlatformOrg[]; total: number }>(`${BASE}/trash`),
   overview: (orgId: number) => call<PlatformOverview>(`${BASE}/orgs/${orgId}/overview`),
