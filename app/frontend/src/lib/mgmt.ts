@@ -9,19 +9,28 @@ export const client = createClient();
 
 type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
-/** استخراج پیام خطای فارسی از پاسخ بک‌اند. */
+/** استخراج پیام خطای فارسی از پاسخ بک‌اند؛ خطاهای اعتبارسنجی FastAPI (آرایهٔ
+ *  detail) به رشته تبدیل می‌شوند تا رندر React با شیء/آرایه نشکند. */
 export function errorMessage(error: unknown, fallback = 'انجام درخواست ناموفق بود.'): string {
   const candidate = error as {
-    data?: { detail?: string };
-    response?: { data?: { detail?: string } };
-    message?: string;
+    data?: { detail?: unknown };
+    response?: { data?: { detail?: unknown } };
+    message?: unknown;
   };
-  return (
-    candidate?.data?.detail ||
-    candidate?.response?.data?.detail ||
-    candidate?.message ||
-    fallback
-  );
+  const detail = candidate?.data?.detail ?? candidate?.response?.data?.detail;
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((item) =>
+        typeof item === 'object' && item !== null
+          ? String((item as { msg?: unknown }).msg ?? JSON.stringify(item))
+          : String(item),
+      )
+      .filter(Boolean);
+    if (parts.length) return parts.join('؛ ');
+  }
+  if (typeof detail === 'string' && detail) return detail;
+  if (typeof candidate?.message === 'string' && candidate.message) return candidate.message;
+  return fallback;
 }
 
 /**

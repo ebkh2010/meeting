@@ -2,6 +2,7 @@
  * لایهٔ دسترسی مدیریت پلتفرم — قرارداد دقیقاً با روتر `/api/v1/platform` یکسان است.
  * توکن نشست (X-App-Token) همان توکن ورود پلتفرم است.
  */
+import axios from 'axios';
 import { client } from '@/lib/mgmt';
 import { authHeaders, clearToken, isUnauthorized } from '@/lib/session';
 
@@ -15,18 +16,28 @@ function bustCache(url: string, method: HttpMethod): string {
   return `${url}${separator}_ts=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** استخراج پیام خطای فارسی؛ خطاهای اعتبارسنجی FastAPI (آرایهٔ detail) رشته می‌شوند
+ *  تا هرگز شیء/آرایه به toast نرسد و رندر React نشکند. */
 export function errorMessage(error: unknown, fallback = 'انجام درخواست ناموفق بود.'): string {
   const candidate = error as {
-    data?: { detail?: string };
-    response?: { data?: { detail?: string } };
-    message?: string;
+    data?: { detail?: unknown };
+    response?: { data?: { detail?: unknown } };
+    message?: unknown;
   };
-  return (
-    candidate?.data?.detail ||
-    candidate?.response?.data?.detail ||
-    candidate?.message ||
-    fallback
-  );
+  const detail = candidate?.data?.detail ?? candidate?.response?.data?.detail;
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((item) =>
+        typeof item === 'object' && item !== null
+          ? String((item as { msg?: unknown }).msg ?? JSON.stringify(item))
+          : String(item),
+      )
+      .filter(Boolean);
+    if (parts.length) return parts.join('؛ ');
+  }
+  if (typeof detail === 'string' && detail) return detail;
+  if (typeof candidate?.message === 'string' && candidate.message) return candidate.message;
+  return fallback;
 }
 
 async function call<T>(
@@ -216,10 +227,24 @@ export const platformApi = {
       'POST',
     ),
 
-  purgeOrg: (orgId: number, confirm: string, confirmOrgName: string) =>
-    call<{ success: boolean; total_rows: number; storage_objects_removed: number }>(
-      `${BASE}/trash/${orgId}`,
-      'DELETE',
-      { confirm, confirm_org_name: confirmOrgName },
-    ),
+  purgeOrg: async (orgId: number, confirm: string, confirmOrgName: string) => {
+    // web-sdk برای متد DELETE بدنه را به پارامتر کوئری تبدیل می‌کند و بک‌اند
+    // بدنهٔ JSON می‌خواهد؛ بنابراین این فراخوان مستقیم با axios انجام می‌شود.
+    try {
+      const response = await axios.request<{
+        success: boolean;
+        total_rows: number;
+        storage_objects_removed: number;
+      }>({
+        method: 'DELETE',
+        url: `${BASE}/trash/${orgId}`,
+        data: { confirm, confirm_org_name: confirmOrgName },
+        headers: authHeaders(),
+      });
+      return response.data;
+    } catch (error) {
+      if (isUnauthorized(error)) clearToken();
+      throw error;
+    }
+  },
 };
