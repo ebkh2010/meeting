@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from core.config import settings as app_settings
@@ -78,6 +79,14 @@ class PlatformNotifyIn(BaseModel):
     sms_api_key: Optional[str] = None
     sms_line_number: Optional[str] = None
     sms_enabled: Optional[bool] = None
+
+
+class PlatformTestEmailIn(BaseModel):
+    to_email: Optional[str] = ""
+
+
+class PlatformTestSmsIn(BaseModel):
+    to_mobile: Optional[str] = ""
 
 
 class PlatformProviderIn(BaseModel):
@@ -209,23 +218,35 @@ def _org_card(org: Organizations, admin: Optional[App_users], quota: Dict[str, A
 
 async def _org_quota_card(db: AsyncSession, org: Organizations) -> Dict[str, Any]:
     admin = await _org_admin(db, int(org.id))
-    admin_quota: Dict[str, Any] = {"user_id": None, "llm_limit_cents": None, "stt_limit_minutes": None}
+    admin_quota: Dict[str, Any] = {
+        "user_id": None,
+        "llm_limit_cents": None,
+        "stt_limit_minutes": None,
+        "used_llm_cents": None,
+        "used_stt_minutes": None,
+    }
     if admin is not None:
-        row = await ai_usage.ensure_quota_row(db, int(org.id), f"{app_auth.USER_PREFIX}{int(admin.id)}")
+        user_id = f"{app_auth.USER_PREFIX}{int(admin.id)}"
+        row = await ai_usage.ensure_quota_row(db, int(org.id), user_id)
+        usage = await ai_usage.usage_snapshot(db, int(org.id), user_id)
         admin_quota = {
-            "user_id": f"{app_auth.USER_PREFIX}{int(admin.id)}",
+            "user_id": user_id,
             "llm_limit_cents": int(row.llm_limit_cents) if row.llm_limit_cents is not None else None,
             "stt_limit_minutes": int(row.stt_limit_minutes) if row.stt_limit_minutes is not None else None,
+            "used_llm_cents": int(usage["llm"]["used_cents"]),
+            "used_stt_minutes": int(usage["stt"]["used_minutes"]),
             "defaults": {
                 "llm_limit_cents": ai_usage.DEFAULT_LLM_BUDGET_CENTS,
                 "stt_limit_minutes": ai_usage.DEFAULT_STT_BUDGET_MINUTES,
             },
         }
+    org_usage = await ai_usage.org_usage_snapshot(db, int(org.id))
     return {
         "org_stt_limit_minutes": int(org.monthly_ai_minutes_quota or 0) or None,
         "org_ai_minutes_used": int(org.ai_minutes_used or 0),
         "quota_period": org.quota_period or "",
         "org_llm_limit_cents": int(org.ai_llm_limit_cents) if org.ai_llm_limit_cents is not None else None,
+        "org_llm_used_cents": int(org_usage["llm_used_cents"]),
         "admin_user": admin_quota,
     }
 
@@ -518,6 +539,90 @@ async def update_notify(
     payload = channels.settings_payload(row)
     await db.commit()
     return payload
+
+
+@router.post("/orgs/{org_id}/notify/test-email")
+async def test_email(
+    org_id: int,
+    data: PlatformTestEmailIn,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """ارسال ایمیل آزمایشی با تنظیمات ذخیره‌شدهٔ سازمان (مثل تنظیمات خود سازمان)."""
+    org = await _get_org(db, org_id)
+    admin = await _org_admin(db, org_id)
+    row = await channels.get_or_create_settings(db, org_id)
+    target = app_auth.normalize_email(data.to_email) if data.to_email else (admin.email if admin else "")
+    if not target:
+        raise _bad("نشانی ایمیل مقصد را وارد کنید.")
+    if not row.smtp_enabled:
+        raise _bad("ابتدا ارسال ایمیل را فعال و ذخیره کنید.")
+
+    now_label = channels.format_jalali_datetime(datetime.now(timezone.utc))
+    result = await channels.send_email(
+        row,
+        to_email=target,
+        subject="ایمیل آزمایشی — ویدارا - نسخه جلسات",
+        text_body=(
+            "این یک ایمیل آزمایشی از «ویدارا - نسخه جلسات» است.\n"
+            f"سازمان: {org.name}\nزمان ارسال: {now_label}\n"
+            "اگر این پیام را می‌بینید، تنظیمات SMTP سازمان درست است."
+        ),
+        html_body=(
+            '<div dir="rtl" style="font-family:Tahoma,Arial,sans-serif;color:#0f172a">'
+            "<h3>ایمیل آزمایشی ویدارا</h3>"
+            f"<p>سازمان: {org.name}</p>"
+            f"<p>زمان ارسال: {now_label}</p>"
+            "<p>تنظیمات SMTP سازمان شما درست کار می‌کند.</p></div>"
+        ),
+    )
+    if not result.ok:
+        raise _bad(f"ارسال ایمیل آزمایشی ناموفق بود: {result.error}")
+    await _audit(
+        db, org_id, principal, "platform.org_email_tested", entity_id=org_id,
+        detail=f"ایمیل آزمایشی سازمان به {target} ارسال شد",
+    )
+    await db.commit()
+    return {"ok": True, "recipient": target, "detail": "ایمیل آزمایشی ارسال شد."}
+
+
+@router.post("/orgs/{org_id}/notify/test-sms")
+async def test_sms(
+    org_id: int,
+    data: PlatformTestSmsIn,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """ارسال پیامک آزمایشی با تنظیمات ذخیره‌شدهٔ سازمان (مثل تنظیمات خود سازمان)."""
+    org = await _get_org(db, org_id)
+    admin = await _org_admin(db, org_id)
+    row = await channels.get_or_create_settings(db, org_id)
+    target = app_auth.normalize_mobile(data.to_mobile) if data.to_mobile else (admin.mobile if admin else "")
+    if not target:
+        raise _bad("شماره موبایل مقصد را وارد کنید.")
+    if not row.sms_enabled:
+        raise _bad("ابتدا ارسال پیامک را فعال و ذخیره کنید.")
+
+    now_label = channels.format_jalali_datetime(datetime.now(timezone.utc))
+    result = await channels.send_sms(
+        row,
+        receptor=target,
+        message=f"پیامک آزمایشی ویدارا - نسخه جلسات\nسازمان: {org.name}\nزمان: {now_label}\nلغو ۱۱",
+        client_reference_id=_sms_reference_id(),
+    )
+    if not result.ok:
+        raise _bad(f"ارسال پیامک آزمایشی ناموفق بود: {result.error}")
+    await _audit(
+        db, org_id, principal, "platform.org_sms_tested", entity_id=org_id,
+        detail=f"پیامک آزمایشی سازمان به {target} ارسال شد (messageid={result.provider_message_id})",
+    )
+    await db.commit()
+    return {
+        "ok": True,
+        "recipient": target,
+        "provider_message_id": result.provider_message_id,
+        "detail": "پیامک آزمایشی ارسال شد.",
+    }
 
 
 @router.get("/orgs/{org_id}/ai-providers")

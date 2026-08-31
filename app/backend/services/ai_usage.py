@@ -110,6 +110,15 @@ async def _sum_org_since(db: AsyncSession, organization_id: int, column: Any) ->
     return int(result.scalar_one() or 0)
 
 
+async def org_usage_snapshot(db: AsyncSession, organization_id: int) -> Dict[str, Any]:
+    """مصرف کل سازمان در دورهٔ جاری (برای نمایش در کنسول پلتفرم)."""
+    return {
+        "period": current_period(),
+        "llm_used_cents": await _sum_org_since(db, organization_id, Ai_user_usage.cost_cents),
+        "stt_used_minutes": await _sum_org_since(db, organization_id, Ai_user_usage.minutes_charged),
+    }
+
+
 def _period_start() -> datetime:
     """شروع دورهٔ جاری (روز اول ماه میلادی) برای مقایسهٔ مستقیم با ستون زمانی."""
     return datetime.strptime(current_period() + "-01", "%Y-%m-%d")

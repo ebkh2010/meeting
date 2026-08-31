@@ -87,10 +87,14 @@ export interface PlatformOrgQuota {
   org_ai_minutes_used: number;
   quota_period: string;
   org_llm_limit_cents: number | null;
+  /** مصرف دلاری کل سازمان در دورهٔ جاری (سنت). */
+  org_llm_used_cents: number;
   admin_user: {
     user_id: string | null;
     llm_limit_cents: number | null;
     stt_limit_minutes: number | null;
+    used_llm_cents: number | null;
+    used_stt_minutes: number | null;
     defaults: { llm_limit_cents: number; stt_limit_minutes: number };
   };
 }
@@ -207,6 +211,22 @@ export const platformApi = {
 
   updateNotify: (orgId: number, payload: Record<string, unknown>) =>
     call<PlatformNotify>(`${BASE}/orgs/${orgId}/notify`, 'PATCH', payload),
+
+  /** ارسال ایمیل آزمایشی با تنظیمات ذخیره‌شدهٔ سازمان. */
+  testNotifyEmail: (orgId: number, toEmail?: string) =>
+    call<{ ok: boolean; recipient: string; detail: string }>(
+      `${BASE}/orgs/${orgId}/notify/test-email`,
+      'POST',
+      { to_email: toEmail || '' },
+    ),
+
+  /** ارسال پیامک آزمایشی با تنظیمات ذخیره‌شدهٔ سازمان. */
+  testNotifySms: (orgId: number, toMobile?: string) =>
+    call<{ ok: boolean; recipient: string; provider_message_id: string; detail: string }>(
+      `${BASE}/orgs/${orgId}/notify/test-sms`,
+      'POST',
+      { to_mobile: toMobile || '' },
+    ),
 
   updateAiProvider: (orgId: number, providerId: number, payload: Record<string, unknown>) =>
     call<PlatformAiProvider>(`${BASE}/orgs/${orgId}/ai-providers/${providerId}`, 'PATCH', payload),

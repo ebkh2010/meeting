@@ -427,18 +427,27 @@ function SettingsDialog({
         {loading || !overview ? (
           <LoadingGif label="در حال دریافت تنظیمات…" />
         ) : (
-          <Tabs defaultValue="notify" dir="rtl">
+          <Tabs defaultValue="email" dir="rtl">
             <TabsList className="w-full justify-start overflow-x-auto">
-              <TabsTrigger value="notify">ایمیل و پیامک</TabsTrigger>
+              <TabsTrigger value="email">ایمیل (SMTP)</TabsTrigger>
+              <TabsTrigger value="sms">پیامک</TabsTrigger>
               <TabsTrigger value="ai">هوش مصنوعی</TabsTrigger>
               <TabsTrigger value="storage">استوریج خارجی</TabsTrigger>
               <TabsTrigger value="quotas">سقف‌های مصرف AI</TabsTrigger>
             </TabsList>
-            <TabsContent value="notify" className="pt-3">
-              <NotifyForm orgId={org.id} initial={overview.notify} />
+            <TabsContent value="email" className="pt-3">
+              <SmtpForm orgId={org.id} initial={overview.notify} />
+            </TabsContent>
+            <TabsContent value="sms" className="pt-3">
+              <SmsForm orgId={org.id} initial={overview.notify} />
             </TabsContent>
             <TabsContent value="ai" className="pt-3">
-              <AiProvidersForm orgId={org.id} providers={overview.ai_providers} onReload={() => void load()} />
+              <AiProvidersForm
+                orgId={org.id}
+                providers={overview.ai_providers}
+                chain={overview.ai_chain}
+                onReload={() => void load()}
+              />
             </TabsContent>
             <TabsContent value="storage" className="pt-3">
               <StorageForm orgId={org.id} initial={overview.storage} />
@@ -461,12 +470,14 @@ function SettingsDialog({
 }
 
 /* ------------------------------------------------------------------ */
-/* فرم اعلان‌ها                                                        */
+/* فرم ایمیل (SMTP) — جدا از پیامک، با دکمهٔ تست مثل تنظیمات سازمان      */
 /* ------------------------------------------------------------------ */
 
-function NotifyForm({ orgId, initial }: { orgId: number; initial: PlatformNotify }) {
+function SmtpForm({ orgId, initial }: { orgId: number; initial: PlatformNotify }) {
   const [form, setForm] = useState<Record<string, string | boolean>>({});
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testTo, setTestTo] = useState('');
 
   const value = (key: string): string => String(form[key] ?? initial[key] ?? '');
   const boolValue = (key: string): boolean => Boolean(form[key] ?? initial[key] ?? false);
@@ -484,87 +495,164 @@ function NotifyForm({ orgId, initial }: { orgId: number; initial: PlatformNotify
         smtp_use_tls: boolValue('smtp_use_tls'),
         smtp_use_ssl: boolValue('smtp_use_ssl'),
         smtp_enabled: boolValue('smtp_enabled'),
-        sms_line_number: value('sms_line_number') || null,
-        sms_enabled: boolValue('sms_enabled'),
       };
       if (form.smtp_password) payload.smtp_password = String(form.smtp_password);
-      if (form.sms_api_key) payload.sms_api_key = String(form.sms_api_key);
       await platformApi.updateNotify(orgId, payload);
-      setForm({ smtp_password: '', sms_api_key: '' });
-      toast.success('تنظیمات ایمیل و پیامک ذخیره شد.');
+      setForm({ smtp_password: '' });
+      toast.success('تنظیمات ایمیل ذخیره شد.');
     } catch (err) {
-      toast.error(errorMessage(err, 'ذخیرهٔ تنظیمات اعلان ناموفق بود.'));
+      toast.error(errorMessage(err, 'ذخیرهٔ تنظیمات ایمیل ناموفق بود.'));
     } finally {
       setBusy(false);
     }
   };
 
+  const test = async () => {
+    setTesting(true);
+    try {
+      const result = await platformApi.testNotifyEmail(orgId, testTo.trim());
+      toast.success(`ایمیل آزمایشی به ${result.recipient} ارسال شد.`);
+    } catch (err) {
+      toast.error(errorMessage(err, 'ارسال ایمیل آزمایشی ناموفق بود.'));
+    } finally {
+      setTesting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <div className="rounded-md border p-3">
-        <div className="mb-2 flex items-center gap-2">
-          <Switch checked={boolValue('smtp_enabled')} onCheckedChange={(v) => setField('smtp_enabled', v)} />
-          <Label>ایمیل (SMTP) فعال</Label>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="میزبان SMTP" value={value('smtp_host')} onChange={(v) => setField('smtp_host', v)} />
-          <Field
-            label="پورت"
-            value={value('smtp_port')}
-            onChange={(v) => setField('smtp_port', v)}
-            dir="ltr"
-          />
-          <Field label="نام کاربری" value={value('smtp_username')} onChange={(v) => setField('smtp_username', v)} dir="ltr" />
-          <Field
-            label="رمز عبور (خالی = بدون تغییر)"
-            type="password"
-            value={value('smtp_password')}
-            onChange={(v) => setField('smtp_password', v)}
-            dir="ltr"
-          />
-          <Field label="ایمیل فرستنده" value={value('smtp_from_email')} onChange={(v) => setField('smtp_from_email', v)} dir="ltr" />
-          <Field label="نام فرستنده" value={value('smtp_from_name')} onChange={(v) => setField('smtp_from_name', v)} />
-        </div>
-        <div className="mt-2 flex gap-4">
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={boolValue('smtp_use_ssl')}
-              onChange={(e) => setField('smtp_use_ssl', e.target.checked)}
-            />
-            SSL
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={boolValue('smtp_use_tls')}
-              onChange={(e) => setField('smtp_use_tls', e.target.checked)}
-            />
-            TLS
-          </label>
-        </div>
+      <div className="flex items-center gap-2">
+        <Switch checked={boolValue('smtp_enabled')} onCheckedChange={(v) => setField('smtp_enabled', v)} />
+        <Label>ایمیل (SMTP) فعال</Label>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="میزبان SMTP" value={value('smtp_host')} onChange={(v) => setField('smtp_host', v)} dir="ltr" />
+        <Field label="پورت" value={value('smtp_port')} onChange={(v) => setField('smtp_port', v)} dir="ltr" />
+        <Field label="نام کاربری" value={value('smtp_username')} onChange={(v) => setField('smtp_username', v)} dir="ltr" />
+        <Field
+          label="رمز عبور (خالی = بدون تغییر)"
+          type="password"
+          value={value('smtp_password')}
+          onChange={(v) => setField('smtp_password', v)}
+          dir="ltr"
+        />
+        <Field label="ایمیل فرستنده" value={value('smtp_from_email')} onChange={(v) => setField('smtp_from_email', v)} dir="ltr" />
+        <Field label="نام فرستنده" value={value('smtp_from_name')} onChange={(v) => setField('smtp_from_name', v)} />
+      </div>
+      <div className="flex flex-wrap gap-4">
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={boolValue('smtp_use_ssl')} onChange={(e) => setField('smtp_use_ssl', e.target.checked)} />
+          SSL
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={boolValue('smtp_use_tls')} onChange={(e) => setField('smtp_use_tls', e.target.checked)} />
+          TLS
+        </label>
       </div>
 
       <div className="rounded-md border p-3">
-        <div className="mb-2 flex items-center gap-2">
-          <Switch checked={boolValue('sms_enabled')} onCheckedChange={(v) => setField('sms_enabled', v)} />
-          <Label>پیامک فعال</Label>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <Field
-            label="کلید API پیامک (خالی = بدون تغییر)"
-            type="password"
-            value={value('sms_api_key')}
-            onChange={(v) => setField('sms_api_key', v)}
-            dir="ltr"
-          />
-          <Field label="شمارهٔ خط فرستنده" value={value('sms_line_number')} onChange={(v) => setField('sms_line_number', v)} dir="ltr" />
+        <p className="mb-2 text-xs text-muted-foreground">
+          تست ارسال: ایمیل مقصد را وارد کنید (خالی = ایمیل مدیر سازمان).
+        </p>
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-56 flex-1 space-y-1">
+            <Label className="text-xs">ایمیل مقصد</Label>
+            <Input value={testTo} onChange={(e) => setTestTo(e.target.value)} dir="ltr" className="text-left" />
+          </div>
+          <Button variant="outline" disabled={testing} onClick={() => void test()}>
+            {testing ? 'در حال ارسال…' : 'تست ارسال ایمیل'}
+          </Button>
         </div>
       </div>
 
       <div className="flex justify-end">
         <Button disabled={busy} onClick={() => void save()}>
-          {busy ? 'در حال ذخیره…' : 'ذخیرهٔ تنظیمات اعلان'}
+          {busy ? 'در حال ذخیره…' : 'ذخیرهٔ تنظیمات ایمیل'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* فرم پیامک — جدا از ایمیل، با دکمهٔ تست مثل تنظیمات سازمان            */
+/* ------------------------------------------------------------------ */
+
+function SmsForm({ orgId, initial }: { orgId: number; initial: PlatformNotify }) {
+  const [form, setForm] = useState<Record<string, string | boolean>>({});
+  const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testTo, setTestTo] = useState('');
+
+  const value = (key: string): string => String(form[key] ?? initial[key] ?? '');
+  const boolValue = (key: string): boolean => Boolean(form[key] ?? initial[key] ?? false);
+  const setField = (key: string, val: string | boolean) => setForm((prev) => ({ ...prev, [key]: val }));
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const payload: Record<string, unknown> = {
+        sms_line_number: value('sms_line_number') || null,
+        sms_enabled: boolValue('sms_enabled'),
+      };
+      if (form.sms_api_key) payload.sms_api_key = String(form.sms_api_key);
+      await platformApi.updateNotify(orgId, payload);
+      setForm({ sms_api_key: '' });
+      toast.success('تنظیمات پیامک ذخیره شد.');
+    } catch (err) {
+      toast.error(errorMessage(err, 'ذخیرهٔ تنظیمات پیامک ناموفق بود.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const test = async () => {
+    setTesting(true);
+    try {
+      const result = await platformApi.testNotifySms(orgId, testTo.trim());
+      toast.success(`پیامک آزمایشی به ${result.recipient} ارسال شد (${result.provider_message_id}).`);
+    } catch (err) {
+      toast.error(errorMessage(err, 'ارسال پیامک آزمایشی ناموفق بود.'));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <Switch checked={boolValue('sms_enabled')} onCheckedChange={(v) => setField('sms_enabled', v)} />
+        <Label>پیامک فعال</Label>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field
+          label="کلید API پیامک (خالی = بدون تغییر)"
+          type="password"
+          value={value('sms_api_key')}
+          onChange={(v) => setField('sms_api_key', v)}
+          dir="ltr"
+        />
+        <Field label="شمارهٔ خط فرستنده" value={value('sms_line_number')} onChange={(v) => setField('sms_line_number', v)} dir="ltr" />
+      </div>
+
+      <div className="rounded-md border p-3">
+        <p className="mb-2 text-xs text-muted-foreground">
+          تست ارسال: شمارهٔ مقصد را وارد کنید (خالی = موبایل مدیر سازمان).
+        </p>
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-56 flex-1 space-y-1">
+            <Label className="text-xs">شمارهٔ مقصد</Label>
+            <Input value={testTo} onChange={(e) => setTestTo(e.target.value)} dir="ltr" className="text-left" />
+          </div>
+          <Button variant="outline" disabled={testing} onClick={() => void test()}>
+            {testing ? 'در حال ارسال…' : 'تست ارسال پیامک'}
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <Button disabled={busy} onClick={() => void save()}>
+          {busy ? 'در حال ذخیره…' : 'ذخیرهٔ تنظیمات پیامک'}
         </Button>
       </div>
     </div>
@@ -599,16 +687,60 @@ function Field({
 }
 
 /* ------------------------------------------------------------------ */
-/* فرم تأمین‌کننده‌های AI                                              */
+/* فرم تأمین‌کننده‌های AI — تب‌های جدا برای رونویسی (STT) و مدل زبانی  */
 /* ------------------------------------------------------------------ */
 
 function AiProvidersForm({
   orgId,
   providers,
+  chain,
   onReload,
 }: {
   orgId: number;
   providers: PlatformAiProvider[];
+  chain: { stt: { provider_key: string; display_name: string }[]; llm: { provider_key: string; display_name: string }[] };
+  onReload: () => void;
+}) {
+  const [kind, setKind] = useState<'stt' | 'llm'>('stt');
+  const sttProviders = providers.filter((provider) => provider.kind === 'stt');
+  const llmProviders = providers.filter((provider) => provider.kind === 'llm');
+
+  const chainNames = (items: { provider_key: string; display_name: string }[]) =>
+    items.map((item) => item.display_name).join(' ← ') || '—';
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
+        <p>
+          زنجیرهٔ رونویسی: <b className="text-foreground">{chainNames(chain.stt)}</b>
+        </p>
+        <p>
+          زنجیرهٔ مدل زبانی: <b className="text-foreground">{chainNames(chain.llm)}</b>
+        </p>
+      </div>
+      <Tabs value={kind} onValueChange={(v) => setKind(v as 'stt' | 'llm')}>
+        <TabsList>
+          <TabsTrigger value="stt">رونویسی گفتار (STT)</TabsTrigger>
+          <TabsTrigger value="llm">مدل زبانی (LLM)</TabsTrigger>
+        </TabsList>
+        <TabsContent value="stt" className="space-y-3 pt-3">
+          <ProvidersList providers={sttProviders} orgId={orgId} onReload={onReload} />
+        </TabsContent>
+        <TabsContent value="llm" className="space-y-3 pt-3">
+          <ProvidersList providers={llmProviders} orgId={orgId} onReload={onReload} />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function ProvidersList({
+  providers,
+  orgId,
+  onReload,
+}: {
+  providers: PlatformAiProvider[];
+  orgId: number;
   onReload: () => void;
 }) {
   const [drafts, setDrafts] = useState<Record<number, Record<string, string | boolean>>>({});
@@ -638,6 +770,7 @@ function AiProvidersForm({
       await platformApi.updateAiProvider(orgId, provider.id, payload);
       setDrafts((prev) => ({ ...prev, [provider.id]: {} }));
       toast.success(`تنظیمات ${provider.display_name} ذخیره شد.`);
+      onReload();
     } catch (err) {
       toast.error(errorMessage(err, 'ذخیرهٔ تأمین‌کننده ناموفق بود.'));
     } finally {
@@ -729,7 +862,8 @@ function AiProvidersForm({
         </Card>
       ))}
       <p className="text-xs text-muted-foreground">
-        {providers.length} تأمین‌کننده · برچسب: {providers.map((p) => AI_PROVIDER_LABELS[p.provider_key] ?? p.provider_key).join('، ')}
+        {providers.length} تأمین‌کننده · برچسب:{' '}
+        {providers.map((p) => AI_PROVIDER_LABELS[p.provider_key] ?? p.provider_key).join('، ')}
       </p>
     </div>
   );
@@ -889,9 +1023,38 @@ function QuotasForm({
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-muted-foreground">
-        مصرف فعلی سازمان: {quota.org_ai_minutes_used} دقیقه رونویسی در دورهٔ {quota.quota_period || '—'}
-      </p>
+      <div className="grid grid-cols-2 gap-3 rounded-md border p-3 text-sm">
+        <div>
+          <p className="text-xs text-muted-foreground">مصرف رونویسی سازمان (این دورهٔ {quota.quota_period || '—'})</p>
+          <p className="font-medium">
+            {quota.org_ai_minutes_used} دقیقه
+            {quota.org_stt_limit_minutes != null ? ` از ${quota.org_stt_limit_minutes} دقیقه` : ' (بدون سقف)'}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">مصرف مدل زبانی سازمان (این دوره)</p>
+          <p className="font-medium">
+            {(quota.org_llm_used_cents / 100).toFixed(2)} دلار
+            {quota.org_llm_limit_cents != null ? ` از ${(quota.org_llm_limit_cents / 100).toFixed(2)} دلار` : ' (بدون سقف)'}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">مصرف رونویسی مدیر سازمان</p>
+          <p className="font-medium">
+            {quota.admin_user.used_stt_minutes ?? 0} دقیقه
+            {quota.admin_user.stt_limit_minutes != null ? ` از ${quota.admin_user.stt_limit_minutes} دقیقه` : ''}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">مصرف مدل زبانی مدیر سازمان</p>
+          <p className="font-medium">
+            {((quota.admin_user.used_llm_cents ?? 0) / 100).toFixed(2)} دلار
+            {quota.admin_user.llm_limit_cents != null
+              ? ` از ${(quota.admin_user.llm_limit_cents / 100).toFixed(2)} دلار`
+              : ''}
+          </p>
+        </div>
+      </div>
       <div className="grid grid-cols-2 gap-3">
         <Field
           label="سقف دقیقهٔ رونویسی سازمان (ماهانه)"
