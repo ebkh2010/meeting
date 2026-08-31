@@ -28,7 +28,7 @@ from core.database import get_db
 from dependencies.platform_admin import get_platform_admin
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.ai_user_usage import Ai_user_quotas
@@ -673,11 +673,11 @@ async def purge_org(
     removed: Dict[str, int] = {}
     total = 0
     for label, model in ORG_DELETION_TABLES:
-        result = await db.execute(delete_where(model, org_id))
+        result = await db.execute(delete(model).where(model.organization_id == org_id))
         count = int(result.rowcount or 0)
         removed[label] = count
         total += count
-    org_del = await db.execute(delete_where(Organizations, org_id))
+    org_del = await db.execute(delete(Organizations).where(Organizations.id == org_id))
     total += int(org_del.rowcount or 0)
 
     await db.commit()
@@ -693,9 +693,3 @@ async def purge_org(
         "total_rows": total,
         "storage_objects_removed": objects_removed,
     }
-
-
-def delete_where(model: Any, org_id: int):
-    from sqlalchemy import delete
-
-    return delete(model).where(model.organization_id == org_id)
