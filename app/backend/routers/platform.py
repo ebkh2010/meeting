@@ -36,6 +36,7 @@ from models.ai_user_usage import Ai_user_quotas
 from models.app_users import App_users
 from models.audit_logs import Audit_logs
 from models.org_ai_providers import Org_ai_providers
+from models.org_notify_settings import Org_notify_settings
 from models.organizations import Organizations
 from schemas.storage import OSSBaseModel, ObjectRequest
 from services import ai_providers
@@ -267,6 +268,59 @@ def _sms_reference_id() -> str:
     import time
 
     return str(int(time.time() * 1000))
+
+
+async def _send_notice_sms(
+    db: AsyncSession,
+    admin: Optional[App_users],
+    message: str,
+    *,
+    use_org_row: bool,
+) -> Dict[str, Any]:
+    """پیامک اطلاع‌رسانی حساس به مدیر سازمان (بهترین تلاش).
+
+    اگر پیامک خود سازمان غیرفعال باشد یا ارسالش شکست بخورد، با تنظیمات
+    پیش‌فرض پلتفرم دوباره تلاش می‌شود. ``use_org_row=False`` برای حالتی است که
+    ردیف تنظیمات سازمان حذف شده باشد (پیامک پاک‌سازی نهایی).
+    """
+    result: Dict[str, Any] = {"ok": False, "error": "", "provider_message_id": ""}
+    if admin is None or not (admin.mobile or "").strip():
+        return result
+    mobile = admin.mobile
+
+    candidates: List[Org_notify_settings] = []
+    if use_org_row:
+        try:
+            row = await channels.get_or_create_settings(db, int(admin.organization_id))
+            if row.sms_enabled:
+                candidates.append(row)
+        except Exception as exc:  # pragma: no cover - محافظ عملیاتی
+            logger.warning("خواندن تنظیمات پیامک سازمان %s ناموفق بود: %s", admin.organization_id, exc)
+    candidates.append(
+        Org_notify_settings(
+            organization_id=int(admin.organization_id),
+            sms_enabled=bool(channels.DEFAULT_SMS_ENABLED),
+            sms_api_key_enc=app_auth.encrypt_secret(channels.DEFAULT_SMS_API_KEY),
+            sms_line_number=channels.DEFAULT_SMS_LINE_NUMBER,
+        )
+    )
+
+    for row in candidates:
+        try:
+            sent = await channels.send_sms(
+                row,
+                receptor=mobile,
+                message=message,
+                client_reference_id=_sms_reference_id(),
+            )
+        except Exception as exc:  # pragma: no cover - محافظ عملیاتی
+            logger.warning("ارسال پیامک اطلاع‌رسانی به %s ناموفق بود: %s", mobile, exc)
+            continue
+        if sent.ok:
+            result = {"ok": True, "error": "", "provider_message_id": sent.provider_message_id or ""}
+            break
+        result["error"] = sent.error or ""
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -781,13 +835,33 @@ async def trash_org(
     org = await _get_org(db, org_id)
     if (org.status or "active") == "trashed":
         raise app_auth.conflict("این سازمان از قبل در سطل آشغال است.")
+    admin = await _org_admin(db, org_id)
     org.status = "trashed"
     await _audit(
         db, org_id, principal, "platform.org_trashed", entity_id=org_id,
         detail=f"سازمان «{org.name}» به سطل آشغال منتقل شد",
     )
     await db.commit()
-    return {"success": True, "status": "trashed", "id": org_id, "name": org.name}
+
+    # پیامک اطلاع تعلیق به مدیر سازمان (بهترین تلاش؛ جریان اصلی را متوقف نمی‌کند)
+    sms_notice: Dict[str, Any] = {"ok": False, "error": ""}
+    if admin is not None and (admin.mobile or "").strip():
+        admin_name = app_auth.full_name_of(admin.first_name, admin.last_name)
+        sms_notice = await _send_notice_sms(
+            db,
+            admin,
+            f"حساب کاربری سازمان شما با نام «{org.name}» و به مدیریت {admin_name} "
+            f"به تعلیق درآمده است. برای اطلاعات بیشتر با پشتیبانی ویدارا نسخه جلسات "
+            f"تماس حاصل فرمایید.\nلغو ۱۱",
+            use_org_row=True,
+        )
+    return {
+        "success": True,
+        "status": "trashed",
+        "id": org_id,
+        "name": org.name,
+        "sms_notice": sms_notice,
+    }
 
 
 @router.post("/trash/{org_id}/restore")
@@ -828,6 +902,9 @@ async def purge_org(
     from routers.app_auth import ORG_DELETION_TABLES
 
     org_name = org.name or ""
+    # مدیر سازمان پیش از حذف رکوردها نگه داشته می‌شود تا پیامک پاک‌سازی ارسال شود.
+    admin = await _org_admin(db, org_id)
+    admin_mobile = (admin.mobile or "").strip() if admin is not None else ""
 
     # ۱) فایل‌های Storage (بهترین تلاش؛ شکست حذف فایل، پاک‌سازی داده را متوقف نمی‌کند)
     storage = StorageService()
@@ -862,6 +939,19 @@ async def purge_org(
         "پاک‌سازی کامل سازمان %s «%s» توسط مدیر پلتفرم: %s رکورد، %s شیء",
         org_id, org_name, total, objects_removed,
     )
+
+    # پیامک اطلاع پاک‌سازی به مدیر سازمان (بهترین تلاش؛ ردیف تنظیمات سازمان حذف
+    # شده، پس فقط با تنظیمات پیش‌فرض پلتفرم ارسال می‌شود)
+    sms_notice: Dict[str, Any] = {"ok": False, "error": ""}
+    if admin is not None and admin_mobile:
+        sms_notice = await _send_notice_sms(
+            db,
+            admin,
+            "حساب کاربری شما در سامانه ویدارا نسخه جلسات به کلی پاک شده و محتوای آن "
+            "قابل بازیافت نمی‌باشد.\nلغو ۱۱",
+            use_org_row=False,
+        )
+
     return {
         "success": True,
         "id": org_id,
@@ -869,4 +959,5 @@ async def purge_org(
         "removed": removed,
         "total_rows": total,
         "storage_objects_removed": objects_removed,
+        "sms_notice": sms_notice,
     }
