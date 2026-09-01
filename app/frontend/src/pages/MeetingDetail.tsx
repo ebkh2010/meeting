@@ -613,13 +613,13 @@ function AgendaAndAttendance({
 
 function JobRow({ job, onRetry }: { job: Job; onRetry: (job: Job) => void }) {
   const isActive = job.status === 'queued' || job.status === 'running';
-  // مصرف این کار برای نمایش شفاف به کاربر
+  // مصرف این کار برای نمایش شفاف به کاربر — واحد یکپارچه: توکن ویدارا
+  // (هر دقیقهٔ رونویسی = ۱ توکن، هر سنت مدل زبانی = ۱ توکن)
   const result = (job.result || {}) as Record<string, unknown>;
   const minutesCharged = Number(result.minutes_charged || 0);
-  const tokensIn = Number(result.tokens_in || 0);
-  const tokensOut = Number(result.tokens_out || 0);
   const costCents = Number(result.cost_cents || 0);
-  const hasUsage = minutesCharged > 0 || tokensIn + tokensOut > 0;
+  const tokensCharged = minutesCharged + costCents;
+  const hasUsage = tokensCharged > 0;
   return (
     <div className="rounded-md border border-border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -637,12 +637,7 @@ function JobRow({ job, onRetry }: { job: Job; onRetry: (job: Job) => void }) {
       </p>
       {hasUsage && job.status === 'succeeded' && (
         <p className="mt-1 text-xs font-medium text-primary">
-          مصرف هوش مصنوعی این کار:{' '}
-          {minutesCharged > 0
-            ? `${toPersianDigits(minutesCharged)} دقیقه رونویسی`
-            : `${toPersianDigits(tokensIn + tokensOut)} توکن ≈ ${toPersianDigits(
-                (costCents / 100).toFixed(2),
-              )} دلار`}
+          مصرف این کار: {toPersianDigits(tokensCharged)} توکن ویدارا
         </p>
       )}
       {job.error_message && <p className="mt-1 text-xs text-destructive">{job.error_message}</p>}
@@ -907,7 +902,7 @@ function AudioAndTranscript({
                   </span>
                 </label>
                 <p className="text-xs text-muted-foreground">
-                  سهمیهٔ باقی‌ماندهٔ رونویسی: {toPersianDigits(quotaRemaining)} دقیقه • سقف مدت صوت:{' '}
+                  توکن ویدارای باقی‌مانده: {toPersianDigits(quotaRemaining)} توکن • سقف مدت صوت:{' '}
                   {toPersianDigits(limits.maxAudioMinutes)} دقیقه • سقف حجم:{' '}
                   {toPersianDigits(limits.maxAudioMb)} مگابایت
                 </p>

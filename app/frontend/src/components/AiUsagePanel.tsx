@@ -1,32 +1,18 @@
 /**
- * پنل «سهمیهٔ هوش مصنوعی» کاربر جاری.
+ * پنل «سهمیهٔ توکن ویدارا» کاربر جاری.
  *
- * نمایش سقف و مصرف دورهٔ جاری برای هر دو نوع مصرف (دلار مدل زبانی DeepSeek و
- * دقیقهٔ رونویسی «حرف») به‌همراه آخرین رویدادهای مصرف هر کار؛ وقتی سهمیه‌ای
- * تمام شود، شروع کارهای جدید با پیام روشن رد می‌شود.
+ * همهٔ مصرف‌های هوش مصنوعی (رونویسی و مدل زبانی) با یک واحد یکپارچه نمایش داده
+ * می‌شوند: هر دقیقهٔ رونویسی = ۱ توکن و هر سنت هزینهٔ مدل زبانی = ۱ توکن.
+ * در نمای کاربر هیچ واحد سنت/دلار/دقیقه وجود ندارد.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { BrainCircuit, RefreshCw } from 'lucide-react';
+import { Coins, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { toast } from 'sonner';
 import { authApi, AiUsagePayload } from '@/lib/appAuth';
 import { errorMessage, formatDateTime, toPersianDigits } from '@/lib/mgmt';
-
-/** عدد با دو رقم اعشار دلار (برای نمایش فارسی‌شده). */
-function faDollars(cents: number): string {
-  return toPersianDigits((cents / 100).toFixed(2));
-}
-
-/** نمایش دقیقه به‌صورت «X ساعت و Y دقیقه». */
-function faDuration(minutes: number): string {
-  const total = Math.max(minutes, 0);
-  const hours = Math.floor(total / 60);
-  const mins = total % 60;
-  if (hours === 0) return `${toPersianDigits(mins)} دقیقه`;
-  return `${toPersianDigits(hours)} ساعت${mins ? ` و ${toPersianDigits(mins)} دقیقه` : ''}`;
-}
 
 export default function AiUsagePanel() {
   const [data, setData] = useState<AiUsagePayload | null>(null);
@@ -37,7 +23,7 @@ export default function AiUsagePanel() {
     try {
       setData(await authApi.aiUsage());
     } catch (error) {
-      toast.error(errorMessage(error, 'دریافت سهمیهٔ هوش مصنوعی ناموفق بود.'));
+      toast.error(errorMessage(error, 'دریافت سهمیهٔ توکن ویدارا ناموفق بود.'));
     } finally {
       setLoading(false);
     }
@@ -47,11 +33,9 @@ export default function AiUsagePanel() {
     load();
   }, [load]);
 
-  const llm = data?.quota.llm;
-  const stt = data?.quota.stt;
-  const llmPercent = llm ? Math.min((llm.used_cents / Math.max(llm.limit_cents, 1)) * 100, 100) : 0;
-  const sttPercent = stt
-    ? Math.min((stt.used_minutes / Math.max(stt.limit_minutes, 1)) * 100, 100)
+  const tokens = data?.quota.tokens;
+  const percent = tokens
+    ? Math.min((tokens.used / Math.max(tokens.limit, 1)) * 100, 100)
     : 0;
 
   return (
@@ -59,12 +43,12 @@ export default function AiUsagePanel() {
       <CardHeader className="flex flex-row items-start justify-between gap-3">
         <div>
           <CardTitle className="flex items-center gap-2">
-            <BrainCircuit className="h-5 w-5 text-brand" />
-            سهمیهٔ هوش مصنوعی شما
+            <Coins className="h-5 w-5 text-brand" />
+            سهمیهٔ توکن ویدارا
           </CardTitle>
           <CardDescription>
-            مصرف دورهٔ {data ? toPersianDigits(data.quota.period) : '…'}؛ سقف هر کاربر جداگانه
-            شمارش می‌شود.
+            مصرف دورهٔ {data ? toPersianDigits(data.quota.period) : '…'}؛ هر دقیقهٔ رونویسی =
+            ۱ توکن و هر سنت هزینهٔ مدل زبانی = ۱ توکن.
           </CardDescription>
         </div>
         <Button size="sm" variant="outline" className="!bg-transparent" onClick={load} disabled={loading}>
@@ -73,38 +57,25 @@ export default function AiUsagePanel() {
         </Button>
       </CardHeader>
       <CardContent className="space-y-5">
-        <div className="grid gap-4 md:grid-cols-2">
-          {/* سهمیهٔ مدل زبانی (دلار) */}
-          <div className="rounded-lg border border-border p-3">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold">مدل زبانی (DeepSeek)</p>
-              <p className="text-xs text-muted-foreground">
-                {data ? `باقی‌مانده: ${faDollars(llm!.remaining_cents)} دلار` : '…'}
-              </p>
-            </div>
-            <Progress value={llmPercent} className="mt-2 h-2" />
-            <p className="mt-2 text-xs text-muted-foreground">
-              {data
-                ? `${faDollars(llm!.used_cents)} از ${faDollars(llm!.limit_cents)} دلار مصرف شده`
-                : 'در حال دریافت…'}
+        <div className="rounded-lg border border-border p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold">موجودی توکن ویدارا</p>
+            <p className="text-lg font-bold text-primary">
+              {data ? `${toPersianDigits(tokens!.remaining)} توکن` : '…'}
             </p>
           </div>
-
-          {/* سهمیهٔ رونویسی (ساعت) */}
-          <div className="rounded-lg border border-border p-3">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold">رونویسی فایل صوتی (حرف)</p>
-              <p className="text-xs text-muted-foreground">
-                {data ? `باقی‌مانده: ${faDuration(stt!.remaining_minutes)}` : '…'}
-              </p>
-            </div>
-            <Progress value={sttPercent} className="mt-2 h-2" />
-            <p className="mt-2 text-xs text-muted-foreground">
-              {data
-                ? `${faDuration(stt!.used_minutes)} از ${faDuration(stt!.limit_minutes)} مصرف شده`
-                : 'در حال دریافت…'}
+          <Progress value={percent} className="mt-3 h-2" />
+          <p className="mt-2 text-xs text-muted-foreground">
+            {data
+              ? `${toPersianDigits(tokens!.used)} از ${toPersianDigits(tokens!.limit)} توکن مصرف شده`
+              : 'در حال دریافت…'}
+          </p>
+          {data && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              رونویسی: {toPersianDigits(tokens!.stt_tokens)} توکن · مدل زبانی:{' '}
+              {toPersianDigits(tokens!.llm_tokens)} توکن
             </p>
-          </div>
+          )}
         </div>
 
         {/* رویدادهای مصرف هر کار */}
@@ -129,11 +100,9 @@ export default function AiUsagePanel() {
                     </p>
                   </div>
                   <p className="shrink-0 font-medium text-primary">
-                    {event.minutes_charged > 0
-                      ? `${faDuration(event.minutes_charged)} رونویسی`
-                      : event.tokens_in + event.tokens_out > 0
-                        ? `${toPersianDigits(event.tokens_in + event.tokens_out)} توکن ≈ ${faDollars(event.cost_cents)} دلار`
-                        : '—'}
+                    {event.tokens_charged > 0
+                      ? `${toPersianDigits(event.tokens_charged)} توکن ویدارا`
+                      : '—'}
                   </p>
                 </div>
               ))}

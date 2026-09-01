@@ -235,7 +235,7 @@ export interface VerifyConfirmResult {
   detail: string;
 }
 
-/** رویداد مصرف هوش مصنوعی یک کار (برای پنل کاربر). */
+/** رویداد مصرف هوش مصنوعی یک کار (برای پنل کاربر — واحد: توکن ویدارا). */
 export interface AiUsageEvent {
   id: number;
   kind: string;
@@ -246,15 +246,24 @@ export interface AiUsageEvent {
   tokens_in: number;
   tokens_out: number;
   cost_cents: number;
+  /** مصرف یکپارچهٔ این کار به توکن ویدارا (۱ دقیقه رونویسی = ۱ توکن، ۱ سنت = ۱ توکن). */
+  tokens_charged: number;
   detail: string;
   job_id: number | null;
   meeting_id: number | null;
   created_at: string;
 }
 
-/** نمای سهمیهٔ هوش مصنوعی کاربر جاری. */
+/** نمای سهمیهٔ هوش مصنوعی کاربر جاری — نمایش کاربر فقط «توکن ویدارا». */
 export interface AiUsageQuota {
   period: string;
+  tokens: {
+    limit: number;
+    used: number;
+    remaining: number;
+    stt_tokens: number;
+    llm_tokens: number;
+  };
   llm: {
     limit_cents: number;
     used_cents: number;
@@ -311,7 +320,7 @@ export const authApi = {
 
   me: () => call<MePayload>(`${BASE}/me`),
 
-  /** سهمیه و مصرف هوش مصنوعی خودِ کاربر (دلار مدل زبانی + دقیقهٔ رونویسی). */
+  /** سهمیه و مصرف «توکن ویدارا» خودِ کاربر (واحد یکپارچه: رونویسی و مدل زبانی). */
   aiUsage: () => call<AiUsagePayload>(`${BASE}/me/ai-usage`),
 
   /** ویرایش مشخصات خودِ کاربر — برای همهٔ نقش‌ها (مدیر، دبیر، عضو) باز است. */

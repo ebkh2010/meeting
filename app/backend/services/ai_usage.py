@@ -43,6 +43,16 @@ KIND_LABELS = {
     KIND_ASSISTANT: "دستیار هوشمند",
 }
 
+# «توکن ویدارا» — واحد یکپارچهٔ مصرف برای کاربر:
+#   هر دقیقهٔ رونویسی = ۱ توکن، هر سنت هزینهٔ مدل زبانی = ۱ توکن.
+TOKENS_PER_STT_MINUTE = 1
+TOKENS_PER_LLM_CENT = 1
+
+
+def tokens_of(minutes: int = 0, cents: int = 0) -> int:
+    """تبدیل مصرف (دقیقهٔ رونویسی + سنت مدل زبانی) به توکن ویدارا."""
+    return max(int(minutes or 0), 0) + max(int(cents or 0), 0)
+
 
 def cost_cents_for(provider: str, tokens_in: int, tokens_out: int) -> int:
     """هزینهٔ یک فراخوان به سنت؛ فقط DeepSeek قیمت دارد، بقیه صفر.
@@ -125,7 +135,12 @@ def _period_start() -> datetime:
 
 
 async def usage_snapshot(db: AsyncSession, organization_id: int, user_id: str) -> Dict[str, Any]:
-    """نمای سهمیهٔ کاربر جاری: سقف، مصرف و باقی‌مانده برای هر دو نوع مصرف."""
+    """نمای سهمیهٔ کاربر جاری به واحد یکپارچهٔ «توکن ویدارا».
+
+    هر دقیقهٔ رونویسی = ۱ توکن و هر سنت مدل زبانی = ۱ توکن؛ نمای کاربر فقط
+    ``tokens`` را می‌بیند. زیرکلیدهای ``llm`` و ``stt`` صرفاً برای مصرف
+    داخلی/پنل پلتفرم حفظ شده‌اند.
+    """
     row = await ensure_quota_row(db, organization_id, user_id)
     used_llm_cents = await _sum_since(db, Ai_user_usage, organization_id, user_id, Ai_user_usage.cost_cents)
     used_stt_minutes = await _sum_since(
@@ -139,8 +154,17 @@ async def usage_snapshot(db: AsyncSession, organization_id: int, user_id: str) -
         if row.stt_limit_minutes is not None
         else DEFAULT_STT_BUDGET_MINUTES
     )
+    tokens_limit = tokens_of(stt_limit, llm_limit)
+    tokens_used = tokens_of(used_stt_minutes, used_llm_cents)
     return {
         "period": current_period(),
+        "tokens": {
+            "limit": tokens_limit,
+            "used": tokens_used,
+            "remaining": max(tokens_limit - tokens_used, 0),
+            "stt_tokens": tokens_of(used_stt_minutes),
+            "llm_tokens": tokens_of(cents=used_llm_cents),
+        },
         "llm": {
             "limit_cents": llm_limit,
             "used_cents": used_llm_cents,
@@ -163,22 +187,16 @@ async def ensure_user_budget(
     stt_minutes_needed: int = 0,
     llm_cost_cents_needed: int = 0,
 ) -> None:
-    """بررسی سهمیهٔ کاربر پیش از شروع کار؛ در صورت ناکافی بودن خطای روشن فارسی."""
+    """بررسی سهمیهٔ «توکن ویدارا» کاربر پیش از شروع کار؛ در صورت ناکافی بودن
+    خطای روشن فارسی به واحد توکن."""
     snapshot = await usage_snapshot(db, organization_id, user_id)
-    if stt_minutes_needed > 0 and snapshot["stt"]["remaining_minutes"] < stt_minutes_needed:
+    tokens_needed = tokens_of(stt_minutes_needed, llm_cost_cents_needed)
+    if tokens_needed > 0 and snapshot["tokens"]["remaining"] < tokens_needed:
         raise conflict(
-            "سهمیهٔ رونویسی شما برای این دوره تمام شده است. "
-            f"باقی‌مانده: {snapshot['stt']['remaining_minutes']} دقیقه از "
-            f"{snapshot['stt']['limit_minutes']} دقیقه؛ نیاز این کار: {stt_minutes_needed} دقیقه. "
+            "سهمیهٔ «توکن ویدارا» شما برای این دوره تمام شده است. "
+            f"باقی‌مانده: {snapshot['tokens']['remaining']} توکن از "
+            f"{snapshot['tokens']['limit']} توکن؛ نیاز این کار: {tokens_needed} توکن. "
             "برای افزایش سهمیه با مدیر سازمان یا پلتفرم تماس بگیرید."
-        )
-    if llm_cost_cents_needed > 0 and snapshot["llm"]["remaining_cents"] < llm_cost_cents_needed:
-        raise conflict(
-            "سهمیهٔ مدل زبانی شما برای این دوره تمام شده است. "
-            f"باقی‌مانده: {(snapshot['llm']['remaining_cents'] / 100):.2f} دلار از "
-            f"{(snapshot['llm']['limit_cents'] / 100):.2f} دلار؛ برآورد هزینهٔ این کار: "
-            f"{(llm_cost_cents_needed / 100):.2f} دلار. برای افزایش سهمیه با مدیر سازمان "
-            "یا پلتفرم تماس بگیرید."
         )
 
     # سقف دلاری کل سازمان (تنظیم‌شده توسط مدیر پلتفرم؛ خالی/صفر = بدون سقف)
@@ -251,6 +269,8 @@ async def recent_user_usage(
     )
     events = []
     for item in result.scalars().all():
+        minutes = int(item.minutes_charged or 0)
+        cents = int(item.cost_cents or 0)
         events.append(
             {
                 "id": int(item.id),
@@ -258,10 +278,12 @@ async def recent_user_usage(
                 "kind_label": KIND_LABELS.get(item.kind, item.kind),
                 "provider": item.provider,
                 "model": item.model,
-                "minutes_charged": int(item.minutes_charged or 0),
+                "minutes_charged": minutes,
                 "tokens_in": int(item.tokens_in or 0),
                 "tokens_out": int(item.tokens_out or 0),
-                "cost_cents": int(item.cost_cents or 0),
+                "cost_cents": cents,
+                # واحد یکپارچهٔ کاربر: دقیقهٔ رونویسی و سنت مدل زبانی هر دو توکن
+                "tokens_charged": tokens_of(minutes, cents),
                 "detail": item.detail,
                 "job_id": int(item.job_id) if item.job_id else None,
                 "meeting_id": int(item.meeting_id) if item.meeting_id else None,

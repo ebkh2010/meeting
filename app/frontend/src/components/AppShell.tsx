@@ -158,6 +158,9 @@ export default function AppShell({ children }: AppShellProps) {
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [loadError, setLoadError] = useState('');
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [userTokens, setUserTokens] = useState<{ limit: number; used: number; remaining: number } | null>(
+    null,
+  );
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [orgDialogOpen, setOrgDialogOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
@@ -215,6 +218,16 @@ export default function AppShell({ children }: AppShellProps) {
     }
   }, []);
 
+  // سهمیهٔ یکپارچهٔ «توکن ویدارا» خودِ کاربر برای نمایش در هدر (بدون سنت/دلار/دقیقه)
+  const loadUserTokens = useCallback(async () => {
+    try {
+      const data = await authApi.aiUsage();
+      setUserTokens(data.quota.tokens);
+    } catch {
+      setUserTokens(null);
+    }
+  }, []);
+
   useEffect(() => {
     let active = true;
     const check = async () => {
@@ -241,6 +254,7 @@ export default function AppShell({ children }: AppShellProps) {
         setAuthState('authenticated');
         await loadWorkspace();
         await loadNotifications();
+        await loadUserTokens();
       } catch {
         if (active) setAuthState('anonymous');
       }
@@ -274,6 +288,7 @@ export default function AppShell({ children }: AppShellProps) {
     setBootstrap(null);
     await loadWorkspace();
     await loadNotifications();
+    await loadUserTokens();
     navigate('/dashboard', { replace: true });
   };
 
@@ -339,11 +354,14 @@ export default function AppShell({ children }: AppShellProps) {
   const canUseAssistant =
     isAdmin || (bootstrap.membership.role || '').trim().toLowerCase() === ROLE_SECRETARY;
   const unread = notifications.filter((item) => !item.is_read).length;
-  const quota = bootstrap.quota;
-  const quotaLabel = quota
-    ? `سهمیهٔ رونویسی این ماه: ${toPersianDigits(quota.used_minutes)} از ${toPersianDigits(
-        quota.limit_minutes,
-      )} دقیقه`
+  // نمای کاربر: فقط «توکن ویدارا» (هر دقیقهٔ رونویسی = ۱ توکن، هر سنت = ۱ توکن)
+  const tokenPercent = userTokens
+    ? Math.min((userTokens.used / Math.max(userTokens.limit, 1)) * 100, 100)
+    : 0;
+  const quotaLabel = userTokens
+    ? `توکن ویدارا: ${toPersianDigits(userTokens.remaining)} از ${toPersianDigits(
+        userTokens.limit,
+      )} توکن`
     : '';
   const orgName = bootstrap.organization?.name || 'سازمان من';
   const userName = bootstrap.user.name || 'حساب من';
@@ -443,7 +461,7 @@ export default function AppShell({ children }: AppShellProps) {
               {quota && (
                 <div className="space-y-2 border-t border-border p-4 text-xs text-muted-foreground">
                   <p>{quotaLabel}</p>
-                  <Progress value={quota.usage_percent} className="h-1.5 w-full" />
+                  <Progress value={tokenPercent} className="h-1.5 w-full" />
                 </div>
               )}
 
@@ -495,7 +513,7 @@ export default function AppShell({ children }: AppShellProps) {
             {quota && (
               <span className="hidden items-center gap-2 text-xs text-muted-foreground lg:flex">
                 <span className="truncate">{quotaLabel}</span>
-                <Progress value={quota.usage_percent} className="h-1.5 w-28" />
+                <Progress value={tokenPercent} className="h-1.5 w-28" />
               </span>
             )}
           </div>
