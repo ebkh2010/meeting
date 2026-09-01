@@ -458,7 +458,7 @@ export default function AppShell({ children }: AppShellProps) {
                 </Button>
               </nav>
 
-              {quota && (
+              {userTokens && (
                 <div className="space-y-2 border-t border-border p-4 text-xs text-muted-foreground">
                   <p>{quotaLabel}</p>
                   <Progress value={tokenPercent} className="h-1.5 w-full" />
@@ -510,7 +510,7 @@ export default function AppShell({ children }: AppShellProps) {
               )}
             </Button>
             <span className="truncate text-sm font-semibold">{orgName}</span>
-            {quota && (
+            {userTokens && (
               <span className="hidden items-center gap-2 text-xs text-muted-foreground lg:flex">
                 <span className="truncate">{quotaLabel}</span>
                 <Progress value={tokenPercent} className="h-1.5 w-28" />

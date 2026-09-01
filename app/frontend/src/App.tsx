@@ -8,6 +8,7 @@ import Login from './pages/Login';
 import CompleteProfile from './pages/CompleteProfile';
 import LoadingGif from './components/LoadingGif';
 import PlatformShell from './components/PlatformShell';
+import ErrorBoundary from './components/ErrorBoundary';
 
 /*
  * صفحهٔ ورود (و پوستهٔ پلتفرم) در باندل اصلی می‌مانند تا نخستین نمایش خیلی
@@ -82,7 +83,10 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <BrowserRouter>
-          <AppRoutes />
+          {/* مرز خطا: به‌جای صفحهٔ سفید، کارت «بارگذاری مجدد» نمایش داده می‌شود. */}
+          <ErrorBoundary>
+            <AppRoutes />
+          </ErrorBoundary>
         </BrowserRouter>
       </TooltipProvider>
       {/* MODULE_PROVIDERS_CLOSE */}
