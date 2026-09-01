@@ -47,8 +47,8 @@ export default function AiUsagePanel() {
             سهمیهٔ توکن ویدارا
           </CardTitle>
           <CardDescription>
-            مصرف دورهٔ {data ? toPersianDigits(data.quota.period) : '…'}؛ هر دقیقهٔ رونویسی =
-            ۱ توکن و هر سنت هزینهٔ مدل زبانی = ۱ توکن.
+            مصرف دورهٔ {data ? toPersianDigits(data.quota.period) : '…'}؛ همهٔ مصرف‌های هوش مصنوعی
+            با واحد یکپارچهٔ «توکن ویدارا» شمارش می‌شود.
           </CardDescription>
         </div>
         <Button size="sm" variant="outline" className="!bg-transparent" onClick={load} disabled={loading}>
@@ -70,15 +70,9 @@ export default function AiUsagePanel() {
               ? `${toPersianDigits(tokens!.used)} از ${toPersianDigits(tokens!.limit)} توکن مصرف شده`
               : 'در حال دریافت…'}
           </p>
-          {data && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              رونویسی: {toPersianDigits(tokens!.stt_tokens)} توکن · مدل زبانی:{' '}
-              {toPersianDigits(tokens!.llm_tokens)} توکن
-            </p>
-          )}
         </div>
 
-        {/* رویدادهای مصرف هر کار */}
+        {/* رویدادهای مصرف هر کار — بدون هیچ اثری از نوع/سرویس هوش مصنوعی */}
         <div>
           <p className="mb-2 text-sm font-semibold">مصرف هر کار</p>
           {!data || data.events.length === 0 ? (
@@ -92,16 +86,10 @@ export default function AiUsagePanel() {
                   key={event.id}
                   className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-xs"
                 >
-                  <div className="min-w-0">
-                    <p className="truncate font-medium">{event.kind_label}</p>
-                    <p className="truncate text-muted-foreground">
-                      {event.provider || '—'}
-                      {event.model ? ` · ${event.model}` : ''} · {formatDateTime(event.created_at)}
-                    </p>
-                  </div>
+                  <p className="text-muted-foreground">{formatDateTime(event.created_at)}</p>
                   <p className="shrink-0 font-medium text-primary">
                     {event.tokens_charged > 0
-                      ? `${toPersianDigits(event.tokens_charged)} توکن ویدارا`
+                      ? `${toPersianDigits(event.tokens_charged)} توکن ویدارا مصرف شد`
                       : '—'}
                   </p>
                 </div>
