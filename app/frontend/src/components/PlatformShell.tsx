@@ -54,27 +54,27 @@ export default function PlatformShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col bg-background" dir="rtl">
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-28 items-center justify-center overflow-hidden">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-2 px-3 sm:px-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-8 w-24 shrink-0 items-center justify-center overflow-hidden sm:w-28">
               <img
                 src="/assets/vidara-logo-horizontal.png"
                 alt="ویدارا"
                 className="h-full w-full object-contain"
               />
             </div>
-            <span className="rounded-full bg-brand/10 px-3 py-1 text-xs font-medium text-brand-foreground">
+            <span className="hidden rounded-full bg-brand/10 px-3 py-1 text-xs font-medium text-brand-foreground sm:inline">
               مدیریت پلتفرم
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => setAccountOpen(true)}>
-              <UserRound className="ml-1 h-4 w-4" />
-              حساب کاربری
+              <UserRound className="h-4 w-4 sm:ml-1" />
+              <span className="hidden sm:inline">حساب کاربری</span>
             </Button>
             <Button variant="outline" size="sm" onClick={handleLogout}>
-              <LogOut className="ml-1 h-4 w-4" />
-              خروج
+              <LogOut className="h-4 w-4 sm:ml-1" />
+              <span className="hidden sm:inline">خروج</span>
             </Button>
           </div>
         </div>

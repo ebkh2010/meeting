@@ -49,7 +49,7 @@ export default function PlatformAdmin() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-bold">مدیریت پلتفرم</h1>
         <Tabs value={tab} onValueChange={(value) => setTab(value as 'orgs' | 'trash')}>
           <TabsList>
@@ -101,7 +101,7 @@ function OrgsView() {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">
           تعریف مدیر سازمان، تغییر تنظیمات و سقف‌های مصرف هر سازمان
         </p>
@@ -150,7 +150,7 @@ function OrgsView() {
                     </p>
                   </div>
                 </div>
-                <div className="flex shrink-0 gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     variant="outline"
                     size="sm"
@@ -1148,7 +1148,7 @@ function TrashView({ onChanged }: { onChanged: () => void }) {
                     مدیر: {org.admin ? `${org.admin.full_name} (${org.admin.mobile})` : '—'}
                   </p>
                 </div>
-                <div className="flex shrink-0 gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" onClick={() => void handleRestore(org)}>
                     <RefreshCcw className="ml-1 h-4 w-4" />
                     بازیابی
