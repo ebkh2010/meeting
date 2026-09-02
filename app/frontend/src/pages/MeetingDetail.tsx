@@ -47,6 +47,7 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import MarkdownText from '@/components/MarkdownText';
 import {
   ACTION_STATUS_LABELS,
   api,
@@ -791,6 +792,24 @@ function AudioAndTranscript({
   const segments = transcript?.segments || [];
   const hasSpeakerSegments = segments.some((segment) => Boolean(segment.speaker));
 
+  /** دانلود متن رونویسی بدون زمان‌بندی اما با درج نام گوینده. */
+  const downloadTranscriptNoTime = () => {
+    const content = segments.length
+      ? segments
+          .map((segment) => `${speakerNameOf(segment.speaker) || 'بدون گوینده'}:\n${segment.text}`)
+          .join('\n\n')
+      : transcript?.full_text || '';
+    const blob = new Blob(['\ufeff' + content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `transcript-meeting-${detail.meeting.id}.txt`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  };
+
   const playClip = async (speakerId: number) => {
     setLoadingClip(speakerId);
     try {
@@ -1030,7 +1049,20 @@ function AudioAndTranscript({
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">متن رونویسی</CardTitle>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="text-base">متن رونویسی</CardTitle>
+              {transcript && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="!bg-transparent gap-2"
+                  onClick={downloadTranscriptNoTime}
+                >
+                  <Download className="h-4 w-4" />
+                  دانلود متن (بدون زمان)
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-3">
             {!transcript ? (
@@ -1106,6 +1138,8 @@ function MinutesPanel({
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // نمایش مارک‌داون: پیش‌فرض نمایش قالب‌بندی‌شده؛ ویرایش با دکمهٔ تغییر وضعیت
+  const [editingBody, setEditingBody] = useState(false);
 
   useEffect(() => {
     setBody(detail.minutes?.body_markdown || '');
@@ -1160,25 +1194,47 @@ function MinutesPanel({
           {canManage && !isLocked && (
             <div className="space-y-2">
               <Label htmlFor="minutes-summary">خلاصهٔ جلسه</Label>
-              <Textarea
-                id="minutes-summary"
-                value={summary}
-                onChange={(event) => setSummary(event.target.value)}
-                rows={2}
-              />
+              {editingBody ? (
+                <Textarea
+                  id="minutes-summary"
+                  value={summary}
+                  onChange={(event) => setSummary(event.target.value)}
+                  rows={2}
+                />
+              ) : (
+                <MarkdownText text={summary || '—'} className="rounded-md border border-border p-2" />
+              )}
             </div>
           )}
           <div className="space-y-2">
-            <Label htmlFor="minutes-body">متن کامل</Label>
-            <Textarea
-              id="minutes-body"
-              value={body}
-              onChange={(event) => setBody(event.target.value)}
-              rows={16}
-              readOnly={!canManage || isLocked}
-              placeholder="متن صورتجلسه را وارد کنید یا از رونویسی، پیش‌نویس هوشمند بسازید."
-              className="leading-8"
-            />
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="minutes-body">متن کامل</Label>
+              {minutes && canManage && !isLocked && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setEditingBody((value) => !value)}
+                >
+                  {editingBody ? 'نمایش قالب‌بندی‌شده' : 'ویرایش متن'}
+                </Button>
+              )}
+            </div>
+            {editingBody || !minutes ? (
+              <Textarea
+                id="minutes-body"
+                value={body}
+                onChange={(event) => setBody(event.target.value)}
+                rows={16}
+                readOnly={!canManage || isLocked}
+                placeholder="متن صورتجلسه را وارد کنید یا از رونویسی، پیش‌نویس هوشمند بسازید."
+                className="leading-8"
+              />
+            ) : (
+              <div className="max-h-[28rem] overflow-y-auto rounded-md border border-border p-3">
+                <MarkdownText text={body} />
+              </div>
+            )}
           </div>
 
           {canManage && !isLocked && (

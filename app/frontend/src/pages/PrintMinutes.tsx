@@ -17,6 +17,7 @@ import {
   toPersianDigits,
 } from '@/lib/mgmt';
 import VidaraBranding from '@/components/VidaraBranding';
+import MarkdownText from '@/components/MarkdownText';
 
 export default function PrintMinutes() {
   const { meetingId } = useParams();
@@ -149,8 +150,12 @@ export default function PrintMinutes() {
 
         <section className="mt-5">
           <h2 className="text-base font-bold">متن صورتجلسه</h2>
-          <div className="mt-1 whitespace-pre-wrap">
-            {minutes?.body_markdown || 'متن صورتجلسه ثبت نشده است.'}
+          <div className="mt-1">
+            {minutes?.body_markdown ? (
+              <MarkdownText text={minutes.body_markdown} className="text-sm leading-7" />
+            ) : (
+              'متن صورتجلسه ثبت نشده است.'
+            )}
           </div>
         </section>
 

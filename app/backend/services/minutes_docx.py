@@ -274,23 +274,44 @@ def _add_table(document, headers: List[str], rows: List[List[str]]):
 # ---------------------------------------------------------------------------
 
 
+def _clean_inline_markdown(text: str) -> str:
+    """حذف نشانه‌های مارک‌داون درون‌خطی تا خروجی Word متن تمیز (بدون ** و ` و …) باشد."""
+    cleaned = str(text or "")
+    cleaned = re.sub(r"\*\*(.+?)\*\*", r"\1", cleaned)  # بولد
+    cleaned = re.sub(r"__(.+?)__", r"\1", cleaned)
+    cleaned = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", cleaned)  # ایتالیک
+    cleaned = cleaned.replace("**", "").replace("__", "")
+    cleaned = re.sub(r"~~(.+?)~~", r"\1", cleaned)
+    cleaned = re.sub(r"`([^`]*)`", r"\1", cleaned)  # کد درون‌خطی
+    return cleaned.strip()
+
+
 def _markdown_to_lines(body: str) -> List[tuple[str, str]]:
-    """تبدیل سادهٔ مارک‌داون صورتجلسه به دنبالهٔ (نوع، متن) برای نوشتن در Word."""
+    """تبدیل مارک‌داون صورتجلسه به دنبالهٔ (نوع، متن تمیز) برای نوشتن در Word.
+
+    خروجی هیچ نشانهٔ مارک‌داونی ندارد: عناوین (###/##/#)، فهرست‌های گلوله‌ای و
+    شماره‌دار و نشانه‌های درون‌خطی (**، *، ` و …) همگی به قالب واقعی تبدیل
+    می‌شوند.
+    """
     output: List[tuple[str, str]] = []
     for raw_line in (body or "").splitlines():
         line = raw_line.strip()
         if not line:
             continue
         if line.startswith("###"):
-            output.append(("h3", line.lstrip("#").strip()))
+            output.append(("h3", _clean_inline_markdown(line.lstrip("#").strip())))
         elif line.startswith("##"):
-            output.append(("h2", line.lstrip("#").strip()))
+            output.append(("h2", _clean_inline_markdown(line.lstrip("#").strip())))
         elif line.startswith("#"):
-            output.append(("h2", line.lstrip("#").strip()))
+            output.append(("h2", _clean_inline_markdown(line.lstrip("#").strip())))
         elif line.startswith(("- ", "* ", "• ")):
-            output.append(("li", line[2:].strip()))
+            output.append(("li", _clean_inline_markdown(line[2:].strip())))
         else:
-            output.append(("p", line.replace("**", "")))
+            ordered = re.match(r"^(\d+)[.)]\s+(.*)$", line)
+            if ordered:
+                output.append(("oli", f"{ordered.group(1)}. {_clean_inline_markdown(ordered.group(2))}"))
+                continue
+            output.append(("p", _clean_inline_markdown(line)))
     return output
 
 
@@ -373,7 +394,7 @@ def build_minutes_docx(payload: Dict[str, Any], logo_bytes: Optional[bytes] = No
 
     if minutes.get("summary"):
         _add_heading(document, "خلاصهٔ جلسه")
-        _add_paragraph(document, str(minutes.get("summary")))
+        _add_paragraph(document, _clean_inline_markdown(str(minutes.get("summary"))))
 
     # دستور جلسه
     agenda = payload.get("agenda") or []
@@ -432,8 +453,8 @@ def build_minutes_docx(payload: Dict[str, Any], logo_bytes: Optional[bytes] = No
             _add_paragraph(document, text, size=12, bold=True, space_after=2)
         elif kind == "h3":
             _add_paragraph(document, text, size=11, bold=True, space_after=2)
-        elif kind == "li":
-            _add_paragraph(document, f"• {text}")
+        elif kind in ("li", "oli"):
+            _add_paragraph(document, f"• {text}" if kind == "li" else text)
         else:
             _add_paragraph(document, text)
 
@@ -449,8 +470,8 @@ def build_minutes_docx(payload: Dict[str, Any], logo_bytes: Optional[bytes] = No
             [
                 [
                     to_persian_digits(item.get("position") or index + 1),
-                    item.get("title") or "—",
-                    item.get("description") or "—",
+                    _clean_inline_markdown(item.get("title") or "—"),
+                    _clean_inline_markdown(item.get("description") or "—"),
                 ]
                 for index, item in enumerate(decisions)
             ],
@@ -467,7 +488,7 @@ def build_minutes_docx(payload: Dict[str, Any], logo_bytes: Optional[bytes] = No
             ["اقدام", "مسئول", "مهلت", "وضعیت"],
             [
                 [
-                    item.get("title") or "—",
+                    _clean_inline_markdown(item.get("title") or "—"),
                     item.get("owner_name") or "—",
                     jalali_date(item.get("due_date"), tz_name),
                     ACTION_STATUS_LABELS.get(str(item.get("status") or ""), "—"),

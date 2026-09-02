@@ -19,6 +19,7 @@ import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import MarkdownText from '@/components/MarkdownText';
 import {
   AssistantAnswer,
   AssistantMode,
@@ -177,7 +178,7 @@ export default function AssistantPanel({ allowed }: AssistantPanelProps) {
                   </div>
 
                   <div className="rounded-lg border border-border bg-background p-3">
-                    <p className="whitespace-pre-wrap text-sm leading-7">{answer.answer}</p>
+                    <MarkdownText text={answer.answer} />
                   </div>
 
                   {answer.sources.length > 0 && (
