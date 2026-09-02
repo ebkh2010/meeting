@@ -216,7 +216,7 @@ function ResendSmsDialog({ org, onClose }: { org: PlatformOrg; onClose: () => vo
 
   return (
     <Dialog open onOpenChange={(value) => !value && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-h-[85vh] max-w-md overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>ارسال دوبارهٔ رمز برای مدیر «{org.name}»</DialogTitle>
           <DialogDescription>
@@ -287,7 +287,7 @@ function CreateOrgDialog({
 
   return (
     <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-h-[85vh] max-w-md overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>تعریف مدیر سازمان</DialogTitle>
           <DialogDescription>
@@ -332,7 +332,7 @@ function CreateOrgDialog({
                 placeholder="مثال: شرکت نمونه"
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label>نام</Label>
                 <Input
@@ -417,8 +417,8 @@ function SettingsDialog({
 
   return (
     <Dialog open onOpenChange={(value) => !value && onClose()}>
-      <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto overflow-x-hidden p-4 sm:p-6">
+        <DialogHeader className="min-w-0">
           <DialogTitle>تنظیمات «{org.name}»</DialogTitle>
           <DialogDescription>
             تغییرات اینجا برای کل سازمان اعمال می‌شود و در گزارش رویدادهای پلتفرم ثبت می‌گردد.
@@ -427,8 +427,8 @@ function SettingsDialog({
         {loading || !overview ? (
           <LoadingGif label="در حال دریافت تنظیمات…" />
         ) : (
-          <Tabs defaultValue="email" dir="rtl">
-            <TabsList className="w-full justify-start overflow-x-auto">
+          <Tabs defaultValue="email" dir="rtl" className="min-w-0">
+            <TabsList className="w-full max-w-full justify-start overflow-x-auto">
               <TabsTrigger value="email">ایمیل (SMTP)</TabsTrigger>
               <TabsTrigger value="sms">پیامک</TabsTrigger>
               <TabsTrigger value="ai">هوش مصنوعی</TabsTrigger>
@@ -525,7 +525,7 @@ function SmtpForm({ orgId, initial }: { orgId: number; initial: PlatformNotify }
         <Switch checked={boolValue('smtp_enabled')} onCheckedChange={(v) => setField('smtp_enabled', v)} />
         <Label>ایمیل (SMTP) فعال</Label>
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="میزبان SMTP" value={value('smtp_host')} onChange={(v) => setField('smtp_host', v)} dir="ltr" />
         <Field label="پورت" value={value('smtp_port')} onChange={(v) => setField('smtp_port', v)} dir="ltr" />
         <Field label="نام کاربری" value={value('smtp_username')} onChange={(v) => setField('smtp_username', v)} dir="ltr" />
@@ -555,7 +555,7 @@ function SmtpForm({ orgId, initial }: { orgId: number; initial: PlatformNotify }
           تست ارسال: ایمیل مقصد را وارد کنید (خالی = ایمیل مدیر سازمان).
         </p>
         <div className="flex flex-wrap items-end gap-2">
-          <div className="min-w-56 flex-1 space-y-1">
+          <div className="min-w-0 flex-1 space-y-1">
             <Label className="text-xs">ایمیل مقصد</Label>
             <Input value={testTo} onChange={(e) => setTestTo(e.target.value)} dir="ltr" className="text-left" />
           </div>
@@ -624,7 +624,7 @@ function SmsForm({ orgId, initial }: { orgId: number; initial: PlatformNotify })
         <Switch checked={boolValue('sms_enabled')} onCheckedChange={(v) => setField('sms_enabled', v)} />
         <Label>پیامک فعال</Label>
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field
           label="کلید API پیامک (خالی = بدون تغییر)"
           type="password"
@@ -640,7 +640,7 @@ function SmsForm({ orgId, initial }: { orgId: number; initial: PlatformNotify })
           تست ارسال: شمارهٔ مقصد را وارد کنید (خالی = موبایل مدیر سازمان).
         </p>
         <div className="flex flex-wrap items-end gap-2">
-          <div className="min-w-56 flex-1 space-y-1">
+          <div className="min-w-0 flex-1 space-y-1">
             <Label className="text-xs">شمارهٔ مقصد</Label>
             <Input value={testTo} onChange={(e) => setTestTo(e.target.value)} dir="ltr" className="text-left" />
           </div>
@@ -808,7 +808,7 @@ function ProvidersList({
               onCheckedChange={(v) => setDraft(provider.id, 'enabled', v)}
             />
           </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-3">
+          <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field
               label="نشانی سرویس"
               value={draft(provider, 'base_url')}
@@ -916,7 +916,7 @@ function StorageForm({ orgId, initial }: { orgId: number; initial: PlatformStora
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="space-y-1">
           <Label className="text-xs">نوع مقصد</Label>
           <Select value={provider} onValueChange={(v) => setField('provider', v)}>
@@ -934,7 +934,7 @@ function StorageForm({ orgId, initial }: { orgId: number; initial: PlatformStora
       {provider === 's3' ? (
         <>
           <Field label="نشانی سرویس (endpoint)" value={value('endpoint')} onChange={(v) => setField('endpoint', v)} dir="ltr" />
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="نام باکت" value={value('bucket')} onChange={(v) => setField('bucket', v)} dir="ltr" />
             <Field label="منطقه" value={value('region')} onChange={(v) => setField('region', v)} dir="ltr" />
             <Field label="کلید دسترسی" value={value('access_key')} onChange={(v) => setField('access_key', v)} dir="ltr" />
@@ -950,7 +950,7 @@ function StorageForm({ orgId, initial }: { orgId: number; initial: PlatformStora
       ) : (
         <>
           <Field label="نشانی WebDAV" value={value('webdav_base_url')} onChange={(v) => setField('webdav_base_url', v)} dir="ltr" />
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="نام کاربری" value={value('webdav_username')} onChange={(v) => setField('webdav_username', v)} dir="ltr" />
             <Field
               label="رمز عبور (خالی = بدون تغییر)"
@@ -1023,7 +1023,7 @@ function QuotasForm({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 rounded-md border p-3 text-sm">
+      <div className="grid grid-cols-1 gap-3 rounded-md border p-3 text-sm sm:grid-cols-2">
         <div>
           <p className="text-xs text-muted-foreground">مصرف رونویسی سازمان (این دورهٔ {quota.quota_period || '—'})</p>
           <p className="font-medium">
@@ -1055,7 +1055,7 @@ function QuotasForm({
           </p>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field
           label="سقف دقیقهٔ رونویسی سازمان (ماهانه)"
           value={form.org_stt}
@@ -1199,7 +1199,7 @@ function PurgeDialog({
 
   return (
     <Dialog open onOpenChange={(value) => !value && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-h-[85vh] max-w-md overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle className="text-destructive">پاک‌سازی کامل «{org.name}»</DialogTitle>
           <DialogDescription>

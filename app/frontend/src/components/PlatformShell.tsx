@@ -148,7 +148,7 @@ function AccountDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <Dialog open onOpenChange={(value) => !value && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-h-[85vh] max-w-md overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>حساب کاربری مدیر پلتفرم</DialogTitle>
           <DialogDescription>
