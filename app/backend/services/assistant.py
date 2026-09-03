@@ -34,6 +34,7 @@ from models.agenda_items import Agenda_items
 from models.decisions import Decisions
 from models.meetings import Meetings
 from models.minutes import Minutes
+from models.participants import Participants
 from models.transcripts import Transcripts
 from services.mgmt_core import TenantContext, fa_normalize
 
@@ -547,6 +548,33 @@ async def collect_meeting_chunks(db: AsyncSession, ctx: TenantContext) -> List[C
                 kind_label="اقدام",
                 title=action.title or "اقدام",
                 text=text,
+                link=link_of(meeting_id),
+                meeting_id=meeting_id,
+                meeting_title=titles[meeting_id],
+            )
+        )
+
+    # حاضران و مدعوین هر جلسه (برای پرسش‌هایی مثل «چه کسانی حاضر بودند؟»)
+    participants_result = await db.execute(
+        select(Participants).where(Participants.organization_id == org_id)
+    )
+    participants_by_meeting: Dict[int, List[str]] = {}
+    for participant in participants_result.scalars().all():
+        meeting_id = int(participant.meeting_id or 0)
+        if meeting_id not in allowed:
+            continue
+        name = (participant.full_name or "").strip()
+        if not name:
+            continue
+        entry = name + (" (حاضر)" if participant.attended else " (غایب)")
+        participants_by_meeting.setdefault(meeting_id, []).append(entry)
+    for meeting_id, names in participants_by_meeting.items():
+        chunks.append(
+            Chunk(
+                kind="participants",
+                kind_label="حاضران جلسه",
+                title=f"حاضران «{titles[meeting_id]}»",
+                text="حاضران/مدعوین: " + "، ".join(names),
                 link=link_of(meeting_id),
                 meeting_id=meeting_id,
                 meeting_title=titles[meeting_id],
