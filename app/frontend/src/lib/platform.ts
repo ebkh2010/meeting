@@ -187,6 +187,33 @@ export interface CreateOrgResult {
 /* API                                                                 */
 /* ------------------------------------------------------------------ */
 
+export interface PlatformOrgActivity {
+  organization: { id: number; name: string };
+  admin: {
+    username: string;
+    full_name: string;
+    mobile: string;
+    email: string;
+    created_at: string;
+    last_login_at: string;
+  };
+  logins: {
+    id: number;
+    actor_name: string;
+    created_at: string;
+    detail: string;
+  }[];
+  activities: {
+    id: number;
+    actor_name: string;
+    actor_role: string;
+    action: string;
+    entity_type: string;
+    detail: string;
+    created_at: string;
+  }[];
+}
+
 export const platformApi = {
   me: () => call<{ user: PlatformMe }>(`${BASE}/me`),
 
@@ -204,6 +231,9 @@ export const platformApi = {
   listOrgs: () => call<{ items: PlatformOrg[]; total: number }>(`${BASE}/orgs`),
   listTrash: () => call<{ items: PlatformOrg[]; total: number }>(`${BASE}/trash`),
   overview: (orgId: number) => call<PlatformOverview>(`${BASE}/orgs/${orgId}/overview`),
+
+  /** لاگ و آمار حساب: تاریخ‌های ورود و فعالیت‌های ثبت‌شدهٔ سازمان. */
+  orgActivity: (orgId: number) => call<PlatformOrgActivity>(`${BASE}/orgs/${orgId}/activity`),
 
   createOrg: (payload: {
     organization_name: string;

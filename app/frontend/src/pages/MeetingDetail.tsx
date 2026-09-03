@@ -621,6 +621,27 @@ function JobRow({ job, onRetry }: { job: Job; onRetry: (job: Job) => void }) {
   const costCents = Number(result.cost_cents || 0);
   const tokensCharged = minutesCharged + costCents;
   const hasUsage = tokensCharged > 0;
+
+  // زمان حدودی باقی‌مانده بر پایهٔ پیشرفت و زمان سپری‌شده (هر ثانیه به‌روزرسانی)
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!isActive) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [isActive]);
+  let etaText = '';
+  if (isActive && job.progress > 0 && job.progress < 100) {
+    const startMs = new Date(job.started_at || job.created_at || '').getTime();
+    if (!Number.isNaN(startMs) && startMs > 0) {
+      const elapsed = Math.max((now - startMs) / 1000, 1);
+      const remaining = Math.max((elapsed / job.progress) * (100 - job.progress), 0);
+      etaText =
+        remaining < 60
+          ? 'کمتر از ۱ دقیقه'
+          : `حدود ${toPersianDigits(Math.round(remaining / 60))} دقیقه`;
+    }
+  }
+
   return (
     <div className="rounded-md border border-border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -631,7 +652,15 @@ function JobRow({ job, onRetry }: { job: Job; onRetry: (job: Job) => void }) {
           {JOB_STATUS_LABELS[job.status] || job.status}
         </Badge>
       </div>
-      {isActive && <Progress value={job.progress} className="mt-2 h-2" />}
+      {isActive && (
+        <div className="mt-2 space-y-1">
+          <Progress value={job.progress} className="h-2" />
+          <p className="text-xs text-muted-foreground">
+            در حال انجام… {toPersianDigits(job.progress)}٪
+            {etaText ? ` · زمان حدودی باقی‌مانده: ${etaText}` : ''}
+          </p>
+        </div>
+      )}
       <p className="mt-2 text-xs text-muted-foreground">
         تلاش {toPersianDigits(job.attempts)} از {toPersianDigits(job.max_attempts)} • ثبت‌کننده:{' '}
         {job.created_by_name || '—'} • {formatDateTime(job.created_at)}

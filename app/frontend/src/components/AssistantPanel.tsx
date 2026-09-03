@@ -170,11 +170,6 @@ export default function AssistantPanel({ allowed }: AssistantPanelProps) {
                 <div className="space-y-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant="secondary">{answer.mode_label}</Badge>
-                    {answer.provider ? (
-                      <Badge variant="outline">مدل: {answer.provider}</Badge>
-                    ) : (
-                      <Badge variant="outline">بدون مدل زبانی فعال</Badge>
-                    )}
                   </div>
 
                   <div className="rounded-lg border border-border bg-background p-3">

@@ -319,6 +319,22 @@ async def login(data: LoginIn, db: AsyncSession = Depends(get_db)) -> Dict[str, 
 
     selected = matched[0]
     selected.last_login_at = app_auth.utc_now()
+    # ثبت رویداد ورود در گزارش رویدادها تا مدیر پلتفرم تاریخ‌های ورود هر حساب را ببیند
+    try:
+        db.add(
+            Audit_logs(
+                organization_id=int(selected.organization_id),
+                actor_user_id=f"{app_auth.USER_PREFIX}{int(selected.id)}",
+                actor_name=app_auth.full_name_of(selected.first_name, selected.last_name),
+                actor_role=selected.role or app_auth.ROLE_MEMBER,
+                action="auth.login",
+                entity_type="user",
+                entity_id=int(selected.id),
+                detail=f"ورود موفق با نام کاربری «{selected.username}»",
+            )
+        )
+    except Exception:  # pragma: no cover - ثبت لاگ نباید ورود را متوقف کند
+        logger.warning("ثبت لاگ ورود برای کاربر %s ناموفق بود", selected.id, exc_info=True)
     payload = await _session_payload(db, selected)
     await db.commit()
     return payload
@@ -446,7 +462,12 @@ async def _issue_and_send(
     html_body: str,
     sms_text: str,
 ) -> Dict[str, Any]:
-    """صدور کد + ارسال با کانال مناسب (ایمیل/پیامک) + ذخیره؛ خطاها به ۴۰۰ تبدیل می‌شوند."""
+    """صدور کد + ارسال با کانال مناسب (ایمیل/پیامک) + ذخیره؛ خطاها به ۴۰۰ تبدیل می‌شوند.
+
+    اگر کانال خود سازمان غیرفعال باشد یا ارسالش شکست بخورد، ارسال با تنظیمات
+    پیش‌فرض پلتفرم دوباره تلاش می‌شود تا تأیید حساب هرگز به خاطر پیکربندی نشدن
+    سازمان از کار نیفتد.
+    """
     try:
         code = await verification.issue_code(db, app_user, purpose, target)
     except verification.VerificationError as exc:
@@ -454,25 +475,41 @@ async def _issue_and_send(
 
     settings_row = await get_or_create_settings(db, principal.organization_id)
     if purpose == verification.PURPOSE_EMAIL:
-        result = await channels.send_email(
-            settings_row,
-            to_email=target,
-            subject=subject,
-            text_body=text_body.replace("{code}", code),
-            html_body=html_body.replace("{code}", code),
-        )
+        candidates = (
+            [settings_row]
+            if settings_row.smtp_enabled
+            else []
+        ) + [channels.platform_default_email_row(principal.organization_id)]
         channel_label = "ایمیل"
     else:
-        result = await channels.send_sms(
-            settings_row,
-            receptor=target,
-            message=sms_text.replace("{code}", code),
-            client_reference_id=f"verify-{int(app_user.id)}",
-        )
+        candidates = (
+            [settings_row] if settings_row.sms_enabled else []
+        ) + [channels.platform_default_sms_row(principal.organization_id)]
         channel_label = "پیامک"
 
+    last_error = ""
+    for row in candidates:
+        if purpose == verification.PURPOSE_EMAIL:
+            result = await channels.send_email(
+                row,
+                to_email=target,
+                subject=subject,
+                text_body=text_body.replace("{code}", code),
+                html_body=html_body.replace("{code}", code),
+            )
+        else:
+            result = await channels.send_sms(
+                row,
+                receptor=target,
+                message=sms_text.replace("{code}", code),
+                client_reference_id=f"verify-{int(app_user.id)}",
+            )
+        if result.ok:
+            break
+        last_error = result.error or ""
+
     if not result.ok:
-        raise app_auth.bad_request(f"ارسال {channel_label} ناموفق بود: {result.error}")
+        raise app_auth.bad_request(f"ارسال {channel_label} ناموفق بود: {last_error}")
     await db.commit()
     return {
         "ok": True,

@@ -21,7 +21,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import LoadingGif from '@/components/LoadingGif';
-import { Building2, RefreshCcw, Settings2, Trash2, UserPlus } from 'lucide-react';
+import { Building2, History, RefreshCcw, Settings2, Trash2, UserPlus } from 'lucide-react';
 import {
   errorMessage,
   platformApi,
@@ -29,10 +29,12 @@ import {
   type PlatformAiProvider,
   type PlatformNotify,
   type PlatformOrg,
+  type PlatformOrgActivity,
   type PlatformOrgQuota,
   type PlatformOverview,
   type PlatformStorage,
 } from '@/lib/platform';
+import { formatDateTime, toPersianDigits } from '@/lib/mgmt';
 
 const AI_PROVIDER_LABELS: Record<string, string> = {
   harf: 'حرف (رونویسی فارسی)',
@@ -73,6 +75,7 @@ function OrgsView() {
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsOrg, setSettingsOrg] = useState<PlatformOrg | null>(null);
   const [resendOrg, setResendOrg] = useState<PlatformOrg | null>(null);
+  const [activityOrg, setActivityOrg] = useState<PlatformOrg | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -154,6 +157,14 @@ function OrgsView() {
                   <Button
                     variant="outline"
                     size="sm"
+                    onClick={() => setActivityOrg(org)}
+                  >
+                    <History className="ml-1 h-4 w-4" />
+                    لاگ و آمار
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => setResendOrg(org)}
                     disabled={!org.admin}
                   >
@@ -181,6 +192,7 @@ function OrgsView() {
       )}
 
       {createOpen && <CreateOrgDialog open onClose={() => setCreateOpen(false)} onCreated={() => void load()} />}
+      {activityOrg && <ActivityDialog org={activityOrg} onClose={() => setActivityOrg(null)} />}
       {resendOrg && <ResendSmsDialog org={resendOrg} onClose={() => setResendOrg(null)} />}
       {settingsOrg && (
         <SettingsDialog org={settingsOrg} onClose={() => setSettingsOrg(null)} onChanged={() => void load()} />
@@ -1229,6 +1241,112 @@ function PurgeDialog({
             </Button>
           </div>
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* دیالوگ لاگ و آمار حساب: تاریخ‌های ورود + فعالیت‌های ثبت‌شده           */
+/* ------------------------------------------------------------------ */
+
+function ActivityDialog({ org, onClose }: { org: PlatformOrg; onClose: () => void }) {
+  const [data, setData] = useState<PlatformOrgActivity | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    platformApi
+      .orgActivity(org.id)
+      .then(setData)
+      .catch((err) => toast.error(errorMessage(err, 'خواندن لاگ و آمار ناموفق بود.')))
+      .finally(() => setLoading(false));
+  }, [org.id]);
+
+  return (
+    <Dialog open onOpenChange={(value) => !value && onClose()}>
+      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto overflow-x-hidden p-4 sm:p-6">
+        <DialogHeader className="min-w-0">
+          <DialogTitle>لاگ و آمار «{org.name}»</DialogTitle>
+          <DialogDescription>
+            تاریخ‌های ورود و فعالیت‌های ثبت‌شدهٔ این حساب (آخرین ۲۰۰ رویداد).
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <LoadingGif label="در حال دریافت لاگ…" />
+        ) : data ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-2 rounded-md border p-3 text-xs sm:grid-cols-2">
+              <p>
+                مدیر: <b>{data.admin.full_name || '—'}</b>{' '}
+                <span dir="ltr">{data.admin.mobile}</span>
+              </p>
+              <p>
+                نام کاربری: <b dir="ltr">{data.admin.username || '—'}</b>
+              </p>
+              <p>
+                ایمیل: <span dir="ltr">{data.admin.email || '—'}</span>
+              </p>
+              <p>تاریخ ساخت حساب: {data.admin.created_at ? formatDateTime(data.admin.created_at) : '—'}</p>
+              <p className="sm:col-span-2">
+                آخرین ورود: {data.admin.last_login_at ? formatDateTime(data.admin.last_login_at) : '—'}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-sm font-semibold">تاریخ‌های ورود</p>
+              {data.logins.length === 0 ? (
+                <p className="rounded-md border border-dashed border-border p-3 text-center text-xs text-muted-foreground">
+                  هنوز رویداد ورودی ثبت نشده است (از این پس ورودها ثبت می‌شوند).
+                </p>
+              ) : (
+                <div className="max-h-48 space-y-1 overflow-y-auto">
+                  {data.logins.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-1.5 text-xs"
+                    >
+                      <span>{item.actor_name}</span>
+                      <span className="text-muted-foreground">{formatDateTime(item.created_at)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-sm font-semibold">فعالیت‌ها</p>
+              {data.activities.length === 0 ? (
+                <p className="rounded-md border border-dashed border-border p-3 text-center text-xs text-muted-foreground">
+                  فعالیتی ثبت نشده است.
+                </p>
+              ) : (
+                <div className="max-h-64 space-y-1 overflow-y-auto">
+                  {data.activities.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-1.5 text-xs"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <b>{item.actor_name}</b>
+                        {item.detail ? ` — ${item.detail}` : ''}
+                      </span>
+                      <span className="shrink-0 text-muted-foreground">
+                        {formatDateTime(item.created_at)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end">
+              <Button onClick={onClose}>بستن</Button>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">اطلاعاتی یافت نشد.</p>
+        )}
       </DialogContent>
     </Dialog>
   );

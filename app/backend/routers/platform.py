@@ -562,6 +562,54 @@ async def list_trash(
     return {"items": items, "total": len(items)}
 
 
+@router.get("/orgs/{org_id}/activity")
+async def org_activity(
+    org_id: int,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """لاگ و آمار حساب سازمان: تاریخ‌های ورود و فهرست فعالیت‌های ثبت‌شده."""
+    org = await _get_org(db, org_id)
+    admin = await _org_admin(db, org_id)
+    audit_result = await db.execute(
+        select(Audit_logs)
+        .where(Audit_logs.organization_id == org_id)
+        .order_by(Audit_logs.id.desc())
+        .limit(200)
+    )
+    rows = list(audit_result.scalars().all())
+    logins: List[Dict[str, Any]] = []
+    activities: List[Dict[str, Any]] = []
+    for row in rows:
+        item = {
+            "id": int(row.id),
+            "actor_name": row.actor_name or "",
+            "actor_role": row.actor_role or "",
+            "action": row.action or "",
+            "entity_type": row.entity_type or "",
+            "detail": row.detail or "",
+            "created_at": row.created_at.isoformat() if row.created_at else "",
+        }
+        if row.action == "auth.login":
+            logins.append(item)
+        else:
+            activities.append(item)
+    await db.commit()
+    return {
+        "organization": {"id": int(org.id), "name": org.name or ""},
+        "admin": {
+            "username": (admin.username or "") if admin else "",
+            "full_name": app_auth.full_name_of(admin.first_name, admin.last_name) if admin else "",
+            "mobile": (admin.mobile or "") if admin else "",
+            "email": (admin.email or "") if admin else "",
+            "created_at": admin.created_at.isoformat() if admin and admin.created_at else "",
+            "last_login_at": admin.last_login_at.isoformat() if admin and admin.last_login_at else "",
+        },
+        "logins": logins[:30],
+        "activities": activities[:60],
+    }
+
+
 @router.get("/orgs/{org_id}/overview")
 async def org_overview(
     org_id: int,

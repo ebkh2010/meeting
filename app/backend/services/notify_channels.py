@@ -279,6 +279,34 @@ async def get_or_create_settings(db: AsyncSession, organization_id: int) -> Org_
     return row
 
 
+def platform_default_sms_row(organization_id: int) -> Org_notify_settings:
+    """ردیف پیامک پیش‌فرض پلتفرم (برای اطلاع‌رسانی‌های حساس که نباید به
+    پیکربندی خود سازمان وابسته باشند). در نشست ثبت نمی‌شود."""
+    return Org_notify_settings(
+        organization_id=organization_id,
+        sms_enabled=bool(DEFAULT_SMS_ENABLED),
+        sms_api_key_enc=encrypt_secret(DEFAULT_SMS_API_KEY),
+        sms_line_number=DEFAULT_SMS_LINE_NUMBER,
+    )
+
+
+def platform_default_email_row(organization_id: int) -> Org_notify_settings:
+    """ردیف SMTP پیش‌فرض پلتفرم (برای تأیید ایمیل و اطلاع‌رسانی‌های حساس که
+    نباید به پیکربندی خود سازمان وابسته باشند). در نشست ثبت نمی‌شود."""
+    return Org_notify_settings(
+        organization_id=organization_id,
+        smtp_enabled=bool(DEFAULT_SMTP_ENABLED),
+        smtp_host=DEFAULT_SMTP_HOST,
+        smtp_port=DEFAULT_SMTP_PORT,
+        smtp_username=DEFAULT_SMTP_USERNAME,
+        smtp_password_enc=encrypt_secret(DEFAULT_SMTP_PASSWORD),
+        smtp_use_tls=DEFAULT_SMTP_USE_TLS,
+        smtp_use_ssl=DEFAULT_SMTP_USE_SSL,
+        smtp_from_email=DEFAULT_SMTP_FROM_EMAIL,
+        smtp_from_name=DEFAULT_SMTP_FROM_NAME,
+    )
+
+
 def settings_payload(row: Org_notify_settings) -> Dict[str, Any]:
     """خروجی امن برای فرانت‌اند: مقدار رمزها هرگز ارسال نمی‌شود."""
     return {
