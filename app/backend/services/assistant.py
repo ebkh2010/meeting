@@ -611,7 +611,14 @@ def _transcript_chunk(
 
 
 def rank_chunks(chunks: List[Chunk], tokens: List[str], top_k: int = MAX_CONTEXT_CHUNKS) -> List[Chunk]:
-    """رتبه\u200cبندی قطعه\u200cها و برش متن هر قطعه حول تطبیق."""
+    """رتبه‌بندی قطعه‌ها با تنوع جلسه‌ای.
+
+    بدون این تنوع، جلسه‌ای که رونویسی طولانی دارد (و در نتیجه قطعه‌های زیادی
+    تولید می‌کند) همهٔ ظرفیت زمینه را اشغال می‌کرد و پرسش‌های چندجلسه‌ای فقط
+    بر اساس همان یک جلسه پاسخ داده می‌شدند. اینجا ابتدا بهترین قطعهٔ هر جلسه
+    به نوبت انتخاب می‌شود (حداکثر ۳ قطعه از هر جلسه) و باقی ظرفیت با امتیاز
+    پر می‌شود.
+    """
     scored: List[Chunk] = []
     for chunk in chunks:
         score = score_text(f"{chunk.title} {chunk.text}", tokens)
@@ -625,7 +632,47 @@ def rank_chunks(chunks: List[Chunk], tokens: List[str], top_k: int = MAX_CONTEXT
     scored.sort(key=lambda item: item.score, reverse=True)
     best = scored[0].score
     threshold = max(MIN_ABSOLUTE_SCORE, best * MIN_RELATIVE_SCORE)
-    return [chunk for chunk in scored if chunk.score >= threshold][:top_k]
+    eligible = [chunk for chunk in scored if chunk.score >= threshold]
+
+    max_per_meeting = 3
+    groups: Dict[Any, List[Chunk]] = {}
+    for chunk in eligible:
+        groups.setdefault(chunk.meeting_id, []).append(chunk)
+
+    selected: List[Chunk] = []
+    while len(selected) < top_k and groups:
+        progressed = False
+        for key in list(groups.keys()):
+            if len(selected) >= top_k:
+                break
+            bucket = groups[key]
+            if not bucket:
+                del groups[key]
+                continue
+            # سهم هر جلسه محدود است تا جلسهٔ پرمحتوا بقیه را حذف نکند
+            if key is not None and sum(
+                1 for chunk in selected if chunk.meeting_id == key
+            ) >= max_per_meeting:
+                del groups[key]
+                continue
+            selected.append(bucket.pop(0))
+            progressed = True
+        if not progressed:
+            break
+
+    # پر کردن ظرفیت باقی‌مانده با ترتیب امتیاز (با همان سقف هر جلسه)
+    if len(selected) < top_k:
+        for chunk in eligible:
+            if chunk in selected:
+                continue
+            if chunk.meeting_id is not None and sum(
+                1 for item in selected if item.meeting_id == chunk.meeting_id
+            ) >= max_per_meeting:
+                continue
+            selected.append(chunk)
+            if len(selected) >= top_k:
+                break
+    return selected
 
 
 async def search_meetings(
