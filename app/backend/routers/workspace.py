@@ -239,6 +239,7 @@ async def bootstrap(
 async def list_meetings(
     scope: str = "all",
     search: str = "",
+    search_scope: str = "all",
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
@@ -258,7 +259,47 @@ async def list_meetings(
             bucket["attended"] += 1
 
     now = core.utc_now()
-    needle = core.fa_normalize(search)
+    needle = core.fa_normalize((search or "").strip())
+    search_scope = (search_scope or "all").strip()
+
+    # متن جست‌وجوی هر جلسه از همهٔ منابع مرتبط (فقط وقتی جست‌وجو فعال است ساخته می‌شود)
+    SOURCE_LABELS = {
+        "title": "نام/توضیح جلسه",
+        "agenda": "دستور جلسه",
+        "minutes": "صورتجلسه",
+        "transcript": "متن رونویسی",
+        "decisions": "مصوبات",
+        "actions": "اقدامات",
+    }
+    texts_by_meeting: Dict[int, Dict[str, str]] = {}
+    if needle:
+        def add_text(meeting_id: Any, source: str, text: str) -> None:
+            if not text:
+                return
+            bucket = texts_by_meeting.setdefault(int(meeting_id), {})
+            bucket[source] = ((bucket.get(source) or "") + "\n" + text).strip()
+
+        for row in await list_owned(db, Agenda_items, ctx):
+            add_text(row.meeting_id, "agenda", f"{row.title or ''} {row.notes or ''}")
+        for row in minutes_rows:
+            add_text(row.meeting_id, "minutes", f"{row.summary or ''} {row.body_markdown or ''}")
+        for row in await list_owned(db, Transcripts, ctx):
+            add_text(row.meeting_id, "transcript", row.full_text or "")
+        for row in await list_owned(db, Decisions, ctx):
+            add_text(row.meeting_id, "decisions", f"{row.title or ''} {row.description or ''}")
+        for row in await list_owned(db, Action_items, ctx):
+            add_text(row.meeting_id, "actions", f"{row.title or ''} {row.description or ''} {row.owner_name or ''}")
+
+    def snippet_of(raw: str) -> str:
+        index = raw.find(needle)
+        if index < 0:
+            return ""
+        radius = 70
+        start = max(index - radius, 0)
+        end = min(index + len(needle) + radius, len(raw))
+        out = raw[start:end].replace("\n", " ")
+        return ("… " if start > 0 else "") + out + (" …" if end < len(raw) else "")
+
     items: List[Dict[str, Any]] = []
     for meeting in meetings:
         starts_at = core.parse_iso(meeting.starts_at)
@@ -267,12 +308,40 @@ async def list_meetings(
             continue
         if scope == "past" and is_future:
             continue
-        if needle and needle not in core.fa_normalize(f"{meeting.title} {meeting.description} {meeting.location}"):
-            continue
         payload = dump(meeting, MEETING_FIELDS)
         payload["minutes_status"] = minutes_by_meeting.get(int(meeting.id))
         payload["counts"] = counts.get(int(meeting.id), {"total": 0, "accepted": 0, "attended": 0})
         payload["is_future"] = is_future
+
+        if needle:
+            all_texts = dict(texts_by_meeting.get(int(meeting.id), {}))
+            all_texts["title"] = f"{meeting.title or ''} {meeting.description or ''} {meeting.location or ''}"
+            if search_scope == "all":
+                active_sources = list(all_texts.keys())
+                matched = needle in core.fa_normalize(" ".join(all_texts.values()))
+            elif search_scope in all_texts:
+                active_sources = [search_scope]
+                matched = needle in core.fa_normalize(all_texts[search_scope])
+            else:
+                active_sources = []
+                matched = False
+            if not matched:
+                continue
+            matches: List[Dict[str, Any]] = []
+            for source in active_sources:
+                raw = core.fa_normalize(all_texts[source])
+                if needle in raw:
+                    matches.append(
+                        {
+                            "scope": source,
+                            "label": SOURCE_LABELS.get(source, source),
+                            "snippet": snippet_of(raw),
+                        }
+                    )
+                    if len(matches) >= 3:
+                        break
+            payload["matches"] = matches
+
         items.append(payload)
     await db.commit()
     return {"items": items, "total": len(items)}

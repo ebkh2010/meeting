@@ -138,6 +138,8 @@ export interface Meeting {
   minutes_status?: string | null;
   counts?: { total: number; accepted: number; attended: number };
   is_future?: boolean;
+  /** نتیجهٔ جست‌وجوی سراسری: کجاها در این جلسه تطبیق یافت. */
+  matches?: { scope: string; label: string; snippet: string }[];
 }
 
 export interface AgendaItem {
@@ -540,8 +542,12 @@ export const api = {
   bootstrap: () => invoke<Bootstrap>(`${WS}/bootstrap`),
   dashboard: () => invoke<DashboardData>(`${WS}/dashboard`),
 
-  listMeetings: (scope = 'all', search = '') =>
-    invoke<{ items: Meeting[]; total: number }>(`${WS}/meetings`, 'GET', { scope, search }),
+  listMeetings: (scope = 'all', search = '', searchScope = 'all') =>
+    invoke<{ items: Meeting[]; total: number }>(`${WS}/meetings`, 'GET', {
+      scope,
+      search,
+      search_scope: searchScope,
+    }),
   createMeeting: (payload: Record<string, unknown>) =>
     invoke<Meeting>(`${WS}/meetings`, 'POST', payload),
   meetingDetail: (id: number) => invoke<MeetingDetail>(`${WS}/meetings/${id}`),

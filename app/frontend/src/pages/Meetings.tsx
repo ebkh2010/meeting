@@ -1,7 +1,7 @@
 /** فهرست جلسات با جست‌وجو، فیلتر و ساخت جلسهٔ تازه همراه با دستور جلسه و اعضا. */
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CalendarPlus, Paperclip, Plus, Search, Trash2 } from 'lucide-react';
+import { CalendarPlus, Filter, Paperclip, Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import AppShell from '@/components/AppShell';
 import JalaliDateTimePicker from '@/components/JalaliDateTimePicker';
@@ -19,6 +19,15 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Select,
   SelectContent,
@@ -62,6 +71,19 @@ const EMPTY_AGENDA_ITEM: AgendaDraft = {
   notes: '',
 };
 
+/** محدوده‌های جست‌وجوی متن جلسات؛ مقدارها با `search_scope` سمت سرور یکسان‌اند. */
+const SEARCH_SCOPES = [
+  { value: 'all', label: 'همهٔ موارد' },
+  { value: 'title', label: 'نام/توضیح جلسه' },
+  { value: 'agenda', label: 'دستور جلسه' },
+  { value: 'minutes', label: 'صورت‌جلسه' },
+  { value: 'transcript', label: 'متن رونویسی' },
+  { value: 'decisions', label: 'مصوبات' },
+  { value: 'actions', label: 'اقدامات' },
+] as const;
+
+type SearchScope = (typeof SEARCH_SCOPES)[number]['value'];
+
 export default function MeetingsPage() {
   return <AppShell>{(bootstrap) => <MeetingsBody bootstrap={bootstrap} />}</AppShell>;
 }
@@ -72,18 +94,19 @@ function MeetingsBody({ bootstrap }: { bootstrap: Bootstrap }) {
   const [canManage, setCanManage] = useState(false);
   const [scope, setScope] = useState('all');
   const [search, setSearch] = useState('');
+  const [searchScope, setSearchScope] = useState<SearchScope>('all');
   const [error, setError] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const data = await api.listMeetings(scope, search);
+      const data = await api.listMeetings(scope, search, searchScope);
       setMeetings(data.items);
       setError('');
     } catch (err) {
       setError(errorMessage(err, 'دریافت فهرست جلسات ناموفق بود.'));
     }
-  }, [scope, search]);
+  }, [scope, search, searchScope]);
 
   useEffect(() => {
     load();
@@ -138,13 +161,43 @@ function MeetingsBody({ bootstrap }: { bootstrap: Bootstrap }) {
             </TabsList>
           </Tabs>
           <div className="relative w-full min-w-0 md:flex-1">
-            <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="جست‌وجوی عنوان یا شرح جلسه"
-              className="pr-9"
+              placeholder="جست‌وجو در نام، دستور، صورت‌جلسه، رونویسی، مصوبات و اقدامات"
+              className="px-9"
             />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant={searchScope === 'all' ? 'ghost' : 'secondary'}
+                  size="icon"
+                  className="absolute left-1.5 top-1/2 h-7 w-7 -translate-y-1/2"
+                  title="محدودهٔ جست‌وجو"
+                  aria-label="محدودهٔ جست‌وجو"
+                >
+                  <Filter
+                    className={searchScope === 'all' ? 'h-4 w-4' : 'h-4 w-4 text-primary'}
+                  />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>محدودهٔ جست‌وجو</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuRadioGroup
+                  value={searchScope}
+                  onValueChange={(value) => setSearchScope(value as SearchScope)}
+                >
+                  {SEARCH_SCOPES.map((option) => (
+                    <DropdownMenuRadioItem key={option.value} value={option.value}>
+                      {option.label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </CardContent>
       </Card>
@@ -204,6 +257,24 @@ function MeetingsBody({ bootstrap }: { bootstrap: Bootstrap }) {
                   {toPersianDigits(meeting.counts?.accepted ?? 0)} • حاضر:{' '}
                   {toPersianDigits(meeting.counts?.attended ?? 0)}
                 </p>
+                {/* هنگام جست‌وجو، چند بند از متن یافت‌شده به همراه برچسب منبع آن نمایش داده می‌شود. */}
+                {meeting.matches && meeting.matches.length > 0 && (
+                  <div className="space-y-1 pt-1.5">
+                    {meeting.matches.map((match, index) => (
+                      <p key={`${match.scope}-${index}`} className="flex items-start gap-2">
+                        <Badge
+                          variant="outline"
+                          className="mt-px shrink-0 px-1.5 py-0 text-[10px]"
+                        >
+                          {match.label}
+                        </Badge>
+                        <span className="min-w-0 break-words leading-relaxed">
+                          {match.snippet}
+                        </span>
+                      </p>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </Link>
