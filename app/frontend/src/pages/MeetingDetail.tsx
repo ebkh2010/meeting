@@ -3,7 +3,7 @@
  * مصوبات و اقدامات. کارهای هوش مصنوعی به‌صورت غیرهمزمان با polling پیگیری می‌شوند.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   CalendarDays,
   Download,
@@ -48,6 +48,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import MarkdownText from '@/components/MarkdownText';
+import HighlightText from '@/components/HighlightText';
 import {
   ACTION_STATUS_LABELS,
   api,
@@ -92,6 +93,46 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
   const [versions, setVersions] = useState<MinuteVersion[]>([]);
   const [error, setError] = useState('');
   const pollRef = useRef<number | null>(null);
+
+  // ورود از نتایج جست‌وجو: q=عبارت جست‌وجو و scope=بخشِ هدف (title/agenda/minutes/…)
+  const [searchParams] = useSearchParams();
+  const focusScope = searchParams.get('scope') || '';
+  const focusQuery = searchParams.get('q') || '';
+  const TAB_BY_SCOPE: Record<string, string> = {
+    title: 'agenda',
+    agenda: 'agenda',
+    minutes: 'minutes',
+    transcript: 'audio',
+    decisions: 'decisions',
+    actions: 'decisions',
+  };
+  const [tab, setTab] = useState(TAB_BY_SCOPE[focusScope] || 'agenda');
+  const sectionRef = useRef<HTMLDivElement>(null);
+
+  // اگر از فهرست جلسات با scope تازه وارد شد، برگهٔ مرتبط فعال شود.
+  useEffect(() => {
+    setTab(TAB_BY_SCOPE[focusScope] || 'agenda');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusScope]);
+
+  // پس از بارگذاری جزئیات، کاربر به همان بخشِ یافت‌شده هدایت و آن بخش برجسته می‌شود.
+  useEffect(() => {
+    if (!detail || !focusScope) return;
+    const timer = window.setTimeout(() => {
+      if (focusScope === 'title') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
+      const node = sectionRef.current;
+      if (!node) return;
+      node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      node.classList.add('rounded-lg', 'ring-2', 'ring-primary/50');
+      window.setTimeout(() => {
+        node.classList.remove('rounded-lg', 'ring-2', 'ring-primary/50');
+      }, 2400);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [detail, focusScope]);
 
   const loadDetail = useCallback(async () => {
     try {
@@ -227,7 +268,9 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
     <div className="space-y-6">
       <div className="flex flex-col items-stretch justify-between gap-3 lg:flex-row lg:items-start">
         <div className="min-w-0 space-y-2">
-          <h1 className="break-words">{meeting.title}</h1>
+          <h1 className="break-words">
+            <HighlightText text={meeting.title} query={focusQuery} />
+          </h1>
           <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
             <Badge variant="outline">{meeting.meeting_type}</Badge>
             <Badge variant={meeting.status === 'cancelled' ? 'destructive' : 'secondary'}>
@@ -237,10 +280,19 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
             <span>• {toPersianDigits(meeting.duration_minutes)} دقیقه</span>
             <span>• دبیر: {meeting.secretary_name || '—'}</span>
           </div>
-          {meeting.description && <p className="max-w-2xl text-sm">{meeting.description}</p>}
+          {meeting.description && (
+            <p className="max-w-2xl text-sm">
+              <HighlightText text={meeting.description} query={focusQuery} />
+            </p>
+          )}
           {(meeting.location || meeting.online_url) && (
             <p className="text-sm text-muted-foreground">
-              {meeting.location && <span>محل: {meeting.location}</span>}
+              {meeting.location && (
+                <span>
+                  محل:{' '}
+                  <HighlightText text={meeting.location} query={focusQuery} />
+                </span>
+              )}
               {meeting.online_url && (
                 <a
                   href={meeting.online_url}
@@ -281,64 +333,70 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
 
       <RsvpBar detail={detail} onDone={loadDetail} />
 
-      <Tabs defaultValue="agenda" dir="rtl">
-        <TabsList className="flex w-full flex-nowrap justify-start overflow-x-auto md:flex-wrap">
-          <TabsTrigger value="agenda">دستور جلسه و حضور</TabsTrigger>
-          <TabsTrigger value="audio">صوت و رونویسی</TabsTrigger>
-          <TabsTrigger value="minutes">صورتجلسه</TabsTrigger>
-          <TabsTrigger value="decisions">مصوبات و اقدامات</TabsTrigger>
-        </TabsList>
+      <div ref={sectionRef}>
+        <Tabs value={tab} onValueChange={setTab} dir="rtl">
+          <TabsList className="flex w-full flex-nowrap justify-start overflow-x-auto md:flex-wrap">
+            <TabsTrigger value="agenda">دستور جلسه و حضور</TabsTrigger>
+            <TabsTrigger value="audio">صوت و رونویسی</TabsTrigger>
+            <TabsTrigger value="minutes">صورتجلسه</TabsTrigger>
+            <TabsTrigger value="decisions">مصوبات و اقدامات</TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="agenda" className="mt-4 space-y-4">
-          <AgendaAndAttendance
-            detail={detail}
-            members={members}
-            canManage={canManage}
-            onDone={loadDetail}
-          />
-          <MeetingAttachmentsCard meetingId={detail.meeting.id} canManage={canManage} />
-        </TabsContent>
+          <TabsContent value="agenda" className="mt-4 space-y-4">
+            <AgendaAndAttendance
+              detail={detail}
+              members={members}
+              canManage={canManage}
+              onDone={loadDetail}
+              query={focusQuery}
+            />
+            <MeetingAttachmentsCard meetingId={detail.meeting.id} canManage={canManage} />
+          </TabsContent>
 
-        <TabsContent value="audio" className="mt-4">
-          <AudioAndTranscript
-            detail={detail}
-            jobs={jobs}
-            transcript={transcript}
-            speakers={speakers}
-            canManage={canManage}
-            quotaRemaining={bootstrap.quota.remaining_minutes}
-            onDone={async () => {
-              await loadDetail();
-              await loadJobs();
-              await loadSpeakers();
-            }}
-            onSpeakersChanged={loadSpeakers}
-          />
-        </TabsContent>
+          <TabsContent value="audio" className="mt-4">
+            <AudioAndTranscript
+              detail={detail}
+              jobs={jobs}
+              transcript={transcript}
+              speakers={speakers}
+              canManage={canManage}
+              quotaRemaining={bootstrap.quota.remaining_minutes}
+              onDone={async () => {
+                await loadDetail();
+                await loadJobs();
+                await loadSpeakers();
+              }}
+              onSpeakersChanged={loadSpeakers}
+              query={focusQuery}
+            />
+          </TabsContent>
 
-        <TabsContent value="minutes" className="mt-4">
-          <MinutesPanel
-            detail={detail}
-            jobs={jobs}
-            transcript={transcript}
-            versions={versions}
-            loadVersions={loadVersions}
-            onDone={async () => {
-              await loadDetail();
-              await loadJobs();
-            }}
-          />
-        </TabsContent>
+          <TabsContent value="minutes" className="mt-4">
+            <MinutesPanel
+              detail={detail}
+              jobs={jobs}
+              transcript={transcript}
+              versions={versions}
+              loadVersions={loadVersions}
+              onDone={async () => {
+                await loadDetail();
+                await loadJobs();
+              }}
+              query={focusQuery}
+            />
+          </TabsContent>
 
-        <TabsContent value="decisions" className="mt-4">
-          <DecisionsPanel
-            detail={detail}
-            members={members}
-            canManage={canManage}
-            onDone={loadDetail}
-          />
-        </TabsContent>
-      </Tabs>
+          <TabsContent value="decisions" className="mt-4">
+            <DecisionsPanel
+              detail={detail}
+              members={members}
+              canManage={canManage}
+              onDone={loadDetail}
+              query={focusQuery}
+            />
+          </TabsContent>
+        </Tabs>
+      </div>
     </div>
   );
 }
@@ -391,11 +449,13 @@ function AgendaAndAttendance({
   members,
   canManage,
   onDone,
+  query,
 }: {
   detail: MeetingDetailData;
   members: Member[];
   canManage: boolean;
   onDone: () => void;
+  query?: string;
 }) {
   const [title, setTitle] = useState('');
   const [minutes, setMinutes] = useState('15');
@@ -486,7 +546,7 @@ function AgendaAndAttendance({
               >
                 <div>
                   <p className="text-sm font-medium">
-                    {toPersianDigits(item.position)}. {item.title}
+                    {toPersianDigits(item.position)}. <HighlightText text={item.title} query={query} />
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {toPersianDigits(item.planned_minutes)} دقیقه
@@ -690,6 +750,7 @@ function AudioAndTranscript({
   quotaRemaining,
   onDone,
   onSpeakersChanged,
+  query,
 }: {
   detail: MeetingDetailData;
   jobs: Job[];
@@ -699,6 +760,7 @@ function AudioAndTranscript({
   quotaRemaining: number;
   onDone: () => Promise<void>;
   onSpeakersChanged: () => Promise<void>;
+  query?: string;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [consent, setConsent] = useState(false);
@@ -1128,13 +1190,19 @@ function AudioAndTranscript({
                             {formatMs(segment.start_ms)}
                           </span>
                         </span>
-                        <span className="whitespace-pre-wrap">{segment.text}</span>
+                        <span className="whitespace-pre-wrap">
+                          <HighlightText text={segment.text} query={query} />
+                        </span>
                       </div>
                     ))}
                   </div>
                 ) : (
                   <div className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-md border border-border p-3 text-sm leading-7">
-                    {transcript.full_text || 'متنی ثبت نشده است.'}
+                    {transcript.full_text ? (
+                      <HighlightText text={transcript.full_text} query={query} />
+                    ) : (
+                      'متنی ثبت نشده است.'
+                    )}
                   </div>
                 )}
               </>
@@ -1153,6 +1221,7 @@ function MinutesPanel({
   versions,
   loadVersions,
   onDone,
+  query,
 }: {
   detail: MeetingDetailData;
   jobs: Job[];
@@ -1160,6 +1229,7 @@ function MinutesPanel({
   versions: MinuteVersion[];
   loadVersions: () => Promise<void>;
   onDone: () => Promise<void>;
+  query?: string;
 }) {
   const minutes = detail.minutes;
   const [body, setBody] = useState(minutes?.body_markdown || '');
@@ -1231,7 +1301,11 @@ function MinutesPanel({
                   rows={2}
                 />
               ) : (
-                <MarkdownText text={summary || '—'} className="rounded-md border border-border p-2" />
+                <MarkdownText
+                  text={summary || '—'}
+                  query={query}
+                  className="rounded-md border border-border p-2"
+                />
               )}
             </div>
           )}
@@ -1261,7 +1335,7 @@ function MinutesPanel({
               />
             ) : (
               <div className="max-h-[28rem] overflow-y-auto rounded-md border border-border p-3">
-                <MarkdownText text={body} />
+                <MarkdownText text={body} query={query} />
               </div>
             )}
           </div>
@@ -1484,11 +1558,13 @@ function DecisionsPanel({
   members,
   canManage,
   onDone,
+  query,
 }: {
   detail: MeetingDetailData;
   members: Member[];
   canManage: boolean;
   onDone: () => void;
+  query?: string;
 }) {
   const [decisionTitle, setDecisionTitle] = useState('');
   const [decisionDesc, setDecisionDesc] = useState('');
@@ -1861,10 +1937,13 @@ function DecisionsPanel({
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <p className="text-sm font-medium">
-                    {toPersianDigits(decision.position)}. {decision.title}
+                    {toPersianDigits(decision.position)}.{' '}
+                    <HighlightText text={decision.title} query={query} />
                   </p>
                   {decision.description && (
-                    <p className="mt-1 text-xs text-muted-foreground">{decision.description}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      <HighlightText text={decision.description} query={query} />
+                    </p>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
@@ -1929,7 +2008,9 @@ function DecisionsPanel({
           {detail.actions.map((action) => (
             <div key={action.id} className="rounded-md border border-border p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-medium">{action.title}</p>
+                <p className="text-sm font-medium">
+                  <HighlightText text={action.title} query={query} />
+                </p>
                 <Badge variant={action.status === 'overdue' ? 'destructive' : 'secondary'}>
                   {ACTION_STATUS_LABELS[action.status] || action.status}
                 </Badge>
@@ -1937,6 +2018,11 @@ function DecisionsPanel({
               <p className="mt-1 text-xs text-muted-foreground">
                 مسئول: {action.owner_name || '—'} • مهلت: {formatDate(action.due_date)}
               </p>
+              {action.description && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  <HighlightText text={action.description} query={query} />
+                </p>
+              )}
               {action.progress_note && (
                 <p className="mt-1 text-xs">یادداشت: {action.progress_note}</p>
               )}

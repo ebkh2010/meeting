@@ -1,7 +1,7 @@
 /** فهرست جلسات با جست‌وجو، فیلتر و ساخت جلسهٔ تازه همراه با دستور جلسه و اعضا. */
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CalendarPlus, Filter, Paperclip, Plus, Search, Trash2 } from 'lucide-react';
+import { ArrowLeft, CalendarPlus, Filter, Paperclip, Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import AppShell from '@/components/AppShell';
 import JalaliDateTimePicker from '@/components/JalaliDateTimePicker';
@@ -107,6 +107,22 @@ function MeetingsBody({ bootstrap }: { bootstrap: Bootstrap }) {
       setError(errorMessage(err, 'دریافت فهرست جلسات ناموفق بود.'));
     }
   }, [scope, search, searchScope]);
+
+  /**
+   * نشانی صفحهٔ جزئیات جلسه با عبارت جست‌وجو و بخشِ هدف؛ صفحهٔ مقصد همان بخش
+   * (صورت‌جلسه، رونویسی، …) را باز می‌کند و واژهٔ جست‌وجو را برجسته می‌کند.
+   */
+  const detailHref = (meeting: Meeting, scopeOverride?: string) => {
+    const q = search.trim();
+    const scope = scopeOverride ?? meeting.matches?.[0]?.scope;
+    const params = new URLSearchParams();
+    if (q) {
+      params.set('q', q);
+      if (scope) params.set('scope', scope);
+    }
+    const qs = params.toString();
+    return qs ? `/meetings/${meeting.id}?${qs}` : `/meetings/${meeting.id}`;
+  };
 
   useEffect(() => {
     load();
@@ -231,8 +247,11 @@ function MeetingsBody({ bootstrap }: { bootstrap: Bootstrap }) {
 
       <div className="grid gap-3">
         {meetings?.map((meeting) => (
-          <Link key={meeting.id} to={`/meetings/${meeting.id}`}>
-            <Card className="transition-colors hover:border-primary/60">
+          <Card
+            key={meeting.id}
+            className="transition-colors hover:border-primary/60"
+          >
+            <Link to={detailHref(meeting)} className="block">
               <CardHeader className="pb-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <CardTitle className="text-base">{meeting.title}</CardTitle>
@@ -247,7 +266,7 @@ function MeetingsBody({ bootstrap }: { bootstrap: Bootstrap }) {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-1 text-xs text-muted-foreground">
+              <CardContent className="space-y-1 pb-2 text-xs text-muted-foreground">
                 <p>
                   {formatDateTime(meeting.starts_at)} • {toPersianDigits(meeting.duration_minutes)}{' '}
                   دقیقه • دبیر: {meeting.secretary_name || '—'}
@@ -257,27 +276,34 @@ function MeetingsBody({ bootstrap }: { bootstrap: Bootstrap }) {
                   {toPersianDigits(meeting.counts?.accepted ?? 0)} • حاضر:{' '}
                   {toPersianDigits(meeting.counts?.attended ?? 0)}
                 </p>
-                {/* هنگام جست‌وجو، چند بند از متن یافت‌شده به همراه برچسب منبع آن نمایش داده می‌شود. */}
-                {meeting.matches && meeting.matches.length > 0 && (
-                  <div className="space-y-1 pt-1.5">
-                    {meeting.matches.map((match, index) => (
-                      <p key={`${match.scope}-${index}`} className="flex items-start gap-2">
-                        <Badge
-                          variant="outline"
-                          className="mt-px shrink-0 px-1.5 py-0 text-[10px]"
-                        >
-                          {match.label}
-                        </Badge>
-                        <span className="min-w-0 break-words leading-relaxed">
-                          {match.snippet}
-                        </span>
-                      </p>
-                    ))}
-                  </div>
-                )}
               </CardContent>
-            </Card>
-          </Link>
+            </Link>
+            {/* هنگام جست‌وجو، هر بندِ یافت‌شده یک پیوند است که کاربر را مستقیم به همان
+                بخش (صورت‌جلسه، رونویسی، …) در صفحهٔ جزئیات جلسه می‌برد. */}
+            {meeting.matches && meeting.matches.length > 0 && (
+              <div className="space-y-1 px-6 pb-4 pt-1 text-xs text-muted-foreground">
+                {meeting.matches.map((match, index) => (
+                  <Link
+                    key={`${match.scope}-${index}`}
+                    to={detailHref(meeting, match.scope)}
+                    className="group flex items-start gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-accent"
+                    title={`مشاهدهٔ این بخش در جلسه (${match.label})`}
+                  >
+                    <Badge
+                      variant="outline"
+                      className="mt-px shrink-0 px-1.5 py-0 text-[10px]"
+                    >
+                      {match.label}
+                    </Badge>
+                    <span className="min-w-0 break-words leading-relaxed">
+                      {match.snippet}
+                    </span>
+                    <ArrowLeft className="mt-0.5 h-3.5 w-3.5 shrink-0 self-start text-primary opacity-60 transition-opacity group-hover:opacity-100" />
+                  </Link>
+                ))}
+              </div>
+            )}
+          </Card>
         ))}
       </div>
     </div>
