@@ -50,7 +50,7 @@ MODE_LABELS = {
 # سقف\u200cهای محافظه\u200cکارانه تا هزینهٔ حافظه/توکن کنترل\u200cشده بماند.
 MAX_MEETINGS_SCANNED = 150
 MAX_CHUNK_CHARS = 900
-MAX_CONTEXT_CHUNKS = 8
+MAX_CONTEXT_CHUNKS = 12
 MAX_CONTEXT_CHARS = 9000
 
 # آستانهٔ مطلق و نسبی امتیاز: جلوی ورود قطعه\u200cهای بی\u200cربط به context را می\u200cگیرد تا
@@ -675,6 +675,98 @@ def rank_chunks(chunks: List[Chunk], tokens: List[str], top_k: int = MAX_CONTEXT
     return selected
 
 
+def _select_proportional(
+    chunks: List[Chunk], tokens: List[str], top_k: int
+) -> List[Chunk]:
+    """انتخاب قطعه‌های زمینه با سهمیهٔ متناسب با حجم هر جلسه.
+
+    قواعد:
+    * پرسش دربارهٔ یک جلسهٔ مشخص → یک‌پنجم کل قطعه‌های همان جلسه (اگر کمتر از
+      ۱۰ قطعه دارد، همهٔ قطعه‌ها).
+    * پرسش دربارهٔ چند جلسه (یا عمومی) → یک‌دهم قطعه‌های هر جلسهٔ درگیر.
+    * اگر مجموع سهمیه‌ها از سقف سخت بیشتر شد، به نسبت تعدیل می‌شود (حداقل
+      یک قطعه از هر جلسهٔ درگیر) تا تعادل کیفیت و سرعت حفظ شود.
+    """
+    if not chunks:
+        return []
+
+    # امتیازدهی کامل (بدون برش) تا رتبه‌بندی دقیق بماند
+    for chunk in chunks:
+        chunk.score = score_text(f"{chunk.title} {chunk.text}", tokens)
+    scored = [chunk for chunk in chunks if chunk.score > 0]
+    if not scored:
+        return []
+    scored.sort(key=lambda item: item.score, reverse=True)
+    best = scored[0].score
+    threshold = max(MIN_ABSOLUTE_SCORE, best * MIN_RELATIVE_SCORE)
+    eligible = [chunk for chunk in scored if chunk.score >= threshold]
+    if not eligible:
+        return []
+
+    # شمارش کل قطعه‌های هر جلسه (کل فهرست، نه فقط واجد امتیاز)
+    meeting_totals: Dict[int, int] = {}
+    for chunk in chunks:
+        if chunk.meeting_id is not None:
+            meeting_totals[chunk.meeting_id] = meeting_totals.get(chunk.meeting_id, 0) + 1
+
+    # تشخیص جلسه(های) مورد اشاره در پرسش: توکن پرسش در عنوان/اطلاعات جلسه باشد
+    matched: set = set()
+    for chunk in chunks:
+        if chunk.kind != "meeting" or chunk.meeting_id is None:
+            continue
+        if any(token in f"{chunk.title} {chunk.text}" for token in tokens):
+            matched.add(chunk.meeting_id)
+
+    single_meeting = len(matched) == 1
+    if matched:
+        scope = {m for m in matched if m in meeting_totals}
+    else:
+        scope = {c.meeting_id for c in eligible if c.meeting_id is not None}
+
+    HARD_CAP = top_k
+    SMALL_MEETING_ALL = 10  # کمتر از این تعداد → همهٔ قطعه‌ها
+    quotas: Dict[int, int] = {}
+    for mid in scope:
+        total = meeting_totals.get(mid, 1)
+        if single_meeting:
+            quota = total if total < SMALL_MEETING_ALL else max(1, -(-total // 5))
+        else:
+            quota = max(1, -(-total // 10))
+        quotas[mid] = quota
+
+    # تعدیل سقف: اگر مجموع سهمیه‌ها زیاد شد، به نسبت کم می‌شود (حداقل ۱)
+    total_quota = sum(quotas.values())
+    if total_quota > HARD_CAP:
+        scale = HARD_CAP / total_quota
+        quotas = {mid: max(1, int(quota * scale)) for mid, quota in quotas.items()}
+        while sum(quotas.values()) > HARD_CAP:
+            worst = min(
+                quotas,
+                key=lambda m: max(
+                    (c.score for c in eligible if c.meeting_id == m), default=0
+                ),
+            )
+            if quotas[worst] <= 1:
+                quotas.pop(worst)
+            else:
+                quotas[worst] -= 1
+
+    # انتخاب بهترین قطعه‌های هر جلسه تا سهمیه (برش متن فقط روی منتخب‌ها)
+    per_meeting: Dict[int, List[Chunk]] = {}
+    for chunk in eligible:
+        if chunk.meeting_id is None:
+            continue
+        per_meeting.setdefault(chunk.meeting_id, []).append(chunk)
+    selected: List[Chunk] = []
+    for mid, bucket in per_meeting.items():
+        quota = quotas.get(mid, 1)
+        for chunk in bucket[:quota]:
+            chunk.text = trim_around_match(chunk.text, tokens)
+            selected.append(chunk)
+    selected.sort(key=lambda item: item.score, reverse=True)
+    return selected[:top_k]
+
+
 async def search_meetings(
     db: AsyncSession, ctx: TenantContext, question: str, top_k: int = MAX_CONTEXT_CHUNKS
 ) -> List[Chunk]:
@@ -682,7 +774,7 @@ async def search_meetings(
     if not tokens:
         return []
     chunks = await collect_meeting_chunks(db, ctx)
-    return rank_chunks(chunks, tokens, top_k)
+    return _select_proportional(chunks, tokens, top_k)
 
 
 def search_guide(question: str, top_k: int = 5) -> List[Chunk]:
