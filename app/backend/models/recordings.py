@@ -12,6 +12,12 @@ class Recordings(Base):
     meeting_id = Column(Integer, index=True, nullable=False)
     # ترتیب فایل در جلسه (کاربر مشخص می‌کند)؛ مبنای متن نهایی رونویسی و صورتجلسه
     position = Column(Integer, nullable=True)
+    # نوع رسانه: audio | video؛ برای ویدیو ابتدا صدا جدا می‌شود و سپس object_key
+    # به فایل صوتیِ استخراج‌شده تغییر می‌کند (فیلدهای video_* ویدیوی اصلی را نگه می‌دارند).
+    media_kind = Column(String, nullable=True)
+    video_object_key = Column(String, nullable=True)
+    video_file_name = Column(String, nullable=True)
+    video_size_bytes = Column(Integer, nullable=True)
     bucket_name = Column(String, nullable=True)
     object_key = Column(String, nullable=False)
     file_name = Column(String, nullable=True)

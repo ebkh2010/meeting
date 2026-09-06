@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, Optional, Tuple
 
 from sqlalchemy import select
@@ -27,6 +28,8 @@ from models.org_upload_limits import Org_upload_limits
 DEFAULT_MAX_AUDIO_MINUTES = 90
 DEFAULT_MAX_AUDIO_MB = 300
 DEFAULT_MAX_ATTACHMENT_MB = 25
+# سقف حجم ویدیوی جلسه (سراسری)؛ صدا پیش از رونویسی روی سرور جدا می‌شود.
+MAX_VIDEO_MB = int(os.environ.get("VIDEO_MAX_MB", "1024"))
 
 # بازهٔ مجاز هر سقف: کف برای جلوگیری از قفل‌شدن کاربر و سقف برای مهار هزینه.
 BOUNDS: Dict[str, Tuple[int, int]] = {
@@ -66,6 +69,9 @@ def snapshot(row: Optional[Org_upload_limits]) -> Dict[str, Any]:
     }
     data["max_attachment_bytes"] = data["max_attachment_mb"] * 1024 * 1024
     data["max_audio_bytes"] = data["max_audio_mb"] * 1024 * 1024
+    # سقف حجم ویدیو سراسری است (از متغیر محیطی) چون پیش از جداسازی صدا اعمال می‌شود.
+    data["max_video_mb"] = MAX_VIDEO_MB
+    data["max_video_bytes"] = MAX_VIDEO_MB * 1024 * 1024
     data["bounds"] = {field: {"min": BOUNDS[field][0], "max": BOUNDS[field][1]} for field in BOUNDS}
     data["defaults"] = dict(DEFAULTS)
     data["updated_by_name"] = getattr(row, "updated_by_name", "") or ""

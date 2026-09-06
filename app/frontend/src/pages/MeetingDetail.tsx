@@ -18,6 +18,7 @@ import {
   Settings2,
   Sparkles,
   Trash2,
+  Video,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import AppShell from '@/components/AppShell';
@@ -74,9 +75,10 @@ import {
   RSVP_LABELS,
   SuggestedItems,
   toPersianDigits,
+  mediaKindOf,
+  uploadMeetingMedia,
   Transcript,
   TranscriptSegment,
-  uploadMeetingAudio,
 } from '@/lib/mgmt';
 
 export default function MeetingDetailPage() {
@@ -808,7 +810,7 @@ function AudioAndTranscript({
     try {
       for (const file of files) {
         try {
-          await uploadMeetingAudio(detail.meeting.id, file, consent, {
+          await uploadMeetingMedia(detail.meeting.id, file, consent, mediaKindOf(file.name), {
             signal: controller.signal,
             onProgress: (progress) =>
               setAudioPercent((prev) => ({ ...prev, [file.name]: progress.percent })),
@@ -877,6 +879,38 @@ function AudioAndTranscript({
       toast.error(errorMessage(err, 'آغاز رونویسی ناموفق بود.'));
     } finally {
       setBusyId(null);
+    }
+  };
+
+  /** شروع/اجرای دوبارهٔ جداسازی صدای ویدیو. */
+  const startExtract = async (recordingId: number) => {
+    setBusyId(recordingId);
+    try {
+      await api.startExtract(recordingId);
+      toast.success('جداسازی صدای ویدیو آغاز شد. پس از پایان می‌توانید رونویسی را شروع کنید.');
+      await onDone();
+    } catch (err) {
+      toast.error(errorMessage(err, 'آغاز جداسازی صدا ناموفق بود.'));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /** حذف ویدیوی اصلی و نگهداری فایل صوتی استخراج‌شده. */
+  const deleteVideo = async (recordingId: number) => {
+    if (
+      !window.confirm(
+        'ویدیوی اصلی از فضای ذخیره‌سازی حذف می‌شود ولی فایل صوتی جلسه و رونویسی آن باقی می‌ماند. ادامه می‌دهید؟',
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.deleteRecordingVideo(recordingId);
+      toast.success('ویدیوی اصلی حذف شد و فایل صوتی جلسه نگه داشته شد.');
+      await onDone();
+    } catch (err) {
+      toast.error(errorMessage(err, 'حذف ویدیو ناموفق بود.'));
     }
   };
 
@@ -982,7 +1016,9 @@ function AudioAndTranscript({
     }
   };
 
-  const transcribeJobs = jobs.filter((job) => job.job_type === 'transcribe');
+  const transcribeJobs = jobs.filter(
+    (job) => job.job_type === 'transcribe' || job.job_type === 'audio_extract',
+  );
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -993,8 +1029,9 @@ function AudioAndTranscript({
         <CardContent className="space-y-3">
           {detail.recordings.length === 0 && (
             <p className="text-sm text-muted-foreground">
-              فایلی بارگذاری نشده است. صوت در فضای خصوصی نگه‌داری می‌شود و پس از پایان مهلت
-              نگه‌داری پاک می‌شود.
+              فایلی بارگذاری نشده است. می‌توانید فایل صوتی یا ویدیوی جلسه را بارگذاری کنید؛ صدای
+              ویدیو به‌صورت خودکار جدا می‌شود. فایل‌ها در فضای خصوصی نگه‌داری می‌شوند و پس از
+              پایان مهلت نگه‌داری پاک می‌شوند.
             </p>
           )}
           {detail.recordings.map((recording, index) => (
@@ -1041,36 +1078,116 @@ function AudioAndTranscript({
                 بارگذاری: {recording.uploaded_by_name || '—'} • مهلت نگه‌داری:{' '}
                 {formatDate(recording.purge_after)}
               </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" className="!bg-transparent gap-2" onClick={() => play(recording.id)}>
-                  <Download className="h-4 w-4" />
-                  پخش / دریافت
-                </Button>
-                {canManage && (
+              {(() => {
+                const isVideoUpload =
+                  recording.media_kind === 'video' || Boolean(recording.video_object_key);
+                const extracted = recording.media_kind === 'audio' && Boolean(recording.video_object_key);
+                const extractJob = jobs.find(
+                  (job) => job.recording_id === recording.id && job.job_type === 'audio_extract',
+                );
+                const extractActive = Boolean(
+                  extractJob && ['queued', 'running'].includes(extractJob.status),
+                );
+                const extractFailed = Boolean(extractJob && extractJob.status === 'failed');
+                return (
                   <>
-                    <Button
-                      size="sm"
-                      className="gap-2"
-                      disabled={busyId === recording.id}
-                      onClick={() => startTranscribe(recording.id)}
-                    >
-                      {busyId === recording.id ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Mic className="h-4 w-4" />
+                    {isVideoUpload && (
+                      <p className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                        <Badge
+                          variant={extracted ? 'secondary' : 'destructive'}
+                          className="gap-1 px-1.5 py-0 text-[10px]"
+                        >
+                          <Video className="h-3 w-3" />
+                          {extracted ? 'ویدیو — صدا جدا شد' : 'ویدیو'}
+                        </Badge>
+                        {!extracted && extractActive && (
+                          <span className="text-muted-foreground">
+                            در حال جداسازی صدا… {toPersianDigits(extractJob?.progress ?? 0)}٪
+                          </span>
+                        )}
+                        {!extracted && extractFailed && (
+                          <span className="text-destructive">
+                            جداسازی صدا ناموفق بود
+                            {extractJob?.error_message ? ` — ${extractJob.error_message}` : ''}
+                          </span>
+                        )}
+                        {!extracted && !extractJob && (
+                          <span className="text-muted-foreground">در نوبت جداسازی صدا…</span>
+                        )}
+                        {extracted && (
+                          <span className="text-muted-foreground">
+                            ویدیوی اصلی نگه‌داری می‌شود؛ برای صرفه‌جویی در فضا می‌توانید آن را حذف
+                            کنید.
+                          </span>
+                        )}
+                      </p>
+                    )}
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="!bg-transparent gap-2"
+                        onClick={() => play(recording.id)}
+                      >
+                        <Download className="h-4 w-4" />
+                        {extracted ? 'پخش / دریافت صدا' : isVideoUpload ? 'پخش / دریافت ویدیو' : 'پخش / دریافت'}
+                      </Button>
+                      {canManage && (
+                        <>
+                          {!extracted && isVideoUpload && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="!bg-transparent gap-2"
+                              disabled={extractActive || busyId === recording.id}
+                              onClick={() => startExtract(recording.id)}
+                            >
+                              {extractActive || busyId === recording.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Video className="h-4 w-4" />
+                              )}
+                              {extractFailed || !extractJob ? 'جداسازی صدا' : 'در حال جداسازی صدا…'}
+                            </Button>
+                          )}
+                          {recording.media_kind === 'audio' && (
+                            <Button
+                              size="sm"
+                              className="gap-2"
+                              disabled={busyId === recording.id}
+                              onClick={() => startTranscribe(recording.id)}
+                            >
+                              {busyId === recording.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Mic className="h-4 w-4" />
+                              )}
+                              رونویسی خودکار
+                            </Button>
+                          )}
+                          {extracted && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="!bg-transparent"
+                              onClick={() => deleteVideo(recording.id)}
+                            >
+                              حذف ویدیو (نگه‌داری صدا)
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => removeRecording(recording.id)}
+                          >
+                            حذف
+                          </Button>
+                        </>
                       )}
-                      رونویسی خودکار
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => removeRecording(recording.id)}
-                    >
-                      حذف
-                    </Button>
+                    </div>
                   </>
-                )}
-              </div>
+                );
+              })()}
             </div>
           ))}
           {detail.recordings.length > 1 && (
@@ -1084,11 +1201,11 @@ function AudioAndTranscript({
             <>
               <Separator />
               <div className="space-y-3">
-                <Label htmlFor="audio-file">بارگذاری فایل‌های صوتی</Label>
+                <Label htmlFor="audio-file">بارگذاری فایل صوتی یا ویدیوی جلسه</Label>
                 <Input
                   id="audio-file"
                   type="file"
-                  accept="audio/*"
+                  accept="audio/*,video/*"
                   multiple
                   onChange={(event) => {
                     const picked = Array.from(event.target.files ?? []);
@@ -1107,9 +1224,11 @@ function AudioAndTranscript({
                   </span>
                 </label>
                 <p className="text-xs text-muted-foreground">
-                  توکن ویدارای باقی‌مانده: {toPersianDigits(quotaRemaining)} توکن • سقف مدت صوت:{' '}
-                  {toPersianDigits(limits.maxAudioMinutes)} دقیقه • سقف حجم:{' '}
-                  {toPersianDigits(limits.maxAudioMb)} مگابایت
+                  برای ویدیو، صدا به‌صورت خودکار جدا و سپس رونویسی می‌شود. توکن ویدارای
+                  باقی‌مانده: {toPersianDigits(quotaRemaining)} توکن • سقف مدت صوت:{' '}
+                  {toPersianDigits(limits.maxAudioMinutes)} دقیقه • سقف حجم صوت:{' '}
+                  {toPersianDigits(limits.maxAudioMb)} مگابایت • سقف حجم ویدیو:{' '}
+                  {toPersianDigits(limits.maxVideoMb)} مگابایت
                 </p>
 
                 {/* فهرست فایل‌های در نوبت بارگذاری */}
@@ -1263,7 +1382,7 @@ function AudioAndTranscript({
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">وضعیت کارهای رونویسی</CardTitle>
+            <CardTitle className="text-base">وضعیت کارهای پردازش</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {transcribeJobs.length === 0 ? (

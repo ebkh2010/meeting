@@ -97,6 +97,8 @@ export interface UploadLimits {
   max_attachment_mb: number;
   max_attachment_bytes: number;
   max_audio_bytes: number;
+  max_video_mb?: number;
+  max_video_bytes?: number;
   bounds: Record<string, { min: number; max: number }>;
   defaults: Record<string, number>;
   updated_by_name: string;
@@ -178,6 +180,12 @@ export interface Recording {
   meeting_id: number;
   /** ترتیب فایل در جلسه (تعیین‌شده توسط کاربر). */
   position?: number;
+  /** نوع رسانه: audio | video (برای ویدیو پس از جداسازی صدا audio می‌شود). */
+  media_kind?: string;
+  /** ویدیوی اصلی (تا پیش از «حذف ویدیو» در Storage می‌ماند). */
+  video_object_key?: string | null;
+  video_file_name?: string | null;
+  video_size_bytes?: number | null;
   bucket_name: string;
   object_key: string;
   file_name: string;
@@ -277,6 +285,7 @@ export interface ActionItem {
 export interface Job {
   id: number;
   meeting_id: number | null;
+  recording_id?: number | null;
   job_type: string;
   status: string;
   progress: number;
@@ -634,7 +643,12 @@ export const api = {
   markNotificationsRead: () => invoke<{ success: boolean }>(`${WS}/notifications/read`, 'POST'),
   auditLog: () => invoke<{ items: AuditRow[] }>(`${WS}/audit`),
 
-  createUploadUrl: (payload: { meeting_id: number; file_name: string; size_bytes: number }) =>
+  createUploadUrl: (payload: {
+    meeting_id: number;
+    file_name: string;
+    size_bytes: number;
+    media_kind: 'audio' | 'video';
+  }) =>
     invoke<{ bucket_name: string; object_key: string; upload_url: string; expires_at: string }>(
       `${AI}/upload-url`,
       'POST',
@@ -652,6 +666,12 @@ export const api = {
     invoke<{ download_url: string; expires_at: string }>(`${AI}/recordings/${id}/play-url`),
   deleteRecording: (id: number) =>
     invoke<{ success: boolean }>(`${AI}/recordings/${id}`, 'DELETE'),
+  /** حذف ویدیوی اصلی و نگهداری فایل صوتی استخراج‌شده. */
+  deleteRecordingVideo: (id: number) =>
+    invoke<{ success: boolean }>(`${AI}/recordings/${id}/video`, 'DELETE'),
+  /** شروع (یا اجرای دوبارهٔ) جداسازی صدای ویدیو. */
+  startExtract: (recordingId: number) =>
+    invoke<Job>(`${AI}/recordings/${recordingId}/extract`, 'POST'),
 
   startTranscribe: (recordingId: number) =>
     invoke<Job>(`${AI}/jobs/transcribe`, 'POST', { recording_id: recordingId }),
@@ -816,6 +836,32 @@ export function readAudioDuration(file: File): Promise<number> {
   });
 }
 
+/** مدت ویدیو از روی فراداده (عنصر video) برای بررسی سقف پیش از آپلود. */
+export function readVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    const done = (value: number) => {
+      URL.revokeObjectURL(url);
+      resolve(value);
+    };
+    video.preload = 'metadata';
+    video.onloadedmetadata = () =>
+      done(Number.isFinite(video.duration) ? Math.round(video.duration) : 0);
+    video.onerror = () => done(0);
+    video.src = url;
+  });
+}
+
+/** پسوندهای ویدیوی مجاز در فرانت (هم‌ارز فهرست سرور). */
+export const VIDEO_EXTENSIONS = ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v', 'mpeg', 'mpg', 'wmv', '3gp'];
+
+/** نوع رسانهٔ فایل بر اساس پسوند نام؛ پیش‌فرض audio. */
+export function mediaKindOf(fileName: string): 'audio' | 'video' {
+  const extension = (fileName.split('.').pop() || '').toLowerCase();
+  return VIDEO_EXTENSIONS.includes(extension) ? 'video' : 'audio';
+}
+
 /* ------------------------------------------------------------------ */
 /* دانلود فایل Word صورتجلسه                                           */
 /* ------------------------------------------------------------------ */
@@ -938,6 +984,8 @@ let effectiveLimits = {
   maxAudioMinutes: 90,
   maxAttachmentMb: 25,
   maxAudioMb: 300,
+  maxVideoMb: 1024,
+  maxVideoBytes: 1024 * 1024 * 1024,
 };
 
 /** ثبت سقف‌های سازمان تا اعتبارسنجی فرانت با سرور یکی بماند. */
@@ -949,6 +997,8 @@ export function applyUploadLimits(limits?: UploadLimits | null): void {
     maxAudioMinutes: Number(limits.max_audio_minutes) || 90,
     maxAttachmentMb: Number(limits.max_attachment_mb) || 25,
     maxAudioMb: Number(limits.max_audio_mb) || 300,
+    maxVideoMb: Number(limits.max_video_mb) || 1024,
+    maxVideoBytes: Number(limits.max_video_bytes) || 1024 * 1024 * 1024,
   };
 }
 
@@ -1101,27 +1151,49 @@ export function formatFileSize(bytes: number): string {
   return `${toPersianDigits((bytes / (1024 * 1024)).toFixed(1))} مگابایت`;
 }
 
-/** بارگذاری فایل در باکت خصوصی با URL امضاشده و سپس ثبت فراداده در بک‌اند. */
-export async function uploadMeetingAudio(
+/**
+ * بارگذاری صوت/ویدیوی جلسه در باکت خصوصی با URL امضاشده و ثبت فراداده.
+ *
+ * برای ویدیو (``mediaKind='video'``) سامانه پس از ثبت، خودش صدا را با ffmpeg جدا
+ * می‌کند و سپس همان مسیر رونویسی ادامه می‌یابد؛ سقف حجم ویدیو از ``maxVideoMb``
+ * می‌آید و مدت آن پس از جداسازی روی سرور بررسی می‌شود.
+ */
+export async function uploadMeetingMedia(
   meetingId: number,
   file: File,
   consentAck: boolean,
+  mediaKind: 'audio' | 'video',
   options?: UploadOptions,
 ): Promise<Recording> {
   if (!file.size) {
-    throw new Error(`فایل صوتی «${file.name}» خالی است و بارگذاری نمی‌شود.`);
+    throw new Error(
+      `فایل ${mediaKind === 'video' ? 'ویدیوی' : 'صوتی'} «${file.name}» خالی است و بارگذاری نمی‌شود.`,
+    );
   }
-  if (file.size > effectiveLimits.maxAudioBytes) {
+  if (mediaKind === 'video') {
+    if (file.size > effectiveLimits.maxVideoBytes) {
+      throw new Error(
+        `حجم فایل ویدیو «${file.name}» (${formatFileSize(file.size)}) بیشتر از سقف ${toPersianDigits(
+          effectiveLimits.maxVideoMb,
+        )} مگابایت است.`,
+      );
+    }
+  } else if (file.size > effectiveLimits.maxAudioBytes) {
     throw new Error(
       `حجم فایل صوتی «${file.name}» (${formatFileSize(file.size)}) بیشتر از سقف ${toPersianDigits(
         effectiveLimits.maxAudioMb,
       )} مگابایت است.`,
     );
   }
-  const durationSeconds = await readAudioDuration(file);
-  // سقف مدت از تنظیمات سازمان می‌آید؛ پیام خطا پیش از آپلود نمایش داده می‌شود
-  // تا کاربر منتظر آپلود کامل و سپس رد شدن از سوی سرور نماند.
-  if (durationSeconds && durationSeconds > effectiveLimits.maxAudioMinutes * 60) {
+  const durationSeconds =
+    mediaKind === 'video' ? await readVideoDuration(file) : await readAudioDuration(file);
+  // سقف مدت از تنظیمات سازمان می‌آید؛ پیام خطا پیش از آپلود نمایش داده می‌شود.
+  // برای ویدیو، مدت پس از جداسازی صدا روی سرور هم بررسی می‌شود.
+  if (
+    mediaKind === 'audio' &&
+    durationSeconds &&
+    durationSeconds > effectiveLimits.maxAudioMinutes * 60
+  ) {
     throw new Error(
       `مدت فایل صوتی (${toPersianDigits(
         Math.round(durationSeconds / 60),
@@ -1130,22 +1202,34 @@ export async function uploadMeetingAudio(
       )} دقیقه) است. مدیر سازمان می‌تواند این سقف را در تنظیمات سازمان افزایش دهد.`,
     );
   }
-  const contentType = file.type || 'audio/mpeg';
+  const contentType = file.type || (mediaKind === 'video' ? 'video/mp4' : 'audio/mpeg');
   const signed = await api.createUploadUrl({
     meeting_id: meetingId,
     file_name: file.name,
     size_bytes: file.size,
+    media_kind: mediaKind,
   });
   await putWithProgress(signed.upload_url, file, contentType, options);
   return api.registerRecording({
     meeting_id: meetingId,
     object_key: signed.object_key,
     file_name: file.name,
-    mime_type: file.type || 'audio/mpeg',
+    mime_type: contentType,
     size_bytes: file.size,
     duration_seconds: durationSeconds,
     consent_ack: consentAck,
+    media_kind: mediaKind,
   });
+}
+
+/** سازگاری با فراخوان‌های قبلی: بارگذاری فایل صوتی. */
+export async function uploadMeetingAudio(
+  meetingId: number,
+  file: File,
+  consentAck: boolean,
+  options?: UploadOptions,
+): Promise<Recording> {
+  return uploadMeetingMedia(meetingId, file, consentAck, 'audio', options);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1237,6 +1321,7 @@ export const JOB_STATUS_LABELS: Record<string, string> = {
 export const JOB_TYPE_LABELS: Record<string, string> = {
   transcribe: 'رونویسی صوت',
   minutes_draft: 'پیش‌نویس صورتجلسه',
+  audio_extract: 'جداسازی صدای ویدیو',
 };
 
 export function formatMinutes(seconds?: number | null): string {

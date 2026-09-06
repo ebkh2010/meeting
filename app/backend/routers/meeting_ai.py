@@ -16,14 +16,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional
+
+import httpx
 
 from core.database import db_manager, get_db
 from dependencies.app_auth import get_workspace_user as get_current_user
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from schemas.auth import UserResponse
-from schemas.storage import FileUpDownRequest
+from schemas.storage import FileUpDownRequest, ObjectRequest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,6 +78,7 @@ router = APIRouter(prefix="/api/v1/meeting-ai", tags=["meeting-ai"])
 
 JOB_TRANSCRIBE = "transcribe"
 JOB_MINUTES = "minutes_draft"
+JOB_EXTRACT = "audio_extract"
 JOB_QUEUED = "queued"
 JOB_RUNNING = "running"
 JOB_SUCCEEDED = "succeeded"
@@ -91,6 +95,7 @@ class UploadUrlIn(BaseModel):
     meeting_id: int
     file_name: str = Field(..., min_length=3, max_length=200)
     size_bytes: int = 0
+    media_kind: str = "audio"  # audio | video
 
 
 class RegisterRecordingIn(BaseModel):
@@ -101,6 +106,7 @@ class RegisterRecordingIn(BaseModel):
     size_bytes: int = 0
     duration_seconds: int = 0
     consent_ack: bool = False
+    media_kind: str = "audio"  # audio | video
 
 
 class StartTranscribeIn(BaseModel):
@@ -191,10 +197,19 @@ async def create_upload_url(
     ctx = await resolve_context(db, current_user)
     meeting = await get_owned(db, Meetings, payload.meeting_id, ctx, "جلسه")
     require_meeting_manager(ctx, meeting)
-    # سقف حجم صوت از تنظیمات سازمان خوانده می‌شود تا با فرم تنظیمات مدیریتی یکی باشد.
+    # سقف حجم از تنظیمات سازمان خوانده می‌شود تا با فرم تنظیمات مدیریتی یکی باشد.
     limits = await limits_service.get_limits(db, ctx.organization_id)
     ctx.organization.max_audio_mb = int(limits["max_audio_mb"])
-    extension = core.validate_audio_file(ctx.organization, payload.file_name, max(payload.size_bytes, 1))
+    media_kind = (payload.media_kind or "audio").strip().lower()
+    if media_kind == "video":
+        extension = core.validate_video_file(
+            ctx.organization, payload.file_name, max(payload.size_bytes, 1)
+        )
+    else:
+        media_kind = "audio"
+        extension = core.validate_audio_file(
+            ctx.organization, payload.file_name, max(payload.size_bytes, 1)
+        )
 
     object_key = (
         f"org-{ctx.organization_id}/meeting-{payload.meeting_id}/"
@@ -220,21 +235,30 @@ async def register_recording(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    """ثبت فراداده فایل بارگذاری‌شده + مهر رضایت + تاریخ حذف خودکار."""
+    """ثبت فراداده فایل بارگذاری‌شده (صوت یا ویدیو) + مهر رضایت + تاریخ حذف خودکار.
+
+    برای ویدیو بلافاصله کار «جداسازی صدا» (ffmpeg) در صف قرار می‌گیرد و پس از
+    پایان، ``object_key`` به فایل صوتی استخراج‌شده تغییر می‌کند.
+    """
     ctx = await resolve_context(db, current_user)
     meeting = await get_owned(db, Meetings, payload.meeting_id, ctx, "جلسه")
     require_meeting_manager(ctx, meeting)
     limits = await limits_service.get_limits(db, ctx.organization_id)
     ctx.organization.max_audio_mb = int(limits["max_audio_mb"])
-    core.validate_audio_file(ctx.organization, payload.file_name, max(payload.size_bytes, 1))
+    media_kind = (payload.media_kind or "audio").strip().lower()
+    if media_kind == "video":
+        core.validate_video_file(ctx.organization, payload.file_name, max(payload.size_bytes, 1))
+    else:
+        media_kind = "audio"
+        core.validate_audio_file(ctx.organization, payload.file_name, max(payload.size_bytes, 1))
 
     if not payload.consent_ack:
         raise bad_request(
-            "برای بارگذاری فایل صوتی جلسه، تأیید اطلاع‌رسانی به حاضران الزامی است."
+            "برای بارگذاری فایل صوتی/ویدیوی جلسه، تأیید اطلاع‌رسانی به حاضران الزامی است."
         )
-    # سقف مدت صوت تنظیم‌پذیر است؛ مقدار ثابت قبلی (۹۰ دقیقه) فقط پیش‌فرض است.
+    # سقف مدت تنظیم‌پذیر است؛ برای ویدیو مدت نهایی پس از جداسازی صدا بررسی می‌شود.
     max_minutes = int(limits["max_audio_minutes"])
-    if payload.duration_seconds and payload.duration_seconds > max_minutes * 60:
+    if media_kind == "audio" and payload.duration_seconds and payload.duration_seconds > max_minutes * 60:
         actual_minutes = round(int(payload.duration_seconds) / 60, 1)
         raise bad_request(
             f"مدت فایل صوتی ({actual_minutes} دقیقه) از سقف مجاز این سازمان "
@@ -255,10 +279,14 @@ async def register_recording(
         organization_id=ctx.organization_id,
         meeting_id=payload.meeting_id,
         position=next_position,
+        media_kind=media_kind,
+        video_object_key=payload.object_key if media_kind == "video" else None,
+        video_file_name=payload.file_name if media_kind == "video" else None,
+        video_size_bytes=max(int(payload.size_bytes or 0), 0) if media_kind == "video" else None,
         bucket_name=AUDIO_BUCKET,
         object_key=payload.object_key,
         file_name=payload.file_name,
-        mime_type=payload.mime_type or "audio/mpeg",
+        mime_type=payload.mime_type or ("video/mp4" if media_kind == "video" else "audio/mpeg"),
         size_bytes=max(int(payload.size_bytes or 0), 0),
         duration_seconds=max(int(payload.duration_seconds or 0), 0),
         upload_status="uploaded",
@@ -270,9 +298,77 @@ async def register_recording(
         uploaded_by_name=ctx.actor_name,
     )
     db.add(recording)
+    await db.flush()
+
+    extract_job_id: Optional[int] = None
+    if media_kind == "video":
+        extract_job_id = await _spawn_extract_job(db, ctx, recording)
+
     await audit(db, ctx, "recording.uploaded", "recording", None, payload.file_name)
     await db.commit()
+    if extract_job_id is not None:
+        _spawn(extract_job_id)
     return dump(recording, core.RECORDING_FIELDS)
+
+
+async def _spawn_extract_job(db: AsyncSession, ctx: TenantContext, recording: Recordings) -> int:
+    """ساخت کار جداسازی صدای ویدیو (بدون فراخوان سرویس هوش مصنوعی)."""
+    job = Jobs(
+        organization_id=ctx.organization_id,
+        meeting_id=int(recording.meeting_id),
+        recording_id=int(recording.id),
+        job_type=JOB_EXTRACT,
+        status=JOB_QUEUED,
+        progress=0,
+        attempts=0,
+        max_attempts=2,
+        payload_json=json.dumps(
+            {
+                "recording_id": int(recording.id),
+                "bucket_name": recording.bucket_name or AUDIO_BUCKET,
+                "object_key": recording.video_object_key or recording.object_key,
+                "user_id": ctx.user_id,
+            },
+            ensure_ascii=False,
+        ),
+        created_by_name=ctx.actor_name,
+    )
+    db.add(job)
+    await db.flush()
+    return int(job.id)
+
+
+@router.post("/recordings/{recording_id}/extract")
+async def start_extract(
+    recording_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """شروع (یا اجرای دوبارهٔ) جداسازی صدای ویدیو."""
+    ctx = await resolve_context(db, current_user)
+    recording = await get_owned(db, Recordings, recording_id, ctx, "فایل صوتی")
+    meeting = await get_owned(db, Meetings, int(recording.meeting_id), ctx, "جلسه")
+    require_meeting_manager(ctx, meeting)
+
+    if (recording.media_kind or "audio") == "audio" and not recording.video_object_key:
+        raise bad_request("این فایل ویدیو نیست و جداسازی صدا لازم ندارد.")
+    if not recording.object_key:
+        raise bad_request("کلید فایل ویدیو ثبت نشده است.")
+
+    running = await _find_active_job(
+        db, ctx, JOB_EXTRACT, int(meeting.id), recording_id=int(recording.id)
+    )
+    if running is not None:
+        await db.commit()
+        return dump(running, JOB_FIELDS)
+
+    job_id = await _spawn_extract_job(db, ctx, recording)
+    await db.commit()
+    _spawn(job_id)
+    result = await db.execute(select(Jobs).where(Jobs.id == job_id))
+    job_row = result.scalars().first()
+    await db.commit()
+    return dump(job_row, JOB_FIELDS) if job_row else {"job_id": job_id}
 
 
 @router.put("/recordings/order")
@@ -334,15 +430,67 @@ async def delete_recording(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    """حذف صوت بنا به درخواست حریم خصوصی؛ رونویسی متنی حفظ می‌شود."""
+    """حذف صوت/ویدیو بنا به درخواست حریم خصوصی؛ رونویسی متنی حفظ می‌شود.
+
+    اشیای استوریج (فایل اصلی و در صورت وجود ویدیوی نگه‌داشته‌شده) هم به‌صورت
+    بهترین تلاش حذف می‌شوند.
+    """
     ctx = await resolve_context(db, current_user)
     recording = await get_owned(db, Recordings, recording_id, ctx, "فایل صوتی")
     meeting = await get_owned(db, Meetings, int(recording.meeting_id), ctx, "جلسه")
     require_meeting_manager(ctx, meeting)
     file_name = recording.file_name
+    bucket = recording.bucket_name or AUDIO_BUCKET
+    object_keys = {recording.object_key, recording.video_object_key}
     await db.delete(recording)
     await audit(db, ctx, "recording.deleted", "recording", recording_id, file_name or "")
     await db.commit()
+
+    storage = StorageService()
+    for key in object_keys:
+        if not key:
+            continue
+        try:
+            await storage.delete_object(ObjectRequest(bucket_name=bucket, object_key=key))
+        except Exception:  # pragma: no cover - حذف شیء نباید پاسخ را بشکند
+            logger.warning("حذف شیء %s از استوریج ناموفق بود", key)
+    return {"success": True}
+
+
+@router.delete("/recordings/{recording_id}/video")
+async def delete_recording_video(
+    recording_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """حذف ویدیوی اصلی و نگهداری فایل صوتیِ استخراج‌شده (صرفه‌جویی در فضا)."""
+    ctx = await resolve_context(db, current_user)
+    recording = await get_owned(db, Recordings, recording_id, ctx, "فایل صوتی")
+    meeting = await get_owned(db, Meetings, int(recording.meeting_id), ctx, "جلسه")
+    require_meeting_manager(ctx, meeting)
+
+    if (recording.media_kind or "audio") != "audio" or not recording.video_object_key:
+        raise bad_request(
+            "صدای این ویدیو هنوز جدا نشده یا فایل ویدیوی اصلی ندارد؛ "
+            "برای حذف کامل فایل از دکمهٔ «حذف» استفاده کنید."
+        )
+    video_key = recording.video_object_key
+    recording.video_object_key = None
+    recording.video_file_name = None
+    recording.video_size_bytes = None
+    await audit(
+        db, ctx, "recording.video_deleted", "recording", recording_id,
+        detail=f"ویدیوی اصلی «{recording.file_name or ''}» حذف و فایل صوتی جلسه نگه داشته شد",
+    )
+    await db.commit()
+
+    storage = StorageService()
+    try:
+        await storage.delete_object(
+            ObjectRequest(bucket_name=recording.bucket_name or AUDIO_BUCKET, object_key=video_key)
+        )
+    except Exception:  # pragma: no cover - حذف شیء نباید پاسخ را بشکند
+        logger.warning("حذف ویدیوی %s از استوریج ناموفق بود", video_key)
     return {"success": True}
 
 
@@ -361,6 +509,11 @@ async def start_transcribe(
     recording = await get_owned(db, Recordings, payload.recording_id, ctx, "فایل صوتی")
     meeting = await get_owned(db, Meetings, int(recording.meeting_id), ctx, "جلسه")
     require_meeting_manager(ctx, meeting)
+
+    if (recording.media_kind or "audio") == "video":
+        raise bad_request(
+            "صدای این ویدیو هنوز جدا نشده است؛ پس از پایان کار «جداسازی صدا» رونویسی را آغاز کنید."
+        )
 
     # هر فایل صوتی می‌تواند رونویسی مستقل همزمان داشته باشد؛ کارِ فعالِ همین فایل
     # بازگردانده می‌شود تا دوباره‌کاری نشود.
@@ -895,6 +1048,8 @@ async def _run_job(job_id: int) -> None:
                 await _execute_transcribe(session, job)
             elif job.job_type == JOB_MINUTES:
                 await _execute_minutes(session, job)
+            elif job.job_type == JOB_EXTRACT:
+                await _execute_extract_audio(session, job)
             else:
                 await _fail_job(session, job, "نوع کار پردازشی پشتیبانی نمی‌شود.")
         except AIGatewayError as exc:
@@ -1045,6 +1200,181 @@ async def _execute_transcribe(session: AsyncSession, job: Jobs) -> None:
         ensure_ascii=False,
     )
     await session.commit()
+
+
+async def _execute_extract_audio(session: AsyncSession, job: Jobs) -> None:
+    """جداسازی صدای ویدیو با ffmpeg: دانلود ویدیو → استخراج MP3 → بارگذاری در Storage.
+
+    پس از پایان، ``object_key`` همان رکورد به فایل صوتی استخراج‌شده تغییر می‌کند و
+    مسیر رونویسی/صورتجلسه بدون تغییر ادامه می‌یابد. ویدیوی اصلی تا وقتی کاربر
+    «حذف ویدیو (نگهداری صدا)» را نزند در Storage می‌ماند.
+    """
+    try:
+        payload = json.loads(job.payload_json or "{}")
+    except (TypeError, ValueError):
+        payload = {}
+    recording_id = int(payload.get("recording_id") or 0)
+    bucket = payload.get("bucket_name") or AUDIO_BUCKET
+    video_key = payload.get("object_key") or ""
+    organization_id = int(job.organization_id)
+    meeting_id = int(job.meeting_id or 0)
+    job_id = int(job.id)
+
+    recording_result = await session.execute(
+        select(Recordings).where(
+            Recordings.id == recording_id, Recordings.organization_id == organization_id
+        )
+    )
+    recording = recording_result.scalars().first()
+    if recording is None:
+        await _fail_job(session, job, "فایل ویدیوی مرتبط با این کار یافت نشد.")
+        return
+    if not video_key:
+        video_key = recording.video_object_key or recording.object_key or ""
+    if not video_key:
+        await _fail_job(session, job, "کلید فایل ویدیو در این کار ثبت نشده است.")
+        return
+
+    job.progress = 20
+    await session.commit()  # پایان فاز پایگاه داده پیش از پردازش کند
+
+    storage = StorageService()
+    local_video = f"/tmp/vidara-video-{job_id}.mp4"
+    out_audio = f"/tmp/vidara-audio-{job_id}.mp3"
+    try:
+        signed = await storage.create_download_url(
+            FileUpDownRequest(bucket_name=bucket, object_key=video_key)
+        )
+        # دانلود ویدیو به دیسک موقت؛ ffmpeg روی فایل محلی پایدارتر از نشانی امضاشده است.
+        async with httpx.AsyncClient(timeout=1800, follow_redirects=True) as client:
+            async with client.stream("GET", signed.download_url) as response:
+                if response.status_code != 200:
+                    await _fail_job(
+                        session, job, f"دریافت فایل ویدیو ناموفق بود (کد {response.status_code})."
+                    )
+                    return
+                with open(local_video, "wb") as handle:
+                    async for chunk in response.aiter_bytes(1 << 20):
+                        handle.write(chunk)
+
+        job.progress = 45
+        await session.commit()
+
+        ffmpeg_path = "/usr/local/bin/ffmpeg"
+        proc = await asyncio.create_subprocess_exec(
+            ffmpeg_path,
+            "-y",
+            "-i",
+            local_video,
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "64k",
+            out_audio,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr_bytes = await proc.communicate()
+        stderr_text = (stderr_bytes or b"").decode("utf-8", "replace")
+        if proc.returncode != 0 or not os.path.isfile(out_audio) or os.path.getsize(out_audio) == 0:
+            await _fail_job(
+                session,
+                job,
+                f"جداسازی صدا از ویدیو ناموفق بود: {stderr_text[-300:]}",
+            )
+            return
+
+        # مدت صدای استخراج‌شده با ffprobe
+        duration_seconds = 0
+        probe = await asyncio.create_subprocess_exec(
+            "/usr/local/bin/ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            out_audio,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        probe_out, _ = await probe.communicate()
+        try:
+            duration_seconds = max(int(float((probe_out or b"0").decode().strip() or 0)), 0)
+        except ValueError:
+            duration_seconds = 0
+
+        limits = await limits_service.get_limits(session, organization_id)
+        max_minutes = int(limits["max_audio_minutes"])
+        if duration_seconds > max_minutes * 60:
+            await _fail_job(
+                session,
+                job,
+                f"مدت صدای ویدیو ({round(duration_seconds / 60, 1)} دقیقه) از سقف مجاز این "
+                f"سازمان ({max_minutes} دقیقه) بیشتر است.",
+            )
+            return
+
+        job.progress = 70
+        await session.commit()
+
+        with open(out_audio, "rb") as handle:
+            audio_bytes = handle.read()
+        audio_key = (
+            f"org-{organization_id}/meeting-{meeting_id}/"
+            f"extracted-{recording_id}-{core.secrets_token()}.mp3"
+        )
+        signed_up = await storage.create_upload_url(
+            FileUpDownRequest(bucket_name=AUDIO_BUCKET, object_key=audio_key)
+        )
+        async with httpx.AsyncClient(timeout=900) as client:
+            upload_response = await client.put(
+                signed_up.upload_url, content=audio_bytes, headers={"Content-Type": "audio/mpeg"}
+            )
+        if upload_response.status_code not in (200, 201, 204):
+            await _fail_job(
+                session,
+                job,
+                f"بارگذاری صدای استخراج‌شده ناموفق بود (کد {upload_response.status_code}).",
+            )
+            return
+
+        # از این پس object_key = صدای استخراج‌شده؛ ویدیوی اصلی در video_* حفظ می‌شود.
+        job_row = await _load_job(session, job_id)
+        if job_row is None:
+            return
+        fresh = await session.get(Recordings, recording_id)
+        if fresh is not None:
+            fresh.object_key = audio_key
+            fresh.mime_type = "audio/mpeg"
+            fresh.media_kind = "audio"
+            fresh.duration_seconds = duration_seconds or fresh.duration_seconds
+            fresh.size_bytes = len(audio_bytes)
+        job_row.status = JOB_SUCCEEDED
+        job_row.progress = 100
+        job_row.finished_at = core.now_iso()
+        job_row.error_message = ""
+        job_row.result_json = json.dumps(
+            {
+                "kind": JOB_EXTRACT,
+                "duration_seconds": duration_seconds,
+                "audio_object_key": audio_key,
+            },
+            ensure_ascii=False,
+        )
+        await session.commit()
+    finally:
+        for path in (local_video, out_audio):
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+            except OSError:  # pragma: no cover - پاک‌سازی بهترین تلاش است
+                logger.warning("پاک‌سازی فایل موقت %s ناموفق بود", path)
 
 
 async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:

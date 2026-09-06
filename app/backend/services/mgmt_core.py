@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import secrets
 from dataclasses import dataclass
@@ -72,6 +73,9 @@ DEMO_AUDIO_RETENTION_DAYS = 90
 
 AUDIO_BUCKET = "meeting-audio"
 ALLOWED_AUDIO_EXTENSIONS = ["mp3", "wav", "m4a", "ogg", "webm", "aac", "flac"]
+# ویدیوی جلسه: صدا روی سرور جدا می‌شود و همان مسیر رونویسی صوت ادامه می‌یابد.
+ALLOWED_VIDEO_EXTENSIONS = ["mp4", "mov", "mkv", "webm", "avi", "m4v", "mpeg", "mpg", "wmv", "3gp"]
+DEMO_MAX_VIDEO_MB = int(os.environ.get("VIDEO_MAX_MB", "1024"))
 
 TRANSCRIBE_MODEL = "scribe_v2"
 MINUTES_MODEL = "gpt-5.6-sol"
@@ -445,9 +449,23 @@ def validate_audio_file(org: Organizations, file_name: str, size_bytes: int) -> 
     return extension
 
 
-# ---------------------------------------------------------------------------
-# اقدامات: به‌روزرسانی وضعیت تأخیر
-# ---------------------------------------------------------------------------
+def validate_video_file(org: Organizations, file_name: str, size_bytes: int) -> str:
+    """اعتبارسنجی فرمت و حجم ویدیوی جلسه (صدا روی سرور جدا می‌شود)."""
+    extension = (file_name.rsplit(".", 1)[-1] if "." in file_name else "").lower()
+    if extension not in ALLOWED_VIDEO_EXTENSIONS:
+        raise bad_request(
+            "فرمت ویدیو پشتیبانی نمی‌شود. فرمت‌های مجاز: "
+            + "، ".join(ALLOWED_VIDEO_EXTENSIONS)
+        )
+    if size_bytes <= 0:
+        raise bad_request("فایل ویدیو خالی است یا حجم آن قابل تشخیص نیست.")
+    if size_bytes > DEMO_MAX_VIDEO_MB * 1024 * 1024:
+        actual = round(size_bytes / (1024 * 1024), 1)
+        raise bad_request(
+            f"حجم فایل ویدیو ({actual} مگابایت) از سقف مجاز "
+            f"({DEMO_MAX_VIDEO_MB} مگابایت) بیشتر است."
+        )
+    return extension
 
 
 async def refresh_overdue_actions(db: AsyncSession, organization_id: int) -> None:
@@ -549,6 +567,10 @@ RECORDING_FIELDS = [
     "id",
     "meeting_id",
     "position",
+    "media_kind",
+    "video_object_key",
+    "video_file_name",
+    "video_size_bytes",
     "bucket_name",
     "object_key",
     "file_name",
@@ -606,6 +628,7 @@ ACTION_FIELDS = [
 JOB_FIELDS = [
     "id",
     "meeting_id",
+    "recording_id",
     "job_type",
     "status",
     "progress",
