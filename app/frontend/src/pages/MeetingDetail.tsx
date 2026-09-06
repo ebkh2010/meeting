@@ -5,6 +5,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
+  ArrowDown,
+  ArrowUp,
   CalendarDays,
   Download,
   FileText,
@@ -73,6 +75,7 @@ import {
   SuggestedItems,
   toPersianDigits,
   Transcript,
+  TranscriptSegment,
   uploadMeetingAudio,
 } from '@/lib/mgmt';
 
@@ -762,10 +765,13 @@ function AudioAndTranscript({
   onSpeakersChanged: () => Promise<void>;
   query?: string;
 }) {
-  const [file, setFile] = useState<File | null>(null);
+  /** فایل‌های انتخاب‌شده برای بارگذاری (چند فایل صوتی برای یک جلسه مجاز است). */
+  const [files, setFiles] = useState<File[]>([]);
   const [consent, setConsent] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
+  /** در حال به‌روزرسانی ترتیب فایل‌ها (جلوگیری از کلیک‌های همزمان). */
+  const [moving, setMoving] = useState(false);
   /** کلیپ آمادهٔ پخش هر گوینده (شناسهٔ گوینده → نشانی امضاشده). */
   const [clipUrls, setClipUrls] = useState<Record<number, string>>({});
   const [loadingClip, setLoadingClip] = useState<number | null>(null);
@@ -773,19 +779,19 @@ function AudioAndTranscript({
   const [nameDrafts, setNameDrafts] = useState<Record<number, string>>({});
   const [savingName, setSavingName] = useState<number | null>(null);
   /**
-   * درصد پیشرفت بارگذاری صوت.
+   * درصد پیشرفت بارگذاری هر فایل صوتی (نام فایل → درصد؛ ۱۰۰ = کامل، ۱- = ناموفق).
    *
-   * `null` یعنی بارگذاری در جریان نیست. فایل صوتی معمولاً چند ده مگابایت است، پس
-   * بدون این نوار کاربر هیچ نشانه‌ای از پیشرفت نمی‌بیند و تصور می‌کند برنامه هنگ کرده.
+   * فایل صوتی معمولاً چند ده مگابایت است، پس بدون این نوار کاربر هیچ نشانه‌ای از
+   * پیشرفت نمی‌بیند و تصور می‌کند برنامه هنگ کرده.
    */
-  const [audioPercent, setAudioPercent] = useState<number | null>(null);
+  const [audioPercent, setAudioPercent] = useState<Record<string, number>>({});
   /** کنترل‌گر لغو تا کاربر بتواند بارگذاری طولانی را متوقف کند. */
   const [audioAbort, setAudioAbort] = useState<AbortController | null>(null);
   const limits = getUploadLimits();
 
   const upload = async () => {
-    if (!file) {
-      toast.error('یک فایل صوتی انتخاب کنید.');
+    if (files.length === 0) {
+      toast.error('یک یا چند فایل صوتی انتخاب کنید.');
       return;
     }
     if (!consent) {
@@ -795,28 +801,69 @@ function AudioAndTranscript({
     const controller = new AbortController();
     setAudioAbort(controller);
     setUploading(true);
-    // از صفر شروع می‌شود تا نوار بی‌درنگ (پیش از رسیدن اولین رویداد شبکه) دیده شود.
-    setAudioPercent(0);
+    // همهٔ فایل‌ها از ابتدا «در نوبت» (صفر درصد) دیده می‌شوند تا نوار بی‌درنگ باشد.
+    setAudioPercent(Object.fromEntries(files.map((file) => [file.name, 0])));
+    let uploaded = 0;
+    let failed = 0;
     try {
-      await uploadMeetingAudio(detail.meeting.id, file, consent, {
-        signal: controller.signal,
-        onProgress: (progress) => setAudioPercent(progress.percent),
-      });
-      toast.success('فایل صوتی ثبت شد. اکنون می‌توانید رونویسی را آغاز کنید.');
-      setFile(null);
-      setConsent(false);
-      setAudioPercent(null);
-      await onDone();
-    } catch (err) {
-      setAudioPercent(null);
+      for (const file of files) {
+        try {
+          await uploadMeetingAudio(detail.meeting.id, file, consent, {
+            signal: controller.signal,
+            onProgress: (progress) =>
+              setAudioPercent((prev) => ({ ...prev, [file.name]: progress.percent })),
+          });
+          uploaded += 1;
+          setAudioPercent((prev) => ({ ...prev, [file.name]: 100 }));
+        } catch (err) {
+          failed += 1;
+          setAudioPercent((prev) => ({ ...prev, [file.name]: -1 }));
+          if (controller.signal.aborted) break;
+          toast.error(errorMessage(err, `بارگذاری فایل «${file.name}» ناموفق بود.`));
+        }
+      }
       if (controller.signal.aborted) {
         toast.info('بارگذاری فایل صوتی لغو شد.');
+      } else if (failed === 0) {
+        toast.success(
+          uploaded > 1
+            ? `${toPersianDigits(uploaded)} فایل صوتی ثبت شد. ترتیب آن‌ها را در فهرست بالا تعیین کنید.`
+            : 'فایل صوتی ثبت شد. اکنون می‌توانید رونویسی را آغاز کنید.',
+        );
       } else {
-        toast.error(errorMessage(err, 'بارگذاری فایل صوتی ناموفق بود.'));
+        toast.success(
+          `${toPersianDigits(uploaded)} فایل ثبت شد و ${toPersianDigits(failed)} فایل ناموفق بود.`,
+        );
       }
+      await onDone();
     } finally {
+      setFiles([]);
+      setConsent(false);
+      setAudioPercent({});
       setAudioAbort(null);
       setUploading(false);
+    }
+  };
+
+  /** جابه‌جایی فایل در فهرست و ثبت ترتیب تازه روی سرور. */
+  const moveRecording = async (index: number, delta: number) => {
+    const ordered = [...detail.recordings];
+    const target = index + delta;
+    if (target < 0 || target >= ordered.length) return;
+    const [item] = ordered.splice(index, 1);
+    ordered.splice(target, 0, item);
+    setMoving(true);
+    try {
+      await api.reorderRecordings(
+        detail.meeting.id,
+        ordered.map((recording) => recording.id),
+      );
+      toast.success('ترتیب فایل‌های صوتی به‌روزرسانی شد؛ متن نهایی به همین ترتیب ساخته می‌شود.');
+      await onDone();
+    } catch (err) {
+      toast.error(errorMessage(err, 'به‌روزرسانی ترتیب فایل‌ها ناموفق بود.'));
+    } finally {
+      setMoving(false);
     }
   };
 
@@ -885,11 +932,15 @@ function AudioAndTranscript({
 
   /** دانلود متن رونویسی بدون زمان‌بندی اما با درج نام گوینده. */
   const downloadTranscriptNoTime = () => {
-    const content = segments.length
-      ? segments
-          .map((segment) => `${speakerNameOf(segment.speaker) || 'بدون گوینده'}:\n${segment.text}`)
-          .join('\n\n')
-      : transcript?.full_text || '';
+    // متن نهایی چندفایلی به‌صورت متن پیوسته دانلود می‌شود.
+    const multipleFiles = (transcript?.file_count ?? 1) > 1;
+    const content = multipleFiles
+      ? transcript?.full_text || ''
+      : segments.length
+        ? segments
+            .map((segment) => `${speakerNameOf(segment.speaker) || 'بدون گوینده'}:\n${segment.text}`)
+            .join('\n\n')
+        : transcript?.full_text || '';
     const blob = new Blob(['\ufeff' + content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -946,11 +997,44 @@ function AudioAndTranscript({
               نگه‌داری پاک می‌شود.
             </p>
           )}
-          {detail.recordings.map((recording) => (
+          {detail.recordings.map((recording, index) => (
             <div key={recording.id} className="rounded-md border border-border p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-sm font-medium">{recording.file_name}</span>
-                <Badge variant="outline">{formatMinutes(recording.duration_seconds)}</Badge>
+                <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                  <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[10px]">
+                    فایل {toPersianDigits(index + 1)}
+                  </Badge>
+                  <span className="break-all">{recording.file_name}</span>
+                </span>
+                <div className="flex items-center gap-1">
+                  {canManage && detail.recordings.length > 1 && (
+                    <>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7"
+                        disabled={index === 0 || moving}
+                        title="انتقال به ابتدای فهرست (قبل)"
+                        aria-label="انتقال به قبل"
+                        onClick={() => moveRecording(index, -1)}
+                      >
+                        <ArrowUp className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7"
+                        disabled={index === detail.recordings.length - 1 || moving}
+                        title="انتقال به انتهای فهرست (بعد)"
+                        aria-label="انتقال به بعد"
+                        onClick={() => moveRecording(index, 1)}
+                      >
+                        <ArrowDown className="h-3.5 w-3.5" />
+                      </Button>
+                    </>
+                  )}
+                  <Badge variant="outline">{formatMinutes(recording.duration_seconds)}</Badge>
+                </div>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
                 حجم: {toPersianDigits(Math.round(recording.size_bytes / 1024 / 1024))} مگابایت •
@@ -989,17 +1073,28 @@ function AudioAndTranscript({
               </div>
             </div>
           ))}
+          {detail.recordings.length > 1 && (
+            <p className="text-xs text-muted-foreground">
+              متن نهایی رونویسی و صورت‌جلسه از ترکیب فایل‌ها به همین ترتیب تهیه می‌شود؛ برای
+              تغییر ترتیب از فلش‌های کنار هر فایل استفاده کنید.
+            </p>
+          )}
 
           {canManage && (
             <>
               <Separator />
               <div className="space-y-3">
-                <Label htmlFor="audio-file">بارگذاری فایل صوتی</Label>
+                <Label htmlFor="audio-file">بارگذاری فایل‌های صوتی</Label>
                 <Input
                   id="audio-file"
                   type="file"
                   accept="audio/*"
-                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                  multiple
+                  onChange={(event) => {
+                    const picked = Array.from(event.target.files ?? []);
+                    if (picked.length > 0) setFiles(picked);
+                    event.target.value = '';
+                  }}
                 />
                 <label className="flex items-start gap-2 text-xs text-muted-foreground">
                   <Checkbox
@@ -1017,26 +1112,56 @@ function AudioAndTranscript({
                   {toPersianDigits(limits.maxAudioMb)} مگابایت
                 </p>
 
-                {/* نوار پیشرفت واقعی بارگذاری صوت با درصد و دکمهٔ لغو */}
-                {audioPercent !== null && (
-                  <div className="space-y-1 rounded-md border border-border p-3">
-                    <div className="flex items-center justify-between gap-2 text-xs">
-                      <span className="truncate font-medium">{file?.name || 'فایل صوتی'}</span>
-                      <span className="shrink-0 text-muted-foreground">
-                        {toPersianDigits(audioPercent)}٪
-                      </span>
-                    </div>
-                    <Progress value={audioPercent} className="h-2 w-full" />
+                {/* فهرست فایل‌های در نوبت بارگذاری */}
+                {files.length > 0 && !uploading && (
+                  <div className="space-y-1">
+                    {files.map((item) => (
+                      <p
+                        key={`${item.name}-${item.size}`}
+                        className="flex items-center gap-2 text-xs text-muted-foreground"
+                      >
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary/60" />
+                        <span className="truncate" dir="auto">
+                          {item.name}
+                        </span>
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                {/* نوار پیشرفت واقعی بارگذاری هر فایل با درصد و دکمهٔ لغو */}
+                {uploading && (
+                  <div className="space-y-2 rounded-md border border-border p-3">
+                    {files.map((item) => {
+                      const percent = audioPercent[item.name];
+                      const isFailed = percent === -1;
+                      const isDone = percent === 100;
+                      return (
+                        <div key={`${item.name}-${item.size}`} className="space-y-1">
+                          <div className="flex items-center justify-between gap-2 text-xs">
+                            <span className="truncate font-medium" dir="auto">
+                              {item.name}
+                            </span>
+                            <span className="shrink-0 text-muted-foreground">
+                              {isDone
+                                ? 'بارگذاری شد'
+                                : isFailed
+                                  ? 'ناموفق'
+                                  : `${toPersianDigits(percent ?? 0)}٪`}
+                            </span>
+                          </div>
+                          <Progress value={isFailed ? 100 : percent ?? 0} className="h-2 w-full" />
+                        </div>
+                      );
+                    })}
                     <p className="text-[11px] text-muted-foreground">
-                      {audioPercent >= 100
-                        ? 'بارگذاری کامل شد؛ در حال ثبت اطلاعات فایل…'
-                        : 'در حال ارسال فایل صوتی به فضای خصوصی سازمان…'}
+                      فایل‌ها به‌ترتیب ارسال می‌شوند؛ ترتیب نهایی را از فهرست بالا تعیین کنید.
                     </p>
                   </div>
                 )}
 
                 <div className="flex flex-wrap gap-2">
-                  <Button onClick={upload} disabled={uploading}>
+                  <Button onClick={upload} disabled={uploading || files.length === 0}>
                     {uploading ? 'در حال بارگذاری…' : 'بارگذاری صوت'}
                   </Button>
                   {uploading && audioAbort && (
@@ -1056,18 +1181,16 @@ function AudioAndTranscript({
       </Card>
 
       <div className="space-y-4">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">وضعیت کارهای رونویسی</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {transcribeJobs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">کاری ثبت نشده است.</p>
-            ) : (
-              transcribeJobs.map((job) => <JobRow key={job.id} job={job} onRetry={retry} />)
-            )}
-          </CardContent>
-        </Card>
+        {/* متن رونویسی بالای فهرست گوینده‌ها قرار می‌گیرد */}
+        <TranscriptCard
+          transcript={transcript}
+          segments={segments}
+          hasSpeakerSegments={hasSpeakerSegments}
+          speakerNameOf={speakerNameOf}
+          formatMs={formatMs}
+          downloadTranscriptNoTime={downloadTranscriptNoTime}
+          query={query}
+        />
 
         {speakers.length > 0 && (
           <Card>
@@ -1140,77 +1263,127 @@ function AudioAndTranscript({
 
         <Card>
           <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <CardTitle className="text-base">متن رونویسی</CardTitle>
-              {transcript && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="!bg-transparent gap-2"
-                  onClick={downloadTranscriptNoTime}
-                >
-                  <Download className="h-4 w-4" />
-                  دانلود متن (بدون زمان)
-                </Button>
-              )}
-            </div>
+            <CardTitle className="text-base">وضعیت کارهای رونویسی</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {!transcript ? (
-              <p className="text-sm text-muted-foreground">
-                هنوز رونویسی‌ای برای این جلسه ثبت نشده است.
-              </p>
+            {transcribeJobs.length === 0 ? (
+              <p className="text-sm text-muted-foreground">کاری ثبت نشده است.</p>
             ) : (
-              <>
-                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                  <Badge variant="outline">{transcript.provider}</Badge>
-                  <span>مدت: {formatMinutes(transcript.duration_seconds)}</span>
-                  {transcript.known_word_ratio !== null && (
-                    <span>
-                      نسبت واژه‌های شناخته‌شده:{' '}
-                      {toPersianDigits(Math.round((transcript.known_word_ratio || 0) * 100))}٪
-                    </span>
-                  )}
-                </div>
-                {transcript.known_word_ratio !== null && transcript.known_word_ratio < 0.8 && (
-                  <p className="rounded-md bg-accent p-2 text-xs text-accent-foreground">
-                    کیفیت صوت پایین به نظر می‌رسد؛ پیش از تأیید صورتجلسه، متن را با دقت بازبینی
-                    کنید.
-                  </p>
-                )}
-                {hasSpeakerSegments ? (
-                  <div className="max-h-96 space-y-2 overflow-y-auto rounded-md border border-border p-3">
-                    {segments.map((segment, index) => (
-                      <div key={index} className="text-sm leading-7">
-                        <span className="me-2 inline-flex items-center gap-1 align-top">
-                          <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">
-                            {speakerNameOf(segment.speaker) || 'بدون گوینده'}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground">
-                            {formatMs(segment.start_ms)}
-                          </span>
-                        </span>
-                        <span className="whitespace-pre-wrap">
-                          <HighlightText text={segment.text} query={query} />
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-md border border-border p-3 text-sm leading-7">
-                    {transcript.full_text ? (
-                      <HighlightText text={transcript.full_text} query={query} />
-                    ) : (
-                      'متنی ثبت نشده است.'
-                    )}
-                  </div>
-                )}
-              </>
+              transcribeJobs.map((job) => <JobRow key={job.id} job={job} onRetry={retry} />)
             )}
           </CardContent>
         </Card>
       </div>
     </div>
+  );
+}
+
+/**
+ * کارت متن رونویسی: متن نهایی از ترکیب فایل‌های رونویسی‌شده به ترتیب کاربر ساخته
+ * می‌شود؛ فایل‌های رونویسی‌نشده در متن نهایی نقشی ندارند.
+ */
+function TranscriptCard({
+  transcript,
+  segments,
+  hasSpeakerSegments,
+  speakerNameOf,
+  formatMs,
+  downloadTranscriptNoTime,
+  query,
+}: {
+  transcript: Transcript | null;
+  segments: TranscriptSegment[];
+  hasSpeakerSegments: boolean;
+  speakerNameOf: (key?: string) => string;
+  formatMs: (ms?: number) => string;
+  downloadTranscriptNoTime: () => void;
+  query?: string;
+}) {
+  const fileCount = transcript?.file_count ?? 0;
+  const totalFileCount = transcript?.total_file_count ?? 0;
+  const multipleFiles = fileCount > 1;
+  const pendingFiles = Math.max(totalFileCount - fileCount, 0);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="text-base">متن رونویسی</CardTitle>
+          {transcript && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="!bg-transparent gap-2"
+              onClick={downloadTranscriptNoTime}
+            >
+              <Download className="h-4 w-4" />
+              دانلود متن (بدون زمان)
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {!transcript ? (
+          <p className="text-sm text-muted-foreground">
+            هنوز رونویسی‌ای برای این جلسه ثبت نشده است.
+          </p>
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <Badge variant="outline">{transcript.provider}</Badge>
+              <span>مدت: {formatMinutes(transcript.duration_seconds)}</span>
+              {transcript.known_word_ratio !== null && (
+                <span>
+                  نسبت واژه‌های شناخته‌شده:{' '}
+                  {toPersianDigits(Math.round((transcript.known_word_ratio || 0) * 100))}٪
+                </span>
+              )}
+            </div>
+            {multipleFiles && (
+              <p className="rounded-md bg-accent p-2 text-xs text-accent-foreground">
+                متن نهایی از ترکیب {toPersianDigits(fileCount)} فایل رونویسی‌شده به ترتیب
+                مشخص‌شده ساخته شده است.
+                {pendingFiles > 0 &&
+                  ` هنوز ${toPersianDigits(pendingFiles)} فایل رونویسی نشده؛ صورت‌جلسه از همین متن موجود تهیه می‌شود.`}
+              </p>
+            )}
+            {transcript.known_word_ratio !== null && transcript.known_word_ratio < 0.8 && (
+              <p className="rounded-md bg-accent p-2 text-xs text-accent-foreground">
+                کیفیت صوت پایین به نظر می‌رسد؛ پیش از تأیید صورتجلسه، متن را با دقت بازبینی
+                کنید.
+              </p>
+            )}
+            {hasSpeakerSegments && !multipleFiles ? (
+              <div className="max-h-96 space-y-2 overflow-y-auto rounded-md border border-border p-3">
+                {segments.map((segment, index) => (
+                  <div key={index} className="text-sm leading-7">
+                    <span className="me-2 inline-flex items-center gap-1 align-top">
+                      <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">
+                        {speakerNameOf(segment.speaker) || 'بدون گوینده'}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {formatMs(segment.start_ms)}
+                      </span>
+                    </span>
+                    <span className="whitespace-pre-wrap">
+                      <HighlightText text={segment.text} query={query} />
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-md border border-border p-3 text-sm leading-7">
+                {transcript.full_text ? (
+                  <HighlightText text={transcript.full_text} query={query} />
+                ) : (
+                  'متنی ثبت نشده است.'
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -18,7 +18,7 @@ from dependencies.app_auth import get_workspace_user as get_current_user
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from schemas.auth import UserResponse
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.meeting_invites import send_meeting_invites
@@ -474,7 +474,14 @@ async def meeting_detail(
         db, Participants, ctx, Participants.meeting_id == meeting_id, order_by=Participants.id
     )
     recordings = await list_owned(
-        db, Recordings, ctx, Recordings.meeting_id == meeting_id, order_by=Recordings.id.desc()
+        db,
+        Recordings,
+        ctx,
+        Recordings.meeting_id == meeting_id,
+        order_by=(
+            func.coalesce(Recordings.position, 1_000_000).asc(),
+            Recordings.id.asc(),
+        ),
     )
     decisions = await list_owned(
         db, Decisions, ctx, Decisions.meeting_id == meeting_id, order_by=Decisions.position

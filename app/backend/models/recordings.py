@@ -10,6 +10,8 @@ class Recordings(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
     organization_id = Column(Integer, index=True, nullable=False)
     meeting_id = Column(Integer, index=True, nullable=False)
+    # ترتیب فایل در جلسه (کاربر مشخص می‌کند)؛ مبنای متن نهایی رونویسی و صورتجلسه
+    position = Column(Integer, nullable=True)
     bucket_name = Column(String, nullable=True)
     object_key = Column(String, nullable=False)
     file_name = Column(String, nullable=True)

@@ -176,6 +176,8 @@ export interface Participant {
 export interface Recording {
   id: number;
   meeting_id: number;
+  /** ترتیب فایل در جلسه (تعیین‌شده توسط کاربر). */
+  position?: number;
   bucket_name: string;
   object_key: string;
   file_name: string;
@@ -226,6 +228,10 @@ export interface Transcript {
   job_id: number | null;
   created_at: string;
   segments?: TranscriptSegment[];
+  /** متن نهایی: تعداد فایل‌های رونویسی‌شده‌ای که ترکیب شده‌اند. */
+  file_count?: number;
+  /** کل فایل‌های صوتی جلسه (برای نمایش فایل‌های هنوز رونویسی‌نشده). */
+  total_file_count?: number;
 }
 
 export interface Minutes {
@@ -636,6 +642,12 @@ export const api = {
     ),
   registerRecording: (payload: Record<string, unknown>) =>
     invoke<Recording>(`${AI}/recordings`, 'POST', payload),
+  /** تعیین ترتیب فایل‌های صوتی جلسه (مبنای متن نهایی رونویسی و صورتجلسه). */
+  reorderRecordings: (meetingId: number, recordingIds: number[]) =>
+    invoke<{ success: boolean; order: number[] }>(`${AI}/recordings/order`, 'PUT', {
+      meeting_id: meetingId,
+      recording_ids: recordingIds,
+    }),
   recordingPlayUrl: (id: number) =>
     invoke<{ download_url: string; expires_at: string }>(`${AI}/recordings/${id}/play-url`),
   deleteRecording: (id: number) =>

@@ -107,6 +107,13 @@ class StartTranscribeIn(BaseModel):
     recording_id: int
 
 
+class ReorderRecordingsIn(BaseModel):
+    """ترتیب دلخواه کاربر برای فایل‌های صوتی جلسه (مبنای متن نهایی رونویسی)."""
+
+    meeting_id: int
+    recording_ids: List[int] = Field(..., min_length=1)
+
+
 class StartMinutesIn(BaseModel):
     meeting_id: int
 
@@ -145,18 +152,22 @@ async def _ensure_capacity(db: AsyncSession, ctx: TenantContext) -> None:
 
 
 async def _find_active_job(
-    db: AsyncSession, ctx: TenantContext, job_type: str, meeting_id: int
+    db: AsyncSession,
+    ctx: TenantContext,
+    job_type: str,
+    meeting_id: int,
+    recording_id: Optional[int] = None,
 ) -> Optional[Jobs]:
-    result = await db.execute(
-        select(Jobs)
-        .where(
-            Jobs.organization_id == ctx.organization_id,
-            Jobs.meeting_id == meeting_id,
-            Jobs.job_type == job_type,
-            Jobs.status.in_(ACTIVE_JOB_STATUSES),
-        )
-        .order_by(Jobs.id.desc())
+    stmt = select(Jobs).where(
+        Jobs.organization_id == ctx.organization_id,
+        Jobs.meeting_id == meeting_id,
+        Jobs.job_type == job_type,
+        Jobs.status.in_(ACTIVE_JOB_STATUSES),
     )
+    if recording_id is not None:
+        # رونویسی هر فایل مستقل است؛ چند فایل می‌توانند همزمان در صف باشند.
+        stmt = stmt.where(Jobs.recording_id == recording_id)
+    result = await db.execute(stmt.order_by(Jobs.id.desc()))
     return result.scalars().first()
 
 
@@ -231,9 +242,19 @@ async def register_recording(
             "تنظیمات سازمان › سقف‌های بارگذاری افزایش دهد."
         )
 
+    # ترتیب پیش‌فرض: انتهای فهرست؛ کاربر می‌تواند ترتیب را جابه‌جا کند.
+    position_result = await db.execute(
+        select(func.coalesce(func.max(Recordings.position), 0)).where(
+            Recordings.organization_id == ctx.organization_id,
+            Recordings.meeting_id == payload.meeting_id,
+        )
+    )
+    next_position = int(position_result.scalar_one() or 0) + 1
+
     recording = Recordings(
         organization_id=ctx.organization_id,
         meeting_id=payload.meeting_id,
+        position=next_position,
         bucket_name=AUDIO_BUCKET,
         object_key=payload.object_key,
         file_name=payload.file_name,
@@ -252,6 +273,39 @@ async def register_recording(
     await audit(db, ctx, "recording.uploaded", "recording", None, payload.file_name)
     await db.commit()
     return dump(recording, core.RECORDING_FIELDS)
+
+
+@router.put("/recordings/order")
+async def reorder_recordings(
+    payload: ReorderRecordingsIn,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """تعیین ترتیب فایل‌های صوتی جلسه؛ متن نهایی رونویسی به همین ترتیب ساخته می‌شود."""
+    ctx = await resolve_context(db, current_user)
+    meeting = await get_owned(db, Meetings, payload.meeting_id, ctx, "جلسه")
+    require_meeting_manager(ctx, meeting)
+
+    requested = list(dict.fromkeys(payload.recording_ids))
+    recordings_result = await db.execute(
+        select(Recordings).where(
+            Recordings.organization_id == ctx.organization_id,
+            Recordings.meeting_id == payload.meeting_id,
+            Recordings.id.in_(requested),
+        )
+    )
+    owned = {int(row.id): row for row in recordings_result.scalars().all()}
+    if len(owned) != len(requested):
+        raise bad_request("فهرست فایل‌ها ناقص است یا فایلی به این جلسه تعلق ندارد.")
+
+    for position, recording_id in enumerate(requested, start=1):
+        owned[recording_id].position = position
+    await audit(
+        db, ctx, "recordings.reordered", "meeting", int(meeting.id),
+        detail="ترتیب فایل‌های صوتی جلسه تغییر کرد",
+    )
+    await db.commit()
+    return {"success": True, "order": requested}
 
 
 @router.get("/recordings/{recording_id}/play-url")
@@ -308,7 +362,11 @@ async def start_transcribe(
     meeting = await get_owned(db, Meetings, int(recording.meeting_id), ctx, "جلسه")
     require_meeting_manager(ctx, meeting)
 
-    running = await _find_active_job(db, ctx, JOB_TRANSCRIBE, int(meeting.id))
+    # هر فایل صوتی می‌تواند رونویسی مستقل همزمان داشته باشد؛ کارِ فعالِ همین فایل
+    # بازگردانده می‌شود تا دوباره‌کاری نشود.
+    running = await _find_active_job(
+        db, ctx, JOB_TRANSCRIBE, int(meeting.id), recording_id=int(recording.id)
+    )
     if running is not None:
         await db.commit()
         return dump(running, JOB_FIELDS)
@@ -324,6 +382,7 @@ async def start_transcribe(
     job = Jobs(
         organization_id=ctx.organization_id,
         meeting_id=int(meeting.id),
+        recording_id=int(recording.id),
         job_type=JOB_TRANSCRIBE,
         status=JOB_QUEUED,
         progress=0,
@@ -578,19 +637,19 @@ async def meeting_jobs(
     ctx = await resolve_context(db, current_user)
     await get_owned(db, Meetings, meeting_id, ctx, "جلسه")
     jobs = await list_owned(db, Jobs, ctx, Jobs.meeting_id == meeting_id, order_by=Jobs.id.desc(), limit=20)
-    transcript_result = await db.execute(
-        select(Transcripts)
-        .where(
-            Transcripts.organization_id == ctx.organization_id,
-            Transcripts.meeting_id == meeting_id,
+    # متن نهایی: ترکیب رونویسی فایل‌های انجام‌شده به ترتیب مشخص‌شدهٔ کاربر
+    transcripts = await _transcripts_in_order(db, ctx.organization_id, meeting_id)
+    recording_count_result = await db.execute(
+        select(func.count(Recordings.id)).where(
+            Recordings.organization_id == ctx.organization_id,
+            Recordings.meeting_id == meeting_id,
         )
-        .order_by(Transcripts.id.desc())
     )
-    transcript = transcript_result.scalars().first()
+    total_recordings = int(recording_count_result.scalar_one() or 0)
     await db.commit()
     return {
         "jobs": [dump(job, JOB_FIELDS) for job in jobs],
-        "transcript": core.transcript_payload(transcript) if transcript else None,
+        "transcript": _assembled_transcript_payload(transcripts, total_recordings),
     }
 
 
@@ -610,6 +669,66 @@ async def _latest_transcript(db: AsyncSession, organization_id: int, meeting_id:
         .order_by(Transcripts.id.desc())
     )
     return result.scalars().first()
+
+
+async def _transcripts_in_order(
+    db: AsyncSession, organization_id: int, meeting_id: int
+) -> List[Transcripts]:
+    """رونویسی‌های جلسه به ترتیب فایل‌ها (ترتیب کاربر)؛ فایل بدون ترتیب در انتها."""
+    result = await db.execute(
+        select(Transcripts)
+        .join(Recordings, Recordings.id == Transcripts.recording_id, isouter=True)
+        .where(
+            Transcripts.organization_id == organization_id,
+            Transcripts.meeting_id == meeting_id,
+        )
+        .order_by(
+            func.coalesce(Recordings.position, 1_000_000).asc(),
+            Transcripts.id.asc(),
+        )
+    )
+    return list(result.scalars().all())
+
+
+def _assembled_transcript_payload(
+    transcripts: List[Transcripts], total_recordings: int
+) -> Optional[Dict[str, Any]]:
+    """متن نهایی رونویسی = ترکیب متن فایل‌های رونویسی‌شده به ترتیب کاربر.
+
+    فایل‌هایی که هنوز رونویسی نشده‌اند در این ترکیب نقشی ندارند؛ صورتجلسه هم از
+    همین متن نهایی ساخته می‌شود.
+    """
+    used = [t for t in transcripts if (t.full_text or "").strip()]
+    if not used:
+        return None
+    full_text = "\n\n".join((t.full_text or "").strip() for t in used)
+    segments: List[Dict[str, Any]] = []
+    for row in used:
+        try:
+            segments.extend(json.loads(row.segments_json or "[]"))
+        except (TypeError, ValueError):
+            continue
+    total_words = sum(int(t.stats_words or 0) for t in used)
+    known_words = sum(int(t.stats_known_words or 0) for t in used)
+    first = used[0]
+    return {
+        "id": int(first.id),
+        "meeting_id": int(first.meeting_id),
+        "recording_id": int(first.recording_id or 0) if len(used) == 1 else None,
+        "provider": first.provider or "",
+        "model": first.model or "",
+        "full_text": full_text,
+        "duration_seconds": sum(int(t.duration_seconds or 0) for t in used),
+        "known_word_ratio": round(known_words / total_words, 4) if total_words > 0 else None,
+        "stats_words": total_words,
+        "stats_known_words": known_words,
+        "job_id": None,
+        "created_at": core.iso_utc(first.created_at) if first.created_at else "",
+        "segments": segments,
+        # تعداد فایل‌های رونویسی‌شده و کل فایل‌های جلسه (برای نمایش وضعیت)
+        "file_count": len(used),
+        "total_file_count": total_recordings,
+    }
 
 
 @router.get("/meetings/{meeting_id}/speakers")
@@ -945,13 +1064,9 @@ async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:
         await _fail_job(session, job, "جلسهٔ مرتبط با این کار یافت نشد.")
         return
 
-    transcript_result = await session.execute(
-        select(Transcripts)
-        .where(Transcripts.organization_id == organization_id, Transcripts.meeting_id == meeting_id)
-        .order_by(Transcripts.id.asc())
-    )
-    transcripts = list(transcript_result.scalars().all())
-    # همهٔ رونویسی‌های جلسه (چند فایل صوتی) برای تولید صورتجلسه ادغام می‌شوند.
+    # همهٔ رونویسی‌های جلسه (چند فایل صوتی) به ترتیب مشخص‌شدهٔ کاربر ادغام می‌شوند؛
+    # فایل‌های رونویسی‌نشده نقشی در متن نهایی ندارند.
+    transcripts = await _transcripts_in_order(session, organization_id, meeting_id)
     merged_text = "\n\n".join(
         (t.full_text or "").strip() for t in transcripts if (t.full_text or "").strip()
     )

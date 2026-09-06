@@ -10,6 +10,8 @@ class Jobs(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
     organization_id = Column(Integer, index=True, nullable=False)
     meeting_id = Column(Integer, index=True, nullable=True)
+    # فایل صوتیِ هدف کار رونویسی (برای چند فایل صوتی در یک جلسه)
+    recording_id = Column(Integer, index=True, nullable=True)
     job_type = Column(String, nullable=False)
     status = Column(String, nullable=False)
     progress = Column(Integer, nullable=True)

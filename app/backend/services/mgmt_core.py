@@ -544,6 +544,7 @@ PARTICIPANT_FIELDS = [
 RECORDING_FIELDS = [
     "id",
     "meeting_id",
+    "position",
     "bucket_name",
     "object_key",
     "file_name",
