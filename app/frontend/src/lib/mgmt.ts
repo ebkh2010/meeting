@@ -13,11 +13,22 @@ type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
  *  detail) به رشته تبدیل می‌شوند تا رندر React با شیء/آرایه نشکند. */
 export function errorMessage(error: unknown, fallback = 'انجام درخواست ناموفق بود.'): string {
   const candidate = error as {
-    data?: { detail?: unknown };
-    response?: { data?: { detail?: unknown } };
+    data?: { detail?: unknown; message?: unknown; error?: unknown };
+    response?: {
+      status?: number;
+      data?: { detail?: unknown; message?: unknown; error?: unknown };
+    };
     message?: unknown;
+    errMsg?: unknown;
   };
-  const detail = candidate?.data?.detail ?? candidate?.response?.data?.detail;
+  const detail =
+    candidate?.data?.detail ??
+    candidate?.response?.data?.detail ??
+    candidate?.data?.message ??
+    candidate?.response?.data?.message ??
+    candidate?.data?.error ??
+    candidate?.response?.data?.error ??
+    candidate?.errMsg;
   if (Array.isArray(detail)) {
     const parts = detail
       .map((item) =>
@@ -30,6 +41,10 @@ export function errorMessage(error: unknown, fallback = 'انجام درخواس
   }
   if (typeof detail === 'string' && detail) return detail;
   if (typeof candidate?.message === 'string' && candidate.message) return candidate.message;
+  const status = candidate?.response?.status;
+  if (typeof status === 'number' && status >= 400) {
+    return `${fallback} (کد خطا: ${toPersianDigits(status)})`;
+  }
   return fallback;
 }
 
@@ -856,10 +871,45 @@ export function readVideoDuration(file: File): Promise<number> {
 /** پسوندهای ویدیوی مجاز در فرانت (هم‌ارز فهرست سرور). */
 export const VIDEO_EXTENSIONS = ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v', 'mpeg', 'mpg', 'wmv', '3gp'];
 
-/** نوع رسانهٔ فایل بر اساس پسوند نام؛ پیش‌فرض audio. */
-export function mediaKindOf(fileName: string): 'audio' | 'video' {
+/** پسوندهای صوتی مجاز در فرانت (هم‌ارز فهرست سرور). */
+export const AUDIO_EXTENSIONS = ['mp3', 'wav', 'm4a', 'ogg', 'webm', 'aac', 'flac'];
+
+/** نوع رسانهٔ فایل بر اساس پسوند نام؛ پسوند ناشناخته «نامعتبر» است. */
+export function mediaKindOf(fileName: string): 'audio' | 'video' | 'invalid' {
   const extension = (fileName.split('.').pop() || '').toLowerCase();
-  return VIDEO_EXTENSIONS.includes(extension) ? 'video' : 'audio';
+  if (VIDEO_EXTENSIONS.includes(extension)) return 'video';
+  if (AUDIO_EXTENSIONS.includes(extension)) return 'audio';
+  return 'invalid';
+}
+
+/**
+ * اعتبارسنجی فرمت/حجم پیش از هر آپلود تا کاربر دقیقاً بداند چرا فایل قابل
+ * بارگذاری نیست (هیچ شکست بی‌صدا).
+ */
+export function validateMediaFile(
+  file: File,
+  limits: {
+    maxAudioMb: number;
+    maxAudioMinutes: number;
+    maxVideoMb: number;
+  },
+): string | null {
+  const kind = mediaKindOf(file.name);
+  if (kind === 'invalid') {
+    return (
+      `فرمت فایل «${file.name}» پشتیبانی نمی‌شود. فرمت‌های مجاز صوت: ` +
+      `${AUDIO_EXTENSIONS.join('، ')} — ویدیو: ${VIDEO_EXTENSIONS.join('، ')}.`
+    );
+  }
+  if (!file.size) return `فایل «${file.name}» خالی است و بارگذاری نمی‌شود.`;
+  const maxMb = kind === 'video' ? limits.maxVideoMb : limits.maxAudioMb;
+  if (file.size > maxMb * 1024 * 1024) {
+    return (
+      `حجم فایل ${kind === 'video' ? 'ویدیو' : 'صوتی'} «${file.name}» ` +
+      `(${formatFileSize(file.size)}) بیشتر از سقف ${toPersianDigits(maxMb)} مگابایت است.`
+    );
+  }
+  return null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1083,6 +1133,21 @@ function putWithProgress(
         resolve();
         return;
       }
+      // استخراج دلیل از بدنهٔ پاسخ (JSON یا متن کوتاه) تا خطا دقیق و قابل فهم باشد.
+      let reason = '';
+      try {
+        const body = request.responseText || '';
+        if (body) {
+          try {
+            const parsed = JSON.parse(body) as { detail?: unknown; message?: unknown };
+            reason = String(parsed.detail ?? parsed.message ?? '');
+          } catch {
+            if (body.length < 300 && !body.includes('<')) reason = body;
+          }
+        }
+      } catch {
+        reason = '';
+      }
       if (request.status === 413) {
         reject(
           new Error(
@@ -1093,7 +1158,8 @@ function putWithProgress(
       }
       reject(
         new Error(
-          `بارگذاری «${file.name}» در فضای ذخیره‌سازی ناموفق بود (کد ${request.status}). دوباره تلاش کنید.`,
+          `بارگذاری «${file.name}» در فضای ذخیره‌سازی ناموفق بود (کد ${request.status})` +
+            `${reason ? ` — ${reason.slice(0, 200)}` : ''}. دوباره تلاش کنید.`,
         ),
       );
     };
@@ -1154,43 +1220,33 @@ export function formatFileSize(bytes: number): string {
 /**
  * بارگذاری صوت/ویدیوی جلسه در باکت خصوصی با URL امضاشده و ثبت فراداده.
  *
- * برای ویدیو (``mediaKind='video'``) سامانه پس از ثبت، خودش صدا را با ffmpeg جدا
- * می‌کند و سپس همان مسیر رونویسی ادامه می‌یابد؛ سقف حجم ویدیو از ``maxVideoMb``
- * می‌آید و مدت آن پس از جداسازی روی سرور بررسی می‌شود.
+ * برای ویدیو سامانه پس از ثبت، خودش صدا را با ffmpeg جدا می‌کند و سپس همان
+ * مسیر رونویسی ادامه می‌یابد؛ سقف حجم ویدیو از ``maxVideoMb`` می‌آید و مدت آن
+ * پس از جداسازی روی سرور بررسی می‌شود. هر شکست (فرمت، حجم، مدت، شبکه، استوریج
+ * یا سرور) با پیام خطای روشن فارسی پرتاب می‌شود — هیچ شکست بی‌صدا نیست.
  */
 export async function uploadMeetingMedia(
   meetingId: number,
   file: File,
   consentAck: boolean,
-  mediaKind: 'audio' | 'video',
   options?: UploadOptions,
 ): Promise<Recording> {
-  if (!file.size) {
-    throw new Error(
-      `فایل ${mediaKind === 'video' ? 'ویدیوی' : 'صوتی'} «${file.name}» خالی است و بارگذاری نمی‌شود.`,
-    );
-  }
-  if (mediaKind === 'video') {
-    if (file.size > effectiveLimits.maxVideoBytes) {
-      throw new Error(
-        `حجم فایل ویدیو «${file.name}» (${formatFileSize(file.size)}) بیشتر از سقف ${toPersianDigits(
-          effectiveLimits.maxVideoMb,
-        )} مگابایت است.`,
-      );
-    }
-  } else if (file.size > effectiveLimits.maxAudioBytes) {
-    throw new Error(
-      `حجم فایل صوتی «${file.name}» (${formatFileSize(file.size)}) بیشتر از سقف ${toPersianDigits(
-        effectiveLimits.maxAudioMb,
-      )} مگابایت است.`,
-    );
-  }
+  const mediaKind = mediaKindOf(file.name);
+  const problem = validateMediaFile(file, {
+    maxAudioMb: effectiveLimits.maxAudioMb,
+    maxAudioMinutes: effectiveLimits.maxAudioMinutes,
+    maxVideoMb: effectiveLimits.maxVideoMb,
+  });
+  if (problem) throw new Error(problem);
+  // پس از validateMediaFile نوع حتماً audio یا video است.
+  const kind: 'audio' | 'video' = mediaKind === 'video' ? 'video' : 'audio';
+
   const durationSeconds =
-    mediaKind === 'video' ? await readVideoDuration(file) : await readAudioDuration(file);
+    kind === 'video' ? await readVideoDuration(file) : await readAudioDuration(file);
   // سقف مدت از تنظیمات سازمان می‌آید؛ پیام خطا پیش از آپلود نمایش داده می‌شود.
   // برای ویدیو، مدت پس از جداسازی صدا روی سرور هم بررسی می‌شود.
   if (
-    mediaKind === 'audio' &&
+    kind === 'audio' &&
     durationSeconds &&
     durationSeconds > effectiveLimits.maxAudioMinutes * 60
   ) {
@@ -1202,12 +1258,12 @@ export async function uploadMeetingMedia(
       )} دقیقه) است. مدیر سازمان می‌تواند این سقف را در تنظیمات سازمان افزایش دهد.`,
     );
   }
-  const contentType = file.type || (mediaKind === 'video' ? 'video/mp4' : 'audio/mpeg');
+  const contentType = file.type || (kind === 'video' ? 'video/mp4' : 'audio/mpeg');
   const signed = await api.createUploadUrl({
     meeting_id: meetingId,
     file_name: file.name,
     size_bytes: file.size,
-    media_kind: mediaKind,
+    media_kind: kind,
   });
   await putWithProgress(signed.upload_url, file, contentType, options);
   return api.registerRecording({
@@ -1218,7 +1274,7 @@ export async function uploadMeetingMedia(
     size_bytes: file.size,
     duration_seconds: durationSeconds,
     consent_ack: consentAck,
-    media_kind: mediaKind,
+    media_kind: kind,
   });
 }
 
@@ -1229,7 +1285,7 @@ export async function uploadMeetingAudio(
   consentAck: boolean,
   options?: UploadOptions,
 ): Promise<Recording> {
-  return uploadMeetingMedia(meetingId, file, consentAck, 'audio', options);
+  return uploadMeetingMedia(meetingId, file, consentAck, options);
 }
 
 /* ------------------------------------------------------------------ */

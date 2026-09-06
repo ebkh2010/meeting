@@ -75,8 +75,8 @@ import {
   RSVP_LABELS,
   SuggestedItems,
   toPersianDigits,
-  mediaKindOf,
   uploadMeetingMedia,
+  validateMediaFile,
   Transcript,
   TranscriptSegment,
 } from '@/lib/mgmt';
@@ -787,17 +787,43 @@ function AudioAndTranscript({
    * پیشرفت نمی‌بیند و تصور می‌کند برنامه هنگ کرده.
    */
   const [audioPercent, setAudioPercent] = useState<Record<string, number>>({});
+  /** دلیل ناموفق‌بودن هر فایل (نام فایل → پیام خطا) تا هیچ شکستی بی‌صدا نماند. */
+  const [audioErrors, setAudioErrors] = useState<Record<string, string>>({});
   /** کنترل‌گر لغو تا کاربر بتواند بارگذاری طولانی را متوقف کند. */
   const [audioAbort, setAudioAbort] = useState<AbortController | null>(null);
   const limits = getUploadLimits();
 
+  /** انتخاب فایل‌ها: فرمت/حجم هر فایل همان لحظه اعتبارسنجی و دلیل رد با پیام خطا اعلام می‌شود. */
+  const pickMediaFiles = (selection: FileList | null) => {
+    const picked = Array.from(selection ?? []);
+    if (picked.length === 0) return;
+    const accepted: File[] = [];
+    picked.forEach((file) => {
+      const problem = validateMediaFile(file, {
+        maxAudioMb: limits.maxAudioMb,
+        maxAudioMinutes: limits.maxAudioMinutes,
+        maxVideoMb: limits.maxVideoMb,
+      });
+      if (problem) {
+        toast.error(problem);
+        return;
+      }
+      accepted.push(file);
+    });
+    if (accepted.length > 0) {
+      setFiles((prev) => [...prev, ...accepted]);
+      setAudioErrors({});
+      setAudioPercent({});
+    }
+  };
+
   const upload = async () => {
     if (files.length === 0) {
-      toast.error('یک یا چند فایل صوتی انتخاب کنید.');
+      toast.error('یک یا چند فایل صوتی/ویدیویی انتخاب کنید.');
       return;
     }
     if (!consent) {
-      toast.error('برای بارگذاری صوت، تأیید اطلاع‌رسانی به حاضران لازم است.');
+      toast.error('برای بارگذاری صوت/ویدیو، تأیید اطلاع‌رسانی به حاضران لازم است.');
       return;
     }
     const controller = new AbortController();
@@ -805,12 +831,14 @@ function AudioAndTranscript({
     setUploading(true);
     // همهٔ فایل‌ها از ابتدا «در نوبت» (صفر درصد) دیده می‌شوند تا نوار بی‌درنگ باشد.
     setAudioPercent(Object.fromEntries(files.map((file) => [file.name, 0])));
+    setAudioErrors({});
     let uploaded = 0;
     let failed = 0;
+    const failedNames = new Set<string>();
     try {
       for (const file of files) {
         try {
-          await uploadMeetingMedia(detail.meeting.id, file, consent, mediaKindOf(file.name), {
+          await uploadMeetingMedia(detail.meeting.id, file, consent, {
             signal: controller.signal,
             onProgress: (progress) =>
               setAudioPercent((prev) => ({ ...prev, [file.name]: progress.percent })),
@@ -819,29 +847,44 @@ function AudioAndTranscript({
           setAudioPercent((prev) => ({ ...prev, [file.name]: 100 }));
         } catch (err) {
           failed += 1;
+          failedNames.add(file.name);
           setAudioPercent((prev) => ({ ...prev, [file.name]: -1 }));
-          if (controller.signal.aborted) break;
-          toast.error(errorMessage(err, `بارگذاری فایل «${file.name}» ناموفق بود.`));
+          const reason = errorMessage(err, `بارگذاری فایل «${file.name}» ناموفق بود.`);
+          setAudioErrors((prev) => ({ ...prev, [file.name]: reason }));
+          if (!controller.signal.aborted) toast.error(reason);
         }
       }
       if (controller.signal.aborted) {
-        toast.info('بارگذاری فایل صوتی لغو شد.');
+        toast.info('بارگذاری لغو شد.');
       } else if (failed === 0) {
         toast.success(
           uploaded > 1
-            ? `${toPersianDigits(uploaded)} فایل صوتی ثبت شد. ترتیب آن‌ها را در فهرست بالا تعیین کنید.`
-            : 'فایل صوتی ثبت شد. اکنون می‌توانید رونویسی را آغاز کنید.',
+            ? `${toPersianDigits(uploaded)} فایل ثبت شد. ترتیب آن‌ها را در فهرست بالا تعیین کنید.`
+            : 'فایل ثبت شد. اکنون می‌توانید رونویسی را آغاز کنید.',
+        );
+      } else if (uploaded > 0) {
+        toast.error(
+          `${toPersianDigits(uploaded)} فایل ثبت شد و ${toPersianDigits(failed)} فایل ناموفق بود؛ دلیل هر خطا در فهرست فایل‌ها نوشته شده است.`,
         );
       } else {
-        toast.success(
-          `${toPersianDigits(uploaded)} فایل ثبت شد و ${toPersianDigits(failed)} فایل ناموفق بود.`,
+        toast.error(
+          `هیچ فایلی بارگذاری نشد (${toPersianDigits(failed)} فایل ناموفق)؛ دلیل هر خطا در فهرست فایل‌ها نوشته شده است.`,
         );
       }
       await onDone();
     } finally {
-      setFiles([]);
-      setConsent(false);
-      setAudioPercent({});
+      if (controller.signal.aborted || failed === 0) {
+        setFiles([]);
+        setConsent(false);
+        setAudioPercent({});
+        setAudioErrors({});
+      } else {
+        // فقط فایل‌های ناموفق در فهرست می‌مانند تا کاربر دلیل خطا را ببیند و دوباره تلاش کند.
+        setFiles((prev) => prev.filter((file) => failedNames.has(file.name)));
+        setAudioPercent((prev) =>
+          Object.fromEntries(Object.entries(prev).filter(([name]) => failedNames.has(name))),
+        );
+      }
       setAudioAbort(null);
       setUploading(false);
     }
@@ -1208,8 +1251,7 @@ function AudioAndTranscript({
                   accept="audio/*,video/*"
                   multiple
                   onChange={(event) => {
-                    const picked = Array.from(event.target.files ?? []);
-                    if (picked.length > 0) setFiles(picked);
+                    pickMediaFiles(event.target.files);
                     event.target.value = '';
                   }}
                 />
@@ -1231,20 +1273,33 @@ function AudioAndTranscript({
                   {toPersianDigits(limits.maxVideoMb)} مگابایت
                 </p>
 
-                {/* فهرست فایل‌های در نوبت بارگذاری */}
+                {/* فهرست فایل‌های در نوبت بارگذاری؛ فایل‌های ناموفق با دلیل خطا می‌مانند */}
                 {files.length > 0 && !uploading && (
-                  <div className="space-y-1">
-                    {files.map((item) => (
-                      <p
-                        key={`${item.name}-${item.size}`}
-                        className="flex items-center gap-2 text-xs text-muted-foreground"
-                      >
-                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary/60" />
-                        <span className="truncate" dir="auto">
-                          {item.name}
-                        </span>
-                      </p>
-                    ))}
+                  <div className="space-y-1.5">
+                    {files.map((item) => {
+                      const percent = audioPercent[item.name];
+                      const isFailed = percent === -1;
+                      const reason = audioErrors[item.name];
+                      return (
+                        <div key={`${item.name}-${item.size}`}>
+                          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <span
+                              className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                                isFailed ? 'bg-destructive' : 'bg-primary/60'
+                              }`}
+                            />
+                            <span className="truncate" dir="auto">
+                              {item.name}
+                            </span>
+                          </p>
+                          {isFailed && reason && (
+                            <p className="mt-0.5 rounded-md bg-destructive/10 px-2 py-1 text-[11px] leading-5 text-destructive">
+                              {reason}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 
@@ -1255,6 +1310,7 @@ function AudioAndTranscript({
                       const percent = audioPercent[item.name];
                       const isFailed = percent === -1;
                       const isDone = percent === 100;
+                      const reason = audioErrors[item.name];
                       return (
                         <div key={`${item.name}-${item.size}`} className="space-y-1">
                           <div className="flex items-center justify-between gap-2 text-xs">
@@ -1270,6 +1326,11 @@ function AudioAndTranscript({
                             </span>
                           </div>
                           <Progress value={isFailed ? 100 : percent ?? 0} className="h-2 w-full" />
+                          {isFailed && reason && (
+                            <p className="rounded-md bg-destructive/10 px-2 py-1 text-[11px] leading-5 text-destructive">
+                              {reason}
+                            </p>
+                          )}
                         </div>
                       );
                     })}
@@ -1281,7 +1342,7 @@ function AudioAndTranscript({
 
                 <div className="flex flex-wrap gap-2">
                   <Button onClick={upload} disabled={uploading || files.length === 0}>
-                    {uploading ? 'در حال بارگذاری…' : 'بارگذاری صوت'}
+                    {uploading ? 'در حال بارگذاری…' : 'بارگذاری فایل‌ها'}
                   </Button>
                   {uploading && audioAbort && (
                     <Button
