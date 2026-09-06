@@ -244,7 +244,11 @@ async def list_owned(
     for condition in extra_conditions:
         stmt = stmt.where(condition)
     if order_by is not None:
-        stmt = stmt.order_by(order_by)
+        # یک عبارت یا چندعبارتی (تاپل) برای مرتب‌سازی چندستونه
+        if isinstance(order_by, tuple):
+            stmt = stmt.order_by(*order_by)
+        else:
+            stmt = stmt.order_by(order_by)
     if limit:
         stmt = stmt.limit(limit)
     result = await db.execute(stmt)
