@@ -1,65 +1,34 @@
-# Shadcn-UI Template Usage Instructions
+# ویدارا — نسخهٔ جلسات (Frontend)
 
-## technology stack
+رابط کاربری راست‌به‌چپ (RTL فارسی) سامانهٔ مدیریت جلسات ویدارا.
 
-This project is built with:
+## پشتهٔ فنی
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+- Vite 5 + React 18 + TypeScript
+- shadcn/ui + Tailwind CSS (توکن‌های برند در `tailwind.config.ts` و `src/index.css`)
+- react-router-dom (SPA)، sonner (toast)، markdown-to-jsx، lucide-react
 
-All shadcn/ui components have been downloaded under `@/components/ui`.
+## ساختار پوشه‌ها
 
-## File Structure
+- `index.html` — نقطهٔ ورود (متادیتا و فاویکون برند)
+- `vite.config.ts` — پیکربندی بیلد و prerender صفحات بلاگ
+- `src/main.tsx` — نقطهٔ اجرا + نگهبان خطای chunk + تثبیت برند (`lib/brand.ts`)
+- `src/App.tsx` — مسیرها: `/` ورود، `/dashboard`، `/meetings`، `/meetings/:meetingId`، `/settings`، `/account`، `/complete-profile`، `/print/:meetingId`، `/platform` (مدیر پلتفرم)، `/blog/*`
+- `src/pages/` — صفحات سامانه
+- `src/components/` — پوسته‌ها (`AppShell`، `PlatformShell`)، پنل دستیار، مصرف توکن، و `ui/` (اجزای shadcn)، `settings/`، `blog/`
+- `src/lib/` — کلاینت‌های API (`mgmt.ts`، `appAuth.ts`، `platform.ts`، `assistant.ts`، …)، تقویم شمسی (`jalali.ts`)، نشست (`session.ts`) و ابزارها (`utils.ts` شامل نرمال‌سازی فارسی و برجسته‌سازی جست‌وجو)
 
-- `index.html` - HTML entry point
-- `vite.config.ts` - Vite configuration file
-- `tailwind.config.ts` - Tailwind CSS configuration file
-- `package.json` - NPM dependencies and scripts
-- `src/main.tsx` - Project entry point
-- `src/App.tsx` - Router shell (imports pages and sets up routes)
-- `src/pages/Index.tsx` - Main page entry point for `/` by default; replace the placeholder page here unless you explicitly reroute `/` elsewhere
-- `src/index.css` - Existing CSS configuration
+## توسعه
 
-## Components
-
-- All shadcn/ui components are pre-downloaded and available at `@/components/ui`
-
-## Styling
-
-- Add global styles to `src/index.css` or create new CSS files as needed
-- Use Tailwind classes for styling components
-
-## Development
-
-- Import components from `@/components/ui` in your React components
-- Customize the UI by modifying the Tailwind configuration
-- Do not stop after editing isolated components or only `src/App.tsx`. The default template homepage lives in `src/pages/Index.tsx`, and leaving `Welcome to Atoms` there means the app is still unfinished.
-- Completion check: either replace `src/pages/Index.tsx` with your real homepage, or update the `/` route in `src/App.tsx` so the live homepage no longer renders the default placeholder page.
-
-## Note
-
-- The `@/` path alias points to the `src/` directory
-- Do NOT modify the title, description, and logo in `index.html` — they are managed by the overview system via `data-mgx-overview` markers.
-
-# Commands
-
-**Install Dependencies**
-
-```shell
-pnpm i
+```bash
+pnpm install
+pnpm run dev       # سرو توسعهٔ محلی
+pnpm run build     # tsc --noEmit + vite build (پریرندر صفحات بلاگ)
+pnpm run lint      # eslint
 ```
 
-**Start Preview**
+نکته‌ها:
 
-```shell
-pnpm run dev
-```
-
-**To build**
-
-```shell
-pnpm run build
-```
+- نام محصول «ویدارا - نسخه جلسات» و برند توسط `src/lib/brand.ts` در زمان اجرا تثبیت می‌شود.
+- خطاهای API با `errorMessage` به پیام فارسی تبدیل می‌شوند (شامل آرایهٔ خطاهای اعتبارسنجی FastAPI).
+- جابه‌جایی بین فضاهای کاری (چندسازمانی) با `OrganizationSwitcher` و گاردهای نقش در `AppShell` انجام می‌شود.

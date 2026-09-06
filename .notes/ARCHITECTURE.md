@@ -2,120 +2,107 @@
 
 ## System Overview
 
-سرویس SaaS چندمستأجری مدیریت جلسات با جریان اصلی «ایجاد جلسه → دستور جلسه → دعوت → آپلود صوت → رونویسی → پیش‌نویس صورتجلسه با AI → تأیید و قفل → مصوبات و پیگیری اقدامات».
+سرویس SaaS چندمستأجری مدیریت جلسات با جریان اصلی «ایجاد جلسه → دستور جلسه → دعوت → آپلود صوت/ویدیو → رونویسی → پیش‌نویس صورت‌جلسه با AI → تأیید و قفل → مصوبات و پیگیری اقدامات».
 
-- **الگو:** مونولیت ماژولار (SPA + REST API) با جداسازی فرایند **API** و **Worker**؛ همهٔ کارهای وابسته به سرویس بیرونی روی صف پایدار.
-- **چندمستأجری:** `organization_id` در همهٔ جداول دامنه + اجبار دو لایه (Repository اجباری در کد و RLS در PostgreSQL).
-- **AI:** پشت لایهٔ Gateway با درگاه‌های `TranscriptionPort` و `TextPort` — رونویسی با **«حرف» (Roshan AI)** و پیش‌نویس صورتجلسه/مصوبات با **DeepSeek** (یک فراخوان با خروجی JSON).
-- **الگوی رونویسی:** همیشه `wait=false` + پایدارسازی `task_ids` + **polling** (سرویس webhook ندارد)؛ ارسال فایل به‌صورت multipart جریانی از MinIO تا Storage خصوصی بماند.
-- **ظرفیت هدف:** ۱۰۰ کاربر همزمان، ۲۰–۳۰ RPS خواندن، ۵ آپلود همزمان، ۱۰ کار AI همزمان (۳ در هر سازمان) با سقف مؤثر ۴ درخواست همزمان به «حرف».
-- **زمان:** ذخیره و محاسبه UTC، نمایش شمسی در منطقهٔ زمانی سازمان.
-- سند کامل: `docs/architecture.md` (نمای اجزا، ERD، API، RBAC، صف، امنیت، ظرفیت، استقرار، ۱۵ ADR).
+> **این سند با ساختار فعلی کد (v1.0.26) هماهنگ شده است**؛ سند مرجع طراحی در
+> `docs/architecture.md` و وضعیت تفاوت‌ها در بخش ۰ همان سند است.
 
-## Tech Stack
+- **الگو:** مونولیت ماژولار (SPA + REST API) — یک پروسهٔ FastAPI که کارهای پس‌زمینه را با `asyncio.create_task` اجرا می‌کند و وضعیت هر کار در جدول پایدار `jobs` نگه داشته می‌شود (بدون Celery/Redis؛ بازیابی کارهای نیمه‌کاره با `RECOVER_ORPHAN_JOBS` هنگام بالا آمدن).
+- **چندمستأجری:** `organization_id` در همهٔ جداول دامنه + اجبار در لایهٔ کد (`resolve_context` / `list_owned` / `get_owned` در `services/mgmt_core.py`). RLS در پایگاه داده فعال نیست.
+- **AI:** لایهٔ Port/Adapter در `services/ai_providers.py` — رونویسی با **«حرف» (Roshan AI)** و تولید متن با **DeepSeek**؛ زنجیرهٔ اولویت/fallback به‌ازای هر سازمان با اعتبار پیش‌فرض از متغیرهای محیطی (`DEFAULT_HARF_*`، `DEFAULT_DEEPSEEK_API_KEY`).
+- **واحد مصرف:** «توکن ویدارا» — ۱ دقیقه رونویسی = ۱ توکن، ۱ سنت مدل زبانی = ۱ توکن (`services/ai_usage.py`)؛ سقف ماهانهٔ هر کاربر + سقف سازمان؛ نمایش در داشبورد و پنل پلتفرم.
+- **زمان:** ذخیره و محاسبه UTC، نمایش شمسی در مرز UI.
+
+## Tech Stack (پیاده‌سازی‌شده)
 
 | لایه | انتخاب |
 |---|---|
-| Frontend | React 18 + TypeScript + Vite + shadcn/ui + Tailwind + TanStack Query + react-hook-form/zod + dayjs/jalaliday |
-| Backend | FastAPI + SQLModel + Pydantic v2 + Alembic |
-| پایگاه داده | PostgreSQL 16 خودمدیریت (FTS فارسی، RLS، پارتیشن Audit) |
-| صف و کش | Celery 5 + Redis 7 (broker، کش، rate limit، کش توکن حرف)؛ منبع حقیقت وضعیت کار در جدول `jobs` |
-| Storage | MinIO سازگار با S3 (presigned multipart، SSE-S3) — خصوصی، بدون انتشار عمومی |
-| **رونویسی فارسی** | **«حرف» (Roshan AI)** — `POST /api/transcribe_files/` با `wait=false` + polling؛ ورود با `/auth/glogin/` و توکن Bearer |
-| **تولید متن** | **DeepSeek** (`deepseek-chat`) با خروجی JSON ساختاریافته |
-| پردازش صوت | `ffmpeg` / `ffprobe` **فقط در ایمیج Worker** (اندازه‌گیری مدت، استخراج صوت از ویدیو، قطعه‌قطعه‌سازی روی مرز سکوت) |
-| اسناد | WeasyPrint + فونت Vazirmatn برای PDF فارسی/RTL؛ `icalendar` برای ICS |
-| ایمیل | SMTP relay تأمین‌کننده + قالب Jinja2 |
-| امنیت | Argon2id، JWT ۱۵ دقیقه‌ای + Refresh چرخشی در DB + فهرست ابطال Redis |
-| Proxy/TLS | Caddy 2 |
-| پایش | Prometheus + Grafana + Loki + structlog (شامل متریک‌های اختصاصی `harf_*`) |
-| آزمون | pytest + httpx + testcontainers؛ Vitest + Playwright؛ k6 برای آزمون بار |
+| Frontend | React 18 + TypeScript + Vite 5 + shadcn/ui + Tailwind (RTL) |
+| Backend | FastAPI (async) + SQLAlchemy 2 + Pydantic v2 |
+| پایگاه داده | PostgreSQL 16؛ جدول‌ها با `create_all` و ستون‌های جدید با `ALTER TABLE` دستی |
+| صف کار | جدول `jobs` + اجرای in-process (وضعیت/پیشرفت/retry در DB) |
+| Storage | MinIO خصوصی از طریق `oss-gateway` (presigned upload/download) |
+| رونویسی فارسی | «حرف» (Roshan AI) — ورود `/auth/glogin/`، ارسال multipart، polling با `task_ids` |
+| تولید متن | DeepSeek (`deepseek-chat`) با خروجی JSON ساختاریافته |
+| پردازش صوت/ویدیو | ffmpeg/ffprobe استاتیک در ایمیج بک‌اند (مدت صوت، جداسازی صدای ویدیو، کلیپ گوینده) |
+| اسناد | `python-docx` برای Word راست‌به‌چپ + نمای چاپ/PDF مرورگر؛ `icalendar` برای ICS |
+| ایمیل/پیامک | SMTP + ParsaSMS (`services/notify_channels.py`) با پیش‌فرض پلتفرم در نبود تنظیمات سازمان |
+| امنیت | هش رمز، JWT (`typ=vidara_app` / `typ=vidara_platform`)، رمزنگاری اعتبارنامه‌ها با `JWT_SECRET_KEY`، مرز مستأجر در همهٔ کوئری‌ها |
+| Proxy/TLS | nginx — گواهی دستی در `deploy/nginx/certs` یا خاتمهٔ TLS در لبه |
+| آزمون | هارنس E2E `.deploy-tools/e2e-final.py` روی سرور تولید (۲۱۰ PASS / ۶ FAIL شناخته‌شده) + Playwright برای بررسی UI |
 
-## Module Design
+## Module Design (ساختار فعلی)
 
 | Module | Responsibility | Key Files |
 |--------|---------------|-----------|
-| core | RequestContext، امنیت، RBAC، rate limit، Audit، لاگ ساخت‌یافته، خطاها | `backend/app/core/` |
-| db | session، RLS (`SET LOCAL app.current_org`)، مهاجرت‌ها | `backend/app/db/` |
-| auth | ثبت‌نام + ایجاد خودکار سازمان، ورود، refresh چرخشی، بازیابی رمز | `backend/app/modules/auth/` |
-| org | تنظیمات سازمان، اعضا، دعوت با توکن، سهمیه و مصرف، Audit، خروجی داده | `backend/app/modules/org/` |
-| meetings / agenda / participants | جلسه، سری تکرارشونده (≤۱۲ نمونه)، دستور جلسه، پیوست، RSVP، حضور و حد نصاب | `backend/app/modules/meetings/`, `agenda/`, `participants/` |
-| recordings / transcripts | آپلود مستقیم با presigned URL، `ffprobe` برای مدت، چرخهٔ عمر و حذف صوت، رونویسی و قطعات زمان‌دار | `backend/app/modules/recordings/`, `transcripts/` |
-| minutes / actions | ماشین وضعیت `draft→in_review→approved→locked`، نسخه‌بندی و diff، مصوبات، اقدامات | `backend/app/modules/minutes/`, `actions/` |
-| jobs | ایجاد کار idempotent، وضعیت، نوبت صف، retry دستی (با استفاده از `task_ids` ذخیره‌شده)، نمای DLQ | `backend/app/modules/jobs/` |
-| notifications | رخدادمحور: اعلان درون‌برنامه‌ای + ایمیل بر پایهٔ `notification_prefs` | `backend/app/modules/notifications/` |
-| search / dashboard | FTS با `fa_normalize`، کوئری تجمیعی سبک + کش ۶۰ ثانیه | `backend/app/modules/search/`, `dashboard/` |
-| admin (platform) | کنسول پلتفرم با هویت و نقش DB جدا، فقط متادیتا و شمارنده | `backend/app/modules/admin/` |
-| integrations | AI Gateway: `ports.py`، `roshan_harf.py` (ورود/کش توکن/ارسال جریانی/polling/پارس زمان/chunking)، `deepseek.py`، `fake.py`؛ StorageClient؛ MailSender | `backend/app/integrations/` |
-| workers | تسک‌های `transcribe`, `draft_minutes`, `send_email`, `render_pdf`, `purge_audio`, `org_export` + beat | `backend/app/workers/` |
-| documents | قالب PDF فارسی/RTL و تولید ICS | `backend/app/documents/` |
-| frontend features | auth, meetings, agenda, recordings, minutes, actions, notifications, admin | `frontend/src/features/` |
+| core | تنظیمات، دیتابیس، خطاها | `core/config.py`, `core/database.py` |
+| auth | ثبت‌نام/ورود/کاربران/تکمیل مشخصات/سوییچ فضا/حذف سازمان | `routers/app_auth.py`, `services/app_auth.py` |
+| platform admin | مدیر پلتفرم: سازمان‌ها، مدیران، تنظیمات/سقف هر سازمان، مصرف AI، سطل آشغال | `routers/platform.py`, `services/platform_admin.py` |
+| workspace | جلسه، دستور جلسه، RSVP/حضور، صورت‌جلسه، مصوبات/اقدامات، داشبورد، جست‌وجوی تمام‌متن | `routers/workspace.py`, `services/mgmt_core.py` |
+| meeting-ai | آپلود صوت/ویدیو، ترتیب فایل‌ها، کارهای رونویسی/پیش‌نویس/جداسازی صدا، گوینده‌ها | `routers/meeting_ai.py`, `services/ai_providers.py`, `services/meeting_speakers.py` |
+| minutes flow | گردش draft→in_review→approved→locked، نسخه‌ها، خروجی Word/JSON | `routers/minutes_flow.py`, `services/minutes_docx.py`, `services/minutes_settings.py` |
+| assistant | دستیار هوشمند با بازیابی محتوای واقعی سازمان | `routers/assistant.py`, `services/assistant.py` |
+| archive | آرشیو/بازیابی روی استوریج خارجی S3/WebDAV | `routers/archive.py`, `services/meeting_archive.py`, `services/external_storage.py` |
+| notifications | SMTP + پیامک + دعوت‌نامه با ICS و پیوست | `services/notify_channels.py`, `services/meeting_invites.py` |
+| upload limits | سقف‌های بارگذاری هر سازمان + سقف ویدیو | `services/upload_limits.py` |
+| ai usage | توکن ویدارا، سهمیهٔ کاربر/سازمان، تعرفهٔ روز دیپ‌سیک | `services/ai_usage.py` |
+| frontend | pages/، components/، lib/ | `app/frontend/src/*` |
 
-## Tech Decisions
+## Tech Decisions (پیاده‌سازی‌شده)
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| سبک معماری | مونولیت ماژولار + جداسازی API/Worker | تیم کوچک، بار متوسط، انسجام تراکنشی؛ هزینهٔ عملیاتی میکروسرویس توجیه ندارد |
-| چندمستأجری | ستون `organization_id` + RLS به‌عنوان دفاع عمقی | مهاجرت واحد و عملیات ساده، با تضمین «صفر نشت» حتی در خطای کد |
-| کارهای بیرونی | Celery + Redis، وضعیت در جدول `jobs` | پایداری در ری‌استارت، retry نمایی، سقف همزمانی، DLQ پرس‌وجوپذیر |
-| آپلود صوت | مستقیم به MinIO با presigned multipart | جلوگیری از اشباع حافظه و پهنای باند نمونهٔ برنامه در ۵ آپلود همزمان |
-| **حالت رونویسی** | **`wait=false` + پایدارسازی `task_ids` + polling** | `wait=true` اتصال HTTP را برای ده‌ها دقیقه باز نگه می‌دارد و با هر قطعی، نتیجهٔ **پرداخت‌شده** از دست می‌رود؛ سرویس webhook ندارد پس polling تنها الگوی قابل اتکاست |
-| **retry رونویسی** | اگر `task_ids` موجود باشد فقط polling ادامه می‌یابد، فایل دوباره ارسال نمی‌شود | مهم‌ترین محافظ در برابر پرداخت دوبارهٔ هزینهٔ یک رونویسی |
-| **نحوهٔ ارسال فایل** | multipart جریانی از MinIO (پیش‌فرض)، `HARF_SEND_MODE=url` اختیاری | `media_urls` مستلزم قابل‌واکشی بودن صوت جلسه از اینترنت است و با تصمیم «Storage کاملاً خصوصی» تناقض دارد |
-| **سنجش کیفیت** | `known_word_ratio` (= `known_words/words`) به‌جای امتیاز اطمینان | «حرف» `confidence` نمی‌دهد؛ تنها سیگنال‌ها `stats` و کروشهٔ واژهٔ مشکوک است؛ آستانهٔ ۰٫۸ برای هشدار بازبینی |
-| **انتساب گوینده** | خارج از دامنهٔ MVP | سرویس برچسب‌گذاری گوینده به نمونهٔ صدای از پیش ثبت‌شدهٔ هر فرد نیاز دارد (دادهٔ بیومتریک + رضایت)؛ هزینهٔ حقوقی بر ارزش MVP می‌چربد |
-| **واحد مصرف** | دقیقهٔ صوت با گرد کردن بالا، بر پایهٔ `duration` بازگشتی سرویس | منبع حقیقت مصرف باید پاسخ تأمین‌کننده باشد نه تخمین محلی؛ تغییر واحد صورت‌حساب فقط ضریب `QuotaService` را عوض می‌کند |
-| **فایل‌های بلند** | chunking با `ffmpeg` روی مرز سکوت + جابه‌جایی زمانی (`offset`) در ادغام | مستندات سقف حجم/مدت را اعلام نکرده؛ آستانهٔ محافظه‌کارانهٔ داخلی از رد شدن درخواست و هزینهٔ ناگهانی جلوگیری می‌کند |
-| اعتبارنامهٔ AI | `HARF_USERNAME`/`HARF_PASSWORD` و `DEEPSEEK_API_KEY` **فقط در Worker**، توکن در Redis کش می‌شود | سطح حملهٔ کمینه؛ نمونهٔ API عمومی هیچ اعتبارنامهٔ تأمین‌کننده ندارد |
-| جست‌وجو | Postgres FTS + تابع `fa_normalize` | یکسان‌سازی ی/ک/نیم‌فاصله/اعراب بدون افزودن سرویس جدید |
-| نشست | JWT کوتاه‌عمر + Refresh در DB + فهرست ابطال Redis | تحقق الزام ابطال دسترسی زیر ۶۰ ثانیه |
-| سهمیه (M4) | اعمال در سه نقطه: پیش از آپلود، پیش از کار AI (شامل مجموع قطعات)، پس از پایان کار | تنها سد قابل اتکا در برابر هزینهٔ کنترل‌نشدهٔ AI |
-| کنسول پلتفرم | مسیر، هویت و نقش DB جدا؛ **بدون دسترسی به محتوا** | حذف کلاس ریسک نشت بین‌مستأجری و ریسک حقوقی |
-| PDF | WeasyPrint + Vazirmatn | RTL و شکل‌دهی صحیح فارسی با مصرف منابع کم |
-| زمان | ذخیره UTC، نمایش شمسی در مرز UI؛ زمان قطعات از رشتهٔ `H:MM:SS[.ffffff]` به میلی‌ثانیه | هیچ رشتهٔ زمانی خام در پایگاه داده ذخیره نمی‌شود |
-| استقرار | Docker Compose روی VPS با Caddy (TLS خودکار) | سادگی عملیاتی متناسب با MVP؛ لایهٔ برنامه بی‌حالت و آمادهٔ مقیاس افقی |
+| سبک معماری | مونولیت ماژولار با کارهای in-process روی جدول `jobs` | تیم کوچک، بار متوسط، انسجام تراکنشی؛ بدون هزینهٔ عملیاتی Celery/Redis |
+| چندمستأجری | ستون `organization_id` + اجبار در لایهٔ کد | مهاجرت واحد و عملیات ساده؛ همهٔ کوئری‌ها از `list_owned`/`get_owned` عبور می‌کنند |
+| آپلود صوت/ویدیو | مستقیم به MinIO با presigned PUT + ثبت فراداده | جلوگیری از اشباع حافظهٔ API؛ نوار پیشرفت واقعی با XHR |
+| ویدیو | کار `audio_extract` با ffmpeg (MP3 16kHz تک‌کاناله)؛ `object_key` بعد از جداسازی به صوت تغییر می‌کند و ویدیو در `video_*` می‌ماند | همان مسیر رونویسی بدون تغییر ادامه می‌یابد؛ «حذف ویدیو با نگه‌داری صدا» جداگانه ممکن است |
+| چند فایل صوتی | ستون `position` در recordings + `PUT /recordings/order`؛ متن نهایی = ترکیب فایل‌های رونویسی‌شده به ترتیب کاربر | متن و صورت‌جلسه دقیقاً از ترتیب جلسه پیروی می‌کنند؛ فایل‌های رونویسی‌نشده نادیده گرفته می‌شوند |
+| رونویسی | `wait=false` + پایدارسازی `task_ids` + polling؛ در retry فایل دوباره ارسال نمی‌شود | جلوگیری از پرداخت دوبارهٔ هزینه |
+| سنجش کیفیت | `known_word_ratio` (آستانهٔ هشدار ۰٫۸) | «حرف» `confidence` نمی‌دهد |
+| گوینده‌ها | برچسب `SPEAKER_x` از diarization + نام‌گذاری مدیر جلسه + کلیپ نمونهٔ صدا (ffmpeg) | بدون نیاز به دادهٔ بیومتریک |
+| جست‌وجو | `fa_normalize` پایتونی + جست‌وجو روی متن‌های جمع‌شده با `search_scope` + بندهای یافت‌شده و پرش به بخش | نرمال‌سازی ی/ک/نیم‌فاصله/اعراب؛ بدون سرویس جدید |
+| واحد مصرف | «توکن ویدارا» (۱ دقیقه STT = ۱ سنت LLM = ۱ توکن) | نمایش یکپارچه برای کاربر؛ پنل پلتفرم دلار نرخ روز دیپ‌سیک را هم نشان می‌دهد |
+| کنسول پلتفرم | هویت/نقش جدا (`platform_admins`، توکن `typ=vidara_platform`)؛ بدون دسترسی به محتوا | حذف کلاس ریسک نشت بین‌مستأجری |
+| خطای آپلود | اعتبارسنجی فرمت/حجم در لحظهٔ انتخاب + دلیل خطا زیر هر فایل ناموفق | هیچ شکست آپلودی بی‌صدا نمی‌ماند |
+| استقرار | Docker Compose + nginx؛ گواهی دستی یا TLS لبه؛ بیلد آفلاین (wheels + ffmpeg باندل‌شده) | سازگار با سرورهای دارای شبکهٔ فیلترشده |
 
-## File Tree Plan
+## File Tree (فعلی)
 
 ```
-backend/
-  app/main.py, config.py, deps.py
-  app/core/            # context, security, rbac, ratelimit, audit, logging, errors
-  app/db/              # session, base, rls, migrations/
-  app/models/          # organization, plan, user, invitation, meeting, minutes, job, audit ...
-  app/schemas/
-  app/repositories/    # TenantRepository و مشتقات
-  app/modules/         # auth, org, meetings, agenda, participants, recordings,
-                       # transcripts, minutes, actions, jobs, notifications,
-                       # search, dashboard, admin
-  app/integrations/    # ai_gateway/{ports,roshan_harf,deepseek,fake}, storage, mail, media (ffmpeg)
-  app/workers/         # celery_app, tasks_ai, tasks_mail, tasks_doc, tasks_maintenance, beat_schedule
-  app/documents/       # قالب PDF (Jinja2 + RTL) و ICS
-  tests/               # unit, api, tenant_isolation, harf_adapter (با پاسخ نمونهٔ مستندات), load (k6)
-frontend/
-  src/app/             # router, providers, layout RTL
-  src/features/        # auth, meetings, agenda, recordings, minutes, actions, admin, notifications
-  src/components/ui/   # shadcn
-  src/lib/             # api client, jalali, formatters, jobPolling
+app/frontend/src/
+  pages/           # Login, CompleteProfile, Dashboard, Meetings, MeetingDetail,
+                   # Settings, Account, PrintMinutes, PlatformAdmin, blog/
+  components/      # AppShell, PlatformShell, AssistantPanel, AiUsagePanel, MarkdownText,
+                   # HighlightText, JalaliDateTimePicker, MeetingAttachmentsCard,
+                   # OrganizationSwitcher, LoadingGif, VidaraBranding, ui/, settings/, blog/
+  lib/             # mgmt, appAuth, platform, assistant, aiSettings, notify, session, utils
+app/backend/
+  main.py
+  core/            # config, database, enums, auth
+  dependencies/    # app_auth (get_workspace_user), platform_admin
+  models/          # meetings, minutes, transcripts, recordings, jobs, participants,
+                   # meeting_speakers, platform_admins, ai_user_usage, org_* و …
+  routers/         # workspace, meeting_ai, minutes_flow, app_auth, platform, assistant,
+                   # archive, meeting_attachments, ai_settings, notify_settings, runtime_config و …
+  services/        # ai_providers, ai_usage, assistant, meeting_speakers, minutes_docx,
+                   # minutes_settings, meeting_archive, external_storage, notify_channels,
+                   # upload_limits, mgmt_core و …
+  bundle/          # ffmpeg/ffprobe استاتیک + فونت‌ها
+  .wheels/         # wheelهای آفلاین pip
 deploy/
-  compose.yml, Caddyfile, .env.example, backup/, grafana/, prometheus/
-docs/
-  mvp_feature_review.md, architecture.md
-uploads/
-  harf                 # مستندات مرجع سرویس رونویسی
+  docker-compose.yml, .env.example
+  nginx/           # templates + entrypoint + certs/
+  scripts/         # init-env, install, init-storage, issue-ssl, backup, restore, update, status, logs
+  oss-gateway/     # دروازهٔ MinIO با OSS_API_KEY
+docs/              # architecture, deployment, quickstart, mvp_feature_review, test-scenario
+.notes/            # ARCHITECTURE, ATOMS, PROGRESS
+uploads/           # مستندات مرجع «حرف» و پنل پیامک
 ```
 
-## Implementation Guide
+## Implementation Notes
 
-ترتیب پیاده‌سازی مطابق چهار برش سند محصول، با این قواعد الزامی برای مهندسان:
-
-۱. **برش ۱ (پایه و SaaS):** ابتدا `core` + `db` + RLS + `TenantRepository`، سپس auth و سازمان و دعوت و RBAC و Audit. هیچ جدول دامنه‌ای بدون `organization_id` و بدون policy RLS ساخته نشود. آزمون نشت بین دو سازمان از همین برش در CI فعال شود.
-۲. **برش ۲ (چرخهٔ جلسه):** انواع جلسه، جلسه، دستور جلسه، RSVP، ایمیل و ICS. ایمیل از ابتدا روی صف باشد، نه در چرخهٔ درخواست.
-۳. **برش ۳ (هستهٔ AI):** **ابتدا زیرساخت کار (`jobs` + Celery + وضعیت + retry + سقف همزمانی)**، سپس آپلود مستقیم و سیاست صوت، بعد آداپتر «حرف»، پیش‌نویس صورتجلسه با DeepSeek، جریان تأیید و سهمیه. پیاده‌سازی رونویسی به‌صورت همزمان (`wait=true`) ممنوع است.
-۴. **برش ۴ (تکمیل و عرضه):** اقدامات، PDF، جست‌وجو، داشبورد، پایش، rate limit و صفحات حقوقی. سپس آزمون‌های پذیرش ظرفیت بخش ۱۱.۵ سند معماری.
-
-قواعد ثابت برای آداپتر «حرف»: توکن از `/auth/glogin/` گرفته و در Redis کش شود؛ در `401` یک‌بار ورود مجدد بدون سوزاندن تلاش کار؛ همیشه **یک فایل در هر درخواست** با `wait=false`؛ `task_ids` پیش از هر polling در `jobs.payload` ذخیره شود؛ زمان‌های رشته‌ای به میلی‌ثانیه تبدیل شوند؛ کروشه‌های واژهٔ مشکوک در متن حفظ شوند و به DeepSeek هم پاس داده شوند؛ مصرف از `duration` پاسخ ثبت شود؛ و آزمون آداپتر با پاسخ‌های نمونهٔ مستندات (`uploads/harf`) نوشته شود.
-
-قواعد عمومی: هر endpoint نوشتنی باید RBAC از dependency مشترک، `If-Match` در منابع نسخه‌دار، و رخداد Audit در عملیات حساس داشته باشد؛ هیچ اعتبارنامهٔ تأمین‌کنندهٔ AI در سرویس API یا کلاینت قرار نمی‌گیرد (فقط Worker)؛ آداپتر جعلی AI برای تست‌ها همیشه نگه‌داری شود؛ و تبدیل تاریخ شمسی فقط در مرز UI و قالب‌ها انجام شود.
-
-**ابهامات باز که باید از تأمین‌کننده پرسیده شود (A8–A13 در سند معماری):** سقف حجم/مدت فایل، سقف نرخ و همزمانی، مدل قیمت‌گذاری و واحد صورت‌حساب، سیاست نگه‌داری و عدم استفادهٔ آموزشی داده، پذیرش ویدیو، و فهرست کدهای خطا. تا پاسخ رسمی، آستانه‌های محافظه‌کارانهٔ تنظیم‌پذیر اعمال است.
+- **رونویسی:** آداپتر «حرف» توکن را در حافظه کش می‌کند و در ۴۰۱ یک‌بار ورود مجدد می‌زند؛ مصرف از `duration` بازگشتی سرویس ثبت می‌شود؛ واژه‌های نامطمئن (کروشه) در متن حفظ و در پرامپت DeepSeek صریحاً «نامطمئن» اعلام می‌شوند.
+- **صورت‌جلسه:** یک فراخوان DeepSeek هم متن و هم مصوبات/اقدامات را تولید می‌کند؛ تنظیمات تولید (استفاده از دستور جلسه/مدعوین، طول، ملاحظات) به‌ازای هر جلسه در `meeting_minutes_settings` است.
+- **جست‌وجو:** بک‌اند برای هر جلسه متن‌های عنوان/دستور/صورتجلسه/رونویسی/مصوبات/اقدامات را جمع و با `fa_normalize` تطبیق می‌دهد و تا ۳ بند با برچسب منبع برمی‌گرداند؛ فرانت با `?q=&scope=` به همان بخش صفحهٔ جلسه می‌پرد و واژه را هایلایت می‌کند.
+- **پلتفرم:** ساخت مدیر سازمان با `POST /platform/orgs` (رمز رندوم پیامک‌شده + `must_change_password`)؛ پاک‌سازی کامل سازمان داده‌ها و فایل‌های Storage با پیشوند `org-{id}/` را حذف می‌کند.
+- **مصرف AI:** `GET /platform/ai-summary` مجموع دقیقهٔ حرف و توکن DeepSeek (کل و ماه جاری)، معادل توکن ویدارا و دلار نرخ روز (ورودی ۰٫۲۲$ / خروجی ۰٫۶۶$ برای هر میلیون توکن — قابل تنظیم با `DEEPSEEK_CURRENT_*`) را برمی‌گرداند؛ «لاگ و آمار» هر سازمان هم همین تفکیک را دارد.
