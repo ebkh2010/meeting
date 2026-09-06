@@ -233,6 +233,8 @@ export interface PlatformOrgActivity {
     created_at: string;
     last_login_at: string;
   };
+  /** مصرف توکن ویدارا و تفکیک دیپ‌سیک / حرف (روشن) همین سازمان. */
+  ai_usage: PlatformAiSummary;
   logins: {
     id: number;
     actor_name: string;

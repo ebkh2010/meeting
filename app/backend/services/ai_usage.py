@@ -303,8 +303,8 @@ async def recent_user_usage(
     return events
 
 
-async def platform_ai_summary(db: AsyncSession) -> Dict[str, Any]:
-    """مصرف کل پلتفرم در همهٔ سازمان‌ها برای دو هوش پیش‌فرض.
+async def _ai_summary(db: AsyncSession, organization_id: Optional[int] = None) -> Dict[str, Any]:
+    """جمع مصرف «حرف (روشن)» و DeepSeek؛ با organization_id فقط همان سازمان.
 
     - «حرف (روشن)»: مجموع دقیقه‌های رونویسی (هر دقیقه = ۱ توکن ویدارا).
     - DeepSeek: مجموع توکن‌های ورودی/خروجی و معادل دلاری آن با تعرفهٔ روز
@@ -314,6 +314,8 @@ async def platform_ai_summary(db: AsyncSession) -> Dict[str, Any]:
 
     async def _sum_columns(provider: str, *columns: Any, since: Optional[datetime] = None) -> List[int]:
         condition = Ai_user_usage.provider == provider
+        if organization_id is not None:
+            condition = condition & (Ai_user_usage.organization_id == organization_id)
         if since is not None:
             condition = condition & (Ai_user_usage.created_at >= since)
         result = await db.execute(
@@ -387,3 +389,13 @@ async def platform_ai_summary(db: AsyncSession) -> Dict[str, Any]:
             "source": DEEPSEEK_RATES_SOURCE,
         },
     }
+
+
+async def platform_ai_summary(db: AsyncSession) -> Dict[str, Any]:
+    """مصرف کل پلتفرم در همهٔ سازمان‌ها برای دو هوش پیش‌فرض."""
+    return await _ai_summary(db)
+
+
+async def org_ai_summary(db: AsyncSession, organization_id: int) -> Dict[str, Any]:
+    """مصرف یک سازمان برای دو هوش پیش‌فرض (برای دیالوگ «لاگ و آمار»)."""
+    return await _ai_summary(db, organization_id=organization_id)

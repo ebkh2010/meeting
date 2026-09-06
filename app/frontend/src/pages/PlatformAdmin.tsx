@@ -1481,6 +1481,54 @@ function ActivityDialog({ org, onClose }: { org: PlatformOrg; onClose: () => voi
               </p>
             </div>
 
+            {/* مصرف توکن ویدارا و تفکیک دیپ‌سیک / حرف (روشن) */}
+            <div className="space-y-2">
+              <p className="text-sm font-semibold">مصرف توکن ویدارا</p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div className="rounded-md border p-3 text-center">
+                  <p className="text-2xl font-bold tabular-nums">
+                    {toPersianDigits(data.ai_usage.vidara_tokens_total)}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    مجموع توکن ویدارا (کل)
+                  </p>
+                </div>
+                <div className="rounded-md border p-3 text-center">
+                  <p className="text-2xl font-bold tabular-nums">
+                    {toPersianDigits(data.ai_usage.stt.minutes_total)}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    رونویسی «حرف (روشن)» — دقیقه
+                  </p>
+                </div>
+                <div className="rounded-md border p-3 text-center">
+                  <p className="text-2xl font-bold tabular-nums">
+                    {toPersianDigits(data.ai_usage.llm.tokens_total)}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">DeepSeek — توکن</p>
+                </div>
+              </div>
+              <div className="rounded-md bg-muted/60 p-3 text-xs leading-6 text-muted-foreground">
+                <p>
+                  رونویسی روشن: {toPersianDigits(data.ai_usage.stt.minutes_total)} دقیقه (کل) ·
+                  این ماه {toPersianDigits(data.ai_usage.stt.minutes_period)} دقیقه — معادل{' '}
+                  {toPersianDigits(data.ai_usage.stt.vidara_tokens_total)} توکن ویدارا (۱ دقیقه
+                  = ۱ توکن)
+                </p>
+                <p>
+                  دیپ‌سیک: ورودی {toPersianDigits(data.ai_usage.llm.tokens_in_total)} • خروجی{' '}
+                  {toPersianDigits(data.ai_usage.llm.tokens_out_total)} توکن (کل) · این ماه{' '}
+                  {toPersianDigits(data.ai_usage.llm.tokens_period)} توکن — معادل دلاری (نرخ
+                  روز): ${data.ai_usage.llm.usd_total.toFixed(2)} — معادل{' '}
+                  {toPersianDigits(data.ai_usage.llm.vidara_tokens_total)} توکن ویدارا
+                </p>
+                <p>
+                  مجموع توکن ویدارا این ماه:{' '}
+                  {toPersianDigits(data.ai_usage.vidara_tokens_period)} توکن
+                </p>
+              </div>
+            </div>
+
             <div className="space-y-2">
               <p className="text-sm font-semibold">تاریخ‌های ورود</p>
               {data.logins.length === 0 ? (

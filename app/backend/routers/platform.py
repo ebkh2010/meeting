@@ -607,6 +607,8 @@ async def org_activity(
         },
         "logins": logins[:30],
         "activities": activities[:60],
+        # مصرف هوش مصنوعی سازمان: توکن ویدارا + تفکیک دیپ‌سیک و حرف (روشن)
+        "ai_usage": await ai_usage.org_ai_summary(db, org_id),
     }
 
 
