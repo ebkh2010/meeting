@@ -29,10 +29,10 @@ from core.database import get_db
 from dependencies.platform_admin import get_platform_admin
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.ai_user_usage import Ai_user_quotas
+from models.ai_user_usage import Ai_user_quotas, Ai_user_usage
 from models.app_users import App_users
 from models.audit_logs import Audit_logs
 from models.org_ai_providers import Org_ai_providers
@@ -924,6 +924,21 @@ async def update_quotas(
     card = await _org_quota_card(db, org)
     await db.commit()
     return card
+
+
+@router.get("/ai-summary")
+async def platform_ai_summary(
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """مصرف کل پلتفرم: دقایق «حرف (روشن)» و توکن‌های DeepSeek در همهٔ سازمان‌ها.
+
+    پاسخ شامل مجموع کل و مجموع دورهٔ جاری، معادل «توکن ویدارا»ی هر دو، و
+    دلارِ نرخ روز دیپ‌سیک (با ذکر تعرفه و منبع) است.
+    """
+    summary = await ai_usage.platform_ai_summary(db)
+    await db.commit()
+    return summary
 
 
 @router.post("/orgs/{org_id}/trash")

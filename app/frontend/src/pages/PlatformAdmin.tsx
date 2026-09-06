@@ -21,12 +21,13 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import LoadingGif from '@/components/LoadingGif';
-import { Building2, History, RefreshCcw, Settings2, Trash2, UserPlus } from 'lucide-react';
+import { Building2, BarChart3, Bot, Coins, History, Mic, RefreshCcw, Settings2, Trash2, UserPlus } from 'lucide-react';
 import {
   errorMessage,
   platformApi,
   type CreateOrgResult,
   type PlatformAiProvider,
+  type PlatformAiSummary,
   type PlatformNotify,
   type PlatformOrg,
   type PlatformOrgActivity,
@@ -47,20 +48,207 @@ const AI_PROVIDER_LABELS: Record<string, string> = {
 };
 
 export default function PlatformAdmin() {
-  const [tab, setTab] = useState<'orgs' | 'trash'>('orgs');
+  const [tab, setTab] = useState<'orgs' | 'trash' | 'usage'>('orgs');
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-bold">مدیریت پلتفرم</h1>
-        <Tabs value={tab} onValueChange={(value) => setTab(value as 'orgs' | 'trash')}>
-          <TabsList>
+        <Tabs
+          value={tab}
+          onValueChange={(value) => setTab(value as 'orgs' | 'trash' | 'usage')}
+        >
+          <TabsList className="flex flex-wrap">
             <TabsTrigger value="orgs">سازمان‌ها</TabsTrigger>
+            <TabsTrigger value="usage">مصرف هوش مصنوعی</TabsTrigger>
             <TabsTrigger value="trash">سطل آشغال</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
-      {tab === 'orgs' ? <OrgsView /> : <TrashView onChanged={() => setTab('orgs')} />}
+      {tab === 'orgs' ? <OrgsView /> : tab === 'usage' ? <AiUsageView /> : <TrashView onChanged={() => setTab('orgs')} />}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* مصرف کل هوش مصنوعی                                                  */
+/* ------------------------------------------------------------------ */
+
+/** مجموع مصرف همهٔ سازمان‌ها برای دو هوش پیش‌فرض: رونویسی «حرف (روشن)» و DeepSeek. */
+function AiUsageView() {
+  const [summary, setSummary] = useState<PlatformAiSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setSummary(await platformApi.aiSummary());
+    } catch (err) {
+      toast.error(errorMessage(err, 'خواندن مصرف هوش مصنوعی ناموفق بود.'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!summary) {
+    return loading ? <LoadingGif label="در حال دریافت مصرف هوش مصنوعی…" /> : null;
+  }
+
+  const rates = summary.deepseek_rates;
+  const usd = (value: number) => `$${value.toFixed(2)}`;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          مجموع مصرف همهٔ سازمان‌ها و کاربران برای دو هوش پیش‌فرض — دورهٔ جاری:{' '}
+          {toPersianDigits(summary.period)}
+        </p>
+        <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+          <RefreshCcw className="ml-1 h-4 w-4" />
+          به‌روزرسانی
+        </Button>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {/* رونویسی روشن */}
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center gap-2">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-brand/10 text-brand-foreground">
+                <Mic className="h-5 w-5" />
+              </div>
+              <CardTitle className="text-base">رونویسی «حرف (روشن)»</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div>
+              <p className="text-3xl font-bold tabular-nums">
+                {toPersianDigits(summary.stt.minutes_total)}
+                <span className="mr-2 text-base font-normal text-muted-foreground">دقیقه</span>
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                این ماه: {toPersianDigits(summary.stt.minutes_period)} دقیقه
+              </p>
+            </div>
+            <div className="rounded-md bg-muted/60 p-3 text-sm">
+              <p className="flex items-center justify-between">
+                <span className="text-muted-foreground">معادل توکن ویدارا</span>
+                <span className="font-semibold tabular-nums">
+                  {toPersianDigits(summary.stt.vidara_tokens_total)} توکن
+                </span>
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                هر دقیقهٔ رونویسی = ۱ توکن ویدارا · این ماه:{' '}
+                {toPersianDigits(summary.stt.vidara_tokens_period)} توکن
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* دیپ‌سیک */}
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center gap-2">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-brand/10 text-brand-foreground">
+                <Bot className="h-5 w-5" />
+              </div>
+              <CardTitle className="text-base">مدل زبانی DeepSeek</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div>
+              <p className="text-3xl font-bold tabular-nums">
+                {toPersianDigits(summary.llm.tokens_total)}
+                <span className="mr-2 text-base font-normal text-muted-foreground">توکن</span>
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                ورودی: {toPersianDigits(summary.llm.tokens_in_total)} · خروجی:{' '}
+                {toPersianDigits(summary.llm.tokens_out_total)} · این ماه:{' '}
+                {toPersianDigits(summary.llm.tokens_period)} توکن
+              </p>
+            </div>
+            <div className="space-y-1 rounded-md bg-muted/60 p-3 text-sm">
+              <p className="flex items-center justify-between">
+                <span className="text-muted-foreground">معادل دلاری (نرخ روز)</span>
+                <span className="font-semibold tabular-nums">{usd(summary.llm.usd_total)}</span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                این ماه: {usd(summary.llm.usd_period)}
+              </p>
+              <p className="flex items-center justify-between">
+                <span className="text-muted-foreground">معادل توکن ویدارا</span>
+                <span className="font-semibold tabular-nums">
+                  {toPersianDigits(summary.llm.vidara_tokens_total)} توکن
+                </span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                هر سنت از دلار نرخ روز = ۱ توکن ویدارا
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* مجموع توکن ویدارا */}
+        <Card className="md:col-span-2 xl:col-span-1">
+          <CardHeader className="pb-2">
+            <div className="flex items-center gap-2">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-brand/10 text-brand-foreground">
+                <Coins className="h-5 w-5" />
+              </div>
+              <CardTitle className="text-base">مجموع توکن ویدارا</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div>
+              <p className="text-3xl font-bold tabular-nums">
+                {toPersianDigits(summary.vidara_tokens_total)}
+                <span className="mr-2 text-base font-normal text-muted-foreground">توکن</span>
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                این ماه: {toPersianDigits(summary.vidara_tokens_period)} توکن
+              </p>
+            </div>
+            <div className="rounded-md bg-muted/60 p-3 text-xs leading-6 text-muted-foreground">
+              <p>رونویسی روشن: {toPersianDigits(summary.stt.vidara_tokens_total)} توکن</p>
+              <p>دیپ‌سیک: {toPersianDigits(summary.llm.vidara_tokens_total)} توکن</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* تعرفهٔ روز دیپ‌سیک */}
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm">تعرفهٔ روز دیپ‌سیک (مبنای محاسبهٔ دلار)</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="text-xs leading-6 text-muted-foreground">
+          <p>
+            ورودی {rates.input_usd_per_m}$ و خروجی {rates.output_usd_per_m}$ به ازای هر{' '}
+            <span className="font-medium">میلیون</span> توکن — نرخ خارج از ساعت اوج؛ ساعت اوج
+            (روزهای کاری ۰۱:۰۰ تا ۰۴:۰۰ و ۰۶:۰۰ تا ۱۰:۰۰ UTC) دو برابر است. تاریخ تعرفه:{' '}
+            {toPersianDigits(rates.as_of)}.
+          </p>
+          <p className="mt-1">
+            منبع:{' '}
+            <a
+              href={rates.source}
+              target="_blank"
+              rel="noreferrer"
+              className="text-primary underline"
+            >
+              صفحهٔ رسمی قیمت‌گذاری DeepSeek
+            </a>
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

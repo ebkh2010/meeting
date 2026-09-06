@@ -183,6 +183,42 @@ export interface CreateOrgResult {
   sms: { ok: boolean; error: string };
 }
 
+/** مصرف کل پلتفرم برای دو هوش پیش‌فرض (حرف/روشن و DeepSeek). */
+export interface PlatformAiSummary {
+  period: string;
+  stt: {
+    provider_key: string;
+    provider_label: string;
+    minutes_total: number;
+    minutes_period: number;
+    vidara_tokens_total: number;
+    vidara_tokens_period: number;
+  };
+  llm: {
+    provider_key: string;
+    provider_label: string;
+    tokens_in_total: number;
+    tokens_out_total: number;
+    tokens_total: number;
+    tokens_in_period: number;
+    tokens_out_period: number;
+    tokens_period: number;
+    cost_cents_total: number;
+    usd_total: number;
+    usd_period: number;
+    vidara_tokens_total: number;
+    vidara_tokens_period: number;
+  };
+  vidara_tokens_total: number;
+  vidara_tokens_period: number;
+  deepseek_rates: {
+    input_usd_per_m: number;
+    output_usd_per_m: number;
+    as_of: string;
+    source: string;
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* API                                                                 */
 /* ------------------------------------------------------------------ */
@@ -231,6 +267,9 @@ export const platformApi = {
   listOrgs: () => call<{ items: PlatformOrg[]; total: number }>(`${BASE}/orgs`),
   listTrash: () => call<{ items: PlatformOrg[]; total: number }>(`${BASE}/trash`),
   overview: (orgId: number) => call<PlatformOverview>(`${BASE}/orgs/${orgId}/overview`),
+
+  /** مصرف کل پلتفرم (حرف/روشن و DeepSeek) با معادل توکن ویدارا و دلار نرخ روز. */
+  aiSummary: () => call<PlatformAiSummary>(`${BASE}/ai-summary`),
 
   /** لاگ و آمار حساب: تاریخ‌های ورود و فعالیت‌های ثبت‌شدهٔ سازمان. */
   orgActivity: (orgId: number) => call<PlatformOrgActivity>(`${BASE}/orgs/${orgId}/activity`),

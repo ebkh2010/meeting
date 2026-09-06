@@ -33,6 +33,16 @@ DEFAULT_STT_BUDGET_MINUTES = int(os.environ.get("AI_USER_STT_BUDGET_MINUTES", "6
 DEEPSEEK_INPUT_USD_PER_M = float(os.environ.get("DEEPSEEK_INPUT_USD_PER_M", "0.27"))
 DEEPSEEK_OUTPUT_USD_PER_M = float(os.environ.get("DEEPSEEK_OUTPUT_USD_PER_M", "1.10"))
 
+# تعرفهٔ روز دیپ‌سیک برای نمایش «معادل دلاری» در پنل پلتفرم (مستقل از تعرفهٔ
+# صورتحساب بالا)؛ از صفحهٔ رسمی قیمت‌گذاری DeepSeek — نرخ‌های خارج از ساعت اوج
+# برای deepseek-v4-flash: ورودی ۰٫۲۲ و خروجی ۰٫۶۶ دلار به ازای هر میلیون توکن.
+DEEPSEEK_CURRENT_INPUT_USD_PER_M = float(os.environ.get("DEEPSEEK_CURRENT_INPUT_USD_PER_M", "0.22"))
+DEEPSEEK_CURRENT_OUTPUT_USD_PER_M = float(os.environ.get("DEEPSEEK_CURRENT_OUTPUT_USD_PER_M", "0.66"))
+DEEPSEEK_RATES_AS_OF = os.environ.get("DEEPSEEK_RATES_AS_OF", "2026-09-04")
+DEEPSEEK_RATES_SOURCE = os.environ.get(
+    "DEEPSEEK_RATES_SOURCE", "https://api-docs.deepseek.com/quick_start/pricing"
+)
+
 KIND_TRANSCRIBE = "transcribe"
 KIND_MINUTES = "minutes_draft"
 KIND_ASSISTANT = "assistant"
@@ -291,3 +301,89 @@ async def recent_user_usage(
             }
         )
     return events
+
+
+async def platform_ai_summary(db: AsyncSession) -> Dict[str, Any]:
+    """مصرف کل پلتفرم در همهٔ سازمان‌ها برای دو هوش پیش‌فرض.
+
+    - «حرف (روشن)»: مجموع دقیقه‌های رونویسی (هر دقیقه = ۱ توکن ویدارا).
+    - DeepSeek: مجموع توکن‌های ورودی/خروجی و معادل دلاری آن با تعرفهٔ روز
+      (هر سنت از دلارِ نرخ روز = ۱ توکن ویدارا).
+    مقادیر «کل» بدون فیلتر زمانی و «دوره» محدود به ماه جاری است.
+    """
+
+    async def _sum_columns(provider: str, *columns: Any, since: Optional[datetime] = None) -> List[int]:
+        condition = Ai_user_usage.provider == provider
+        if since is not None:
+            condition = condition & (Ai_user_usage.created_at >= since)
+        result = await db.execute(
+            select(*[func.coalesce(func.sum(column), 0) for column in columns]).where(condition)
+        )
+        return [int(value or 0) for value in result.one()]
+
+    def llm_usd(tokens_in: int, tokens_out: int) -> float:
+        return round(
+            (
+                tokens_in * DEEPSEEK_CURRENT_INPUT_USD_PER_M
+                + tokens_out * DEEPSEEK_CURRENT_OUTPUT_USD_PER_M
+            )
+            / 1_000_000,
+            4,
+        )
+
+    def llm_vidara_tokens(tokens_in: int, tokens_out: int) -> int:
+        """معادل توکن ویدارا بر پایهٔ دلار نرخ روز (هر سنت = ۱ توکن)."""
+        return max(int(round(llm_usd(tokens_in, tokens_out) * 100)), 0)
+
+    period_start = _period_start()
+    stt_minutes_total = (await _sum_columns("harf", Ai_user_usage.minutes_charged))[0]
+    stt_minutes_period = (
+        await _sum_columns("harf", Ai_user_usage.minutes_charged, since=period_start)
+    )[0]
+    tokens_in_total, tokens_out_total, cost_cents_total = await _sum_columns(
+        "deepseek", Ai_user_usage.tokens_in, Ai_user_usage.tokens_out, Ai_user_usage.cost_cents
+    )
+    tokens_in_period, tokens_out_period, _ = await _sum_columns(
+        "deepseek", Ai_user_usage.tokens_in, Ai_user_usage.tokens_out, Ai_user_usage.cost_cents,
+        since=period_start,
+    )
+
+    stt_vidara_total = tokens_of(stt_minutes_total)
+    stt_vidara_period = tokens_of(stt_minutes_period)
+    llm_vidara_total = llm_vidara_tokens(tokens_in_total, tokens_out_total)
+    llm_vidara_period = llm_vidara_tokens(tokens_in_period, tokens_out_period)
+
+    return {
+        "period": current_period(),
+        "stt": {
+            "provider_key": "harf",
+            "provider_label": "حرف (روشن)",
+            "minutes_total": stt_minutes_total,
+            "minutes_period": stt_minutes_period,
+            "vidara_tokens_total": stt_vidara_total,
+            "vidara_tokens_period": stt_vidara_period,
+        },
+        "llm": {
+            "provider_key": "deepseek",
+            "provider_label": "DeepSeek",
+            "tokens_in_total": tokens_in_total,
+            "tokens_out_total": tokens_out_total,
+            "tokens_total": tokens_in_total + tokens_out_total,
+            "tokens_in_period": tokens_in_period,
+            "tokens_out_period": tokens_out_period,
+            "tokens_period": tokens_in_period + tokens_out_period,
+            "cost_cents_total": cost_cents_total,
+            "usd_total": llm_usd(tokens_in_total, tokens_out_total),
+            "usd_period": llm_usd(tokens_in_period, tokens_out_period),
+            "vidara_tokens_total": llm_vidara_total,
+            "vidara_tokens_period": llm_vidara_period,
+        },
+        "vidara_tokens_total": stt_vidara_total + llm_vidara_total,
+        "vidara_tokens_period": stt_vidara_period + llm_vidara_period,
+        "deepseek_rates": {
+            "input_usd_per_m": DEEPSEEK_CURRENT_INPUT_USD_PER_M,
+            "output_usd_per_m": DEEPSEEK_CURRENT_OUTPUT_USD_PER_M,
+            "as_of": DEEPSEEK_RATES_AS_OF,
+            "source": DEEPSEEK_RATES_SOURCE,
+        },
+    }
