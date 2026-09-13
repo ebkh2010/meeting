@@ -44,6 +44,7 @@ from services import ai_usage
 from services import app_auth
 from services import notify_channels as channels
 from services import platform_admin
+from services import platform_settings
 from services import storage_targets
 from services.mgmt_core import AUDIO_BUCKET
 from services.meeting_files import ATTACHMENTS_BUCKET
@@ -203,6 +204,18 @@ async def _audit(
         logger.warning("ثبت Audit پلتفرم ناموفق بود: %s", exc)
 
 
+def _admin_pending_activation(admin: Optional[App_users]) -> bool:
+    """آیا مدیر سازمان هنوز حساب خود را فعال نکرده است؟
+
+    سازمان «ثبت‌نام‌شده ولی فعال‌نشده» یعنی مدیر آن یا تکمیل مشخصاتِ نخستین ورود
+    را انجام نداده است (``must_change_password``) یا از زمان ثبت‌نام هرگز وارد
+    نشده است (``last_login_at`` خالی).
+    """
+    if admin is None:
+        return False
+    return bool(admin.must_change_password) or admin.last_login_at is None
+
+
 def _org_card(org: Organizations, admin: Optional[App_users], quota: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id": int(org.id),
@@ -219,6 +232,8 @@ def _org_card(org: Organizations, admin: Optional[App_users], quota: Dict[str, A
                 "email": admin.email or "",
                 "must_change_password": bool(admin.must_change_password),
                 "status": admin.status or "active",
+                "last_login_at": admin.last_login_at.isoformat() if admin.last_login_at else "",
+                "pending_activation": _admin_pending_activation(admin),
             }
             if admin is not None
             else None
@@ -270,6 +285,31 @@ def _sms_welcome_message(first_name: str, last_name: str, org_name: str, usernam
         f"نام کاربری: {username}\nرمز عبور: {password}\n"
         f"پس از نخستین ورود، رمز عبور را تغییر دهید و کد ملی و ایمیل خود را تکمیل کنید.\n"
         f"نشانی ورود: {base_url}\nلغو ۱۱"
+    )
+
+
+def _sms_activation_reminder(
+    first_name: str,
+    last_name: str,
+    gender: str,
+    username: str,
+    password: str,
+    organization_name: str,
+    template: str,
+) -> str:
+    """متن نهایی پیامک یادآوری فعال‌سازی از قالب قابل‌ویرایش پنل مدیریت.
+
+    خودِ قالب در جدول تنظیمات سراسری نگه داشته می‌شود و مدیر پلتفرم آن را
+    ویرایش می‌کند؛ اینجا فقط جای‌نگهدارها با مقدار واقعی همین گیرنده پر می‌شوند.
+    """
+    return platform_settings.render_activation_reminder(
+        template,
+        first_name=first_name,
+        last_name=last_name,
+        gender=gender,
+        username=username,
+        password=password,
+        organization_name=organization_name,
     )
 
 
@@ -524,6 +564,142 @@ async def resend_admin_sms(
         "success": bool(sms_result["ok"]),
         "sms": sms_result,
         "default_credentials": {"username": admin.username or admin.mobile or "", "password": password},
+    }
+
+
+@router.post("/orgs/{org_id}/activation-reminder")
+async def send_activation_reminder(
+    org_id: int,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """ارسال پیامک یادآوری فعال‌سازی برای سازمان ثبت‌نام‌شدهٔ هنوز فعال‌نشده.
+
+    برای سازمان‌هایی که مدیر آن‌ها هنوز تکمیل مشخصاتِ نخستین ورود را انجام
+    نداده است (``must_change_password``) یا از زمان ثبت‌نام هرگز وارد نشده است
+    (``last_login_at`` خالی). رمز قبلی هش‌شده و قابل بازیابی نیست، بنابراین رمز
+    تازه ساخته می‌شود و پیامکی شامل همهٔ اطلاعات لازم برای ورود و تکمیل
+    (نام کاربری، رمز عبور و نشانی ورود) به موبایل مدیر ارسال می‌گردد.
+    """
+    org = await _get_org(db, org_id)
+    if (org.status or "active") == "trashed":
+        raise app_auth.conflict("این سازمان در سطل آشغال است؛ یادآوری فعال‌سازی ممکن نیست.")
+    admin = await _org_admin(db, org_id)
+    if admin is None:
+        raise _not_found("مدیر سازمان یافت نشد.")
+    if not _admin_pending_activation(admin):
+        raise app_auth.conflict(
+            "این سازمان قبلاً فعال شده است؛ ارسال یادآوری فعال‌سازی لازم نیست."
+        )
+    mobile = (admin.mobile or "").strip()
+    if not mobile:
+        raise _bad("شماره موبایل مدیر سازمان ثبت نشده است.")
+
+    password = secrets.token_hex(5)
+    admin.password_hash = app_auth.hash_password(password)
+    admin.must_change_password = True
+
+    template = await platform_settings.get_activation_reminder_template(db)
+    message = _sms_activation_reminder(
+        admin.first_name or "", admin.last_name or "", admin.gender or "",
+        admin.username or mobile, password, org.name or "", template,
+    )
+    sms_result = await _send_notice_sms(db, admin, message, use_org_row=True)
+
+    await _audit(
+        db, org_id, principal, "platform.org_activation_reminder_sent", entity_id=org_id,
+        detail=(
+            f"پیامک یادآوری فعال‌سازی برای مدیر «{admin.first_name} {admin.last_name}» "
+            f"({mobile}) ارسال شد (ok={sms_result['ok']})"
+        ),
+    )
+    await db.commit()
+    return {
+        "success": bool(sms_result["ok"]),
+        "sms": sms_result,
+        "default_credentials": {"username": admin.username or mobile, "password": password},
+        "pending_activation": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# قالب پیامک یادآوری فعال‌سازی (تنظیمات سراسری پلتفرم)
+# ---------------------------------------------------------------------------
+
+
+class ActivationReminderTemplateIn(BaseModel):
+    """ورودی ویرایشِ قالب پیامک یادآوری فعال‌سازی."""
+
+    template: str = Field(default="", max_length=platform_settings.MAX_TEMPLATE_LENGTH)
+    reset: bool = False
+
+
+async def _activation_reminder_payload(db: AsyncSession) -> Dict[str, Any]:
+    """وضعیت قالب فعال: متن، متن پیش‌فرض، جای‌نگهدارها و پیش‌نمایش."""
+    stored = await platform_settings.get_setting(db, platform_settings.ACTIVATION_REMINDER_KEY)
+    is_custom = stored is not None and bool(stored.strip())
+    template = stored if is_custom else platform_settings.DEFAULT_ACTIVATION_REMINDER_TEMPLATE
+    return {
+        "template": template,
+        "default_template": platform_settings.DEFAULT_ACTIVATION_REMINDER_TEMPLATE,
+        "is_custom": is_custom,
+        "max_length": platform_settings.MAX_TEMPLATE_LENGTH,
+        "optout_line": platform_settings.SMS_OPTOUT_LINE,
+        "placeholders": platform_settings.PLACEHOLDERS,
+        "preview": platform_settings.render_template(template, platform_settings.sample_context()),
+    }
+
+
+@router.get("/settings/activation-reminder")
+async def get_activation_reminder_template(
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """خواندن قالب پیامک یادآوری فعال‌سازی برای ویرایش در پنل مدیریت."""
+    return await _activation_reminder_payload(db)
+
+
+@router.put("/settings/activation-reminder")
+async def update_activation_reminder_template(
+    data: ActivationReminderTemplateIn,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """ثبت قالب جدید، یا بازگرداندن آن به متن پیش‌فرض با ``reset=true``."""
+    if data.reset:
+        await platform_settings.set_setting(db, platform_settings.ACTIVATION_REMINDER_KEY, None)
+        detail = "قالب پیامک یادآوری فعال‌سازی به متن پیش‌فرض بازگردانده شد"
+    else:
+        template = platform_settings.normalize_template(data.template)
+        if not template:
+            raise _bad("متن قالب نمی‌تواند خالی باشد.")
+        missing = [token for token in ("{username}", "{password}") if token not in template]
+        if missing:
+            raise _bad(
+                "قالب باید شامل "
+                + " و ".join(missing)
+                + " باشد؛ بدون آن‌ها مدیر سازمان اطلاعات ورود را دریافت نمی‌کند."
+            )
+        await platform_settings.set_setting(db, platform_settings.ACTIVATION_REMINDER_KEY, template)
+        detail = "قالب پیامک یادآوری فعال‌سازی ویرایش شد"
+
+    # سازمان صفر = رویداد سطح پلتفرم؛ این تنظیم به هیچ مستأجری تعلق ندارد.
+    await _audit(db, 0, principal, "platform.activation_reminder_template_updated", detail=detail)
+    await db.commit()
+    return await _activation_reminder_payload(db)
+
+
+@router.post("/settings/activation-reminder/preview")
+async def preview_activation_reminder_template(
+    data: ActivationReminderTemplateIn,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+) -> Dict[str, Any]:
+    """پیش‌نمایش متن با مقادیر نمونه — بدون ذخیره‌سازی."""
+    template = platform_settings.normalize_template(data.template)
+    if not template:
+        template = platform_settings.DEFAULT_ACTIVATION_REMINDER_TEMPLATE
+    return {
+        "preview": platform_settings.render_template(template, platform_settings.sample_context())
     }
 
 

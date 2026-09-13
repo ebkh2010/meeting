@@ -80,6 +80,9 @@ export interface PlatformOrgAdmin {
   email: string;
   must_change_password: boolean;
   status: string;
+  last_login_at: string;
+  /** ثبت‌نام شده ولی هنوز فعال نشده: تکمیل مشخصات یا نخستین ورود انجام نشده است. */
+  pending_activation: boolean;
 }
 
 export interface PlatformOrgQuota {
@@ -252,6 +255,25 @@ export interface PlatformOrgActivity {
   }[];
 }
 
+/** یک جای‌نگهدار قابل درج در قالب پیامک یادآوری فعال‌سازی. */
+export interface PlatformMessagePlaceholder {
+  token: string;
+  label: string;
+  description: string;
+  sample: string;
+}
+
+/** قالب سراسری پیامک یادآوری فعال‌سازی به‌همراه پیش‌نمایش رندرشده. */
+export interface PlatformActivationTemplate {
+  template: string;
+  default_template: string;
+  is_custom: boolean;
+  max_length: number;
+  optout_line: string;
+  placeholders: PlatformMessagePlaceholder[];
+  preview: string;
+}
+
 export const platformApi = {
   me: () => call<{ user: PlatformMe }>(`${BASE}/me`),
 
@@ -290,6 +312,29 @@ export const platformApi = {
       sms: { ok: boolean; error: string; provider_message_id: string };
       default_credentials: { username: string; password: string };
     }>(`${BASE}/orgs/${orgId}/resend-admin-sms`, 'POST'),
+
+  /** ارسال پیامک یادآوری فعال‌سازی برای سازمان ثبت‌نام‌شدهٔ هنوز فعال‌نشده. */
+  sendActivationReminder: (orgId: number) =>
+    call<{
+      success: boolean;
+      sms: { ok: boolean; error: string; provider_message_id: string };
+      default_credentials: { username: string; password: string };
+      pending_activation: boolean;
+    }>(`${BASE}/orgs/${orgId}/activation-reminder`, 'POST'),
+
+  /** خواندن قالب سراسری پیامک یادآوری فعال‌سازی برای ویرایش در پنل. */
+  getActivationTemplate: () =>
+    call<PlatformActivationTemplate>(`${BASE}/settings/activation-reminder`),
+
+  /** ثبت قالب جدید؛ با `reset: true` متن به پیش‌فرض بازمی‌گردد. */
+  updateActivationTemplate: (payload: { template?: string; reset?: boolean }) =>
+    call<PlatformActivationTemplate>(`${BASE}/settings/activation-reminder`, 'PUT', payload),
+
+  /** پیش‌نمایش متن با مقادیر نمونه (بدون ذخیره‌سازی). */
+  previewActivationTemplate: (template: string) =>
+    call<{ preview: string }>(`${BASE}/settings/activation-reminder/preview`, 'POST', {
+      template,
+    }),
 
   updateNotify: (orgId: number, payload: Record<string, unknown>) =>
     call<PlatformNotify>(`${BASE}/orgs/${orgId}/notify`, 'PATCH', payload),

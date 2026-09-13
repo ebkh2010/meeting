@@ -3,7 +3,7 @@
  * تنظیمات هر سازمان (ایمیل/پیامک/AI/استوریج)، سقف‌های مصرف AI،
  * و سطل آشغال (بازیابی / پاک‌سازی کامل).
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,18 +16,21 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import LoadingGif from '@/components/LoadingGif';
-import { Building2, BarChart3, Bot, Coins, History, Mic, RefreshCcw, Settings2, Trash2, UserPlus } from 'lucide-react';
+import { Building2, BarChart3, BellRing, Bot, Coins, History, MessageSquareText, Mic, Pencil, RefreshCcw, RotateCcw, Settings2, Trash2, UserPlus } from 'lucide-react';
 import {
   errorMessage,
   platformApi,
   type CreateOrgResult,
+  type PlatformActivationTemplate,
   type PlatformAiProvider,
   type PlatformAiSummary,
+  type PlatformMessagePlaceholder,
   type PlatformNotify,
   type PlatformOrg,
   type PlatformOrgActivity,
@@ -47,25 +50,235 @@ const AI_PROVIDER_LABELS: Record<string, string> = {
   kimi: 'Kimi',
 };
 
+type PlatformTab = 'orgs' | 'usage' | 'templates' | 'trash';
+
 export default function PlatformAdmin() {
-  const [tab, setTab] = useState<'orgs' | 'trash' | 'usage'>('orgs');
+  const [tab, setTab] = useState<PlatformTab>('orgs');
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-bold">مدیریت پلتفرم</h1>
-        <Tabs
-          value={tab}
-          onValueChange={(value) => setTab(value as 'orgs' | 'trash' | 'usage')}
-        >
+        <Tabs value={tab} onValueChange={(value) => setTab(value as PlatformTab)}>
           <TabsList className="flex flex-wrap">
             <TabsTrigger value="orgs">سازمان‌ها</TabsTrigger>
             <TabsTrigger value="usage">مصرف هوش مصنوعی</TabsTrigger>
+            <TabsTrigger value="templates">قالب پیام‌ها</TabsTrigger>
             <TabsTrigger value="trash">سطل آشغال</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
-      {tab === 'orgs' ? <OrgsView /> : tab === 'usage' ? <AiUsageView /> : <TrashView onChanged={() => setTab('orgs')} />}
+      {tab === 'orgs' && <OrgsView />}
+      {tab === 'usage' && <AiUsageView />}
+      {tab === 'templates' && <MessagesView />}
+      {tab === 'trash' && <TrashView onChanged={() => setTab('orgs')} />}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* قالب پیام‌های سامانه (سراسری)                                        */
+/* ------------------------------------------------------------------ */
+
+/** جانشانی سمت کلاینتِ جای‌نگهدارها برای پیش‌نمایش زنده.
+ *
+ *  هم‌رفتار با بک‌اند: فقط توکن‌های شناخته‌شده جانشین می‌شوند و آکولادهای
+ *  سرگردان در متن دست‌نخورده می‌مانند تا رندر نشکند.
+ */
+function renderTemplatePreview(
+  template: string,
+  placeholders: PlatformMessagePlaceholder[],
+): string {
+  return placeholders.reduce((text, item) => text.split(item.token).join(item.sample), template);
+}
+
+/** تخمین تعداد پیامک (اپراتور هر ۷۰ کاراکتر را یک پیامک می‌شمارد). */
+function smsParts(text: string): number {
+  const length = (text || '').trim().length;
+  return length ? Math.ceil(length / 70) : 0;
+}
+
+function MessagesView() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <MessageSquareText className="h-5 w-5" />
+          پیامک یادآوری فعال‌سازی
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="mb-4 text-sm text-muted-foreground">
+          این متن برای سازمان‌هایی فرستاده می‌شود که ثبت‌نام کرده‌اند ولی هنوز وارد
+          سامانه نشده‌اند. یک متن برای همهٔ سازمان‌ها استفاده می‌شود.
+        </p>
+        <ActivationTemplateEditor />
+      </CardContent>
+    </Card>
+  );
+}
+
+/** ویرایشگر متن پیامک یادآوری فعال‌سازی: جای‌نگهدار، پیش‌نمایش زنده و ذخیره. */
+function ActivationTemplateEditor({ onSaved }: { onSaved?: () => void }) {
+  const [data, setData] = useState<PlatformActivationTemplate | null>(null);
+  const [template, setTemplate] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const payload = await platformApi.getActivationTemplate();
+      setData(payload);
+      setTemplate(payload.template);
+    } catch (err) {
+      toast.error(errorMessage(err, 'خواندن قالب پیام ناموفق بود.'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  /** درج جای‌نگهدار در محل نشانگر متن. */
+  const insertToken = (token: string) => {
+    const element = textareaRef.current;
+    if (!element) {
+      setTemplate((previous) => previous + token);
+      return;
+    }
+    const start = element.selectionStart ?? template.length;
+    const end = element.selectionEnd ?? start;
+    setTemplate(template.slice(0, start) + token + template.slice(end));
+    requestAnimationFrame(() => {
+      element.focus();
+      const caret = start + token.length;
+      element.setSelectionRange(caret, caret);
+    });
+  };
+
+  const applyResult = (payload: PlatformActivationTemplate, message: string) => {
+    setData(payload);
+    setTemplate(payload.template);
+    toast.success(message);
+    onSaved?.();
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      applyResult(await platformApi.updateActivationTemplate({ template }), 'قالب پیام ذخیره شد.');
+    } catch (err) {
+      toast.error(errorMessage(err, 'ذخیرهٔ قالب پیام ناموفق بود.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReset = async () => {
+    setSaving(true);
+    try {
+      applyResult(
+        await platformApi.updateActivationTemplate({ reset: true }),
+        'قالب به متن پیش‌فرض بازگشت.',
+      );
+    } catch (err) {
+      toast.error(errorMessage(err, 'بازگردانی قالب ناموفق بود.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return <LoadingGif label="در حال دریافت قالب پیام…" />;
+  }
+
+  const placeholders = data?.placeholders ?? [];
+  const missing = ['{username}', '{password}'].filter((token) => !template.includes(token));
+  const parts = smsParts(renderTemplatePreview(template, placeholders));
+  const dirty = Boolean(data) && template.trim() !== (data?.template ?? '').trim();
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={data?.is_custom ? 'default' : 'secondary'}>
+          {data?.is_custom ? 'متن سفارشی' : 'متن پیش‌فرض'}
+        </Badge>
+        <span className="text-xs text-muted-foreground">
+          حدود {toPersianDigits(String(parts))} پیامک
+        </span>
+        {dirty && (
+          <Badge variant="outline" className="border-amber-500 text-amber-600 dark:text-amber-400">
+            ذخیره‌نشده
+          </Badge>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <Label className="text-xs text-muted-foreground">
+          برای درج مقدار متغیر، روی جای‌نگهدار بزنید:
+        </Label>
+        <div className="flex flex-wrap gap-1.5">
+          {placeholders.map((item) => (
+            <button
+              key={item.token}
+              type="button"
+              title={item.description}
+              onClick={() => insertToken(item.token)}
+              className="rounded-md border bg-muted px-2 py-1 font-mono text-xs transition-colors hover:bg-accent"
+              dir="ltr"
+            >
+              {item.token}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="activation-template">متن پیام</Label>
+        <Textarea
+          id="activation-template"
+          ref={textareaRef}
+          value={template}
+          onChange={(event) => setTemplate(event.target.value)}
+          rows={12}
+          maxLength={data?.max_length ?? 2000}
+          className="min-h-[220px] leading-7"
+        />
+        {missing.length > 0 ? (
+          <p className="text-xs text-destructive">
+            قالب باید شامل {missing.join(' و ')} باشد؛ بدون آن‌ها مدیر سازمان اطلاعات
+            ورود را دریافت نمی‌کند.
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            «{data?.optout_line}» را حذف نکنید؛ بدون آن اپراتور پیامک را فیلتر می‌کند.
+          </p>
+        )}
+      </div>
+
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">پیش‌نمایش (با مقادیر نمونه)</Label>
+        <pre
+          dir="rtl"
+          className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm leading-7"
+        >
+          {renderTemplatePreview(template || data?.default_template || '', placeholders)}
+        </pre>
+      </div>
+
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="outline" disabled={saving} onClick={() => void handleReset()}>
+          <RotateCcw className="ml-1 h-4 w-4" />
+          بازگردانی به پیش‌فرض
+        </Button>
+        <Button disabled={saving || missing.length > 0} onClick={() => void handleSave()}>
+          {saving ? 'در حال ذخیره…' : 'ذخیرهٔ متن'}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -263,6 +476,7 @@ function OrgsView() {
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsOrg, setSettingsOrg] = useState<PlatformOrg | null>(null);
   const [resendOrg, setResendOrg] = useState<PlatformOrg | null>(null);
+  const [reminderOrg, setReminderOrg] = useState<PlatformOrg | null>(null);
   const [activityOrg, setActivityOrg] = useState<PlatformOrg | null>(null);
 
   const load = useCallback(async () => {
@@ -324,12 +538,19 @@ function OrgsView() {
                       <span className="font-medium">{org.name}</span>
                       {org.status === 'trashed' ? (
                         <Badge variant="destructive">در سطل آشغال</Badge>
+                      ) : org.admin?.pending_activation ? (
+                        <Badge variant="outline" className="border-amber-500 text-amber-600 dark:text-amber-400">
+                          ثبت‌نام‌شده — در انتظار فعال‌سازی
+                        </Badge>
                       ) : (
                         <Badge variant="secondary">فعال</Badge>
                       )}
                     </div>
                     <p className="text-xs text-muted-foreground">
                       مدیر: {org.admin ? `${org.admin.full_name} (${org.admin.mobile})` : '—'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      آخرین ورود: {org.admin?.last_login_at ? formatDateTime(org.admin.last_login_at) : '—'}
                       {org.admin?.must_change_password ? ' · در انتظار تکمیل مشخصات' : ''}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
@@ -359,6 +580,16 @@ function OrgsView() {
                     <RefreshCcw className="ml-1 h-4 w-4" />
                     ارسال دوبارهٔ رمز
                   </Button>
+                  {org.admin?.pending_activation && org.status !== 'trashed' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setReminderOrg(org)}
+                    >
+                      <BellRing className="ml-1 h-4 w-4" />
+                      یادآوری فعال‌سازی
+                    </Button>
+                  )}
                   <Button variant="outline" size="sm" onClick={() => setSettingsOrg(org)}>
                     <Settings2 className="ml-1 h-4 w-4" />
                     تنظیمات
@@ -382,6 +613,9 @@ function OrgsView() {
       {createOpen && <CreateOrgDialog open onClose={() => setCreateOpen(false)} onCreated={() => void load()} />}
       {activityOrg && <ActivityDialog org={activityOrg} onClose={() => setActivityOrg(null)} />}
       {resendOrg && <ResendSmsDialog org={resendOrg} onClose={() => setResendOrg(null)} />}
+      {reminderOrg && (
+        <ReminderDialog org={reminderOrg} onClose={() => setReminderOrg(null)} onSent={() => void load()} />
+      )}
       {settingsOrg && (
         <SettingsDialog org={settingsOrg} onClose={() => setSettingsOrg(null)} onChanged={() => void load()} />
       )}
@@ -451,6 +685,111 @@ function ResendSmsDialog({ org, onClose }: { org: PlatformOrg; onClose: () => vo
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* دیالوگ پیامک یادآوری فعال‌سازی                                       */
+/* ------------------------------------------------------------------ */
+
+function ReminderDialog({
+  org,
+  onClose,
+  onSent,
+}: {
+  org: PlatformOrg;
+  onClose: () => void;
+  onSent: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState(false);
+  const [result, setResult] = useState<{
+    success: boolean;
+    sms: { ok: boolean; error: string; provider_message_id: string };
+    default_credentials: { username: string; password: string };
+    pending_activation: boolean;
+  } | null>(null);
+
+  const handleSend = async () => {
+    setBusy(true);
+    try {
+      const data = await platformApi.sendActivationReminder(org.id);
+      setResult(data);
+      toast.success('پیامک یادآوری فعال‌سازی ارسال شد.');
+      onSent();
+    } catch (err) {
+      toast.error(errorMessage(err, 'ارسال پیامک یادآوری ناموفق بود.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Dialog open onOpenChange={(value) => !value && onClose()}>
+        <DialogContent className="max-h-[85vh] max-w-md overflow-y-auto p-4 sm:p-6">
+          <DialogHeader>
+            <DialogTitle>پیامک یادآوری فعال‌سازی — «{org.name}»</DialogTitle>
+            <DialogDescription>
+              این سازمان ثبت‌نام شده ولی هنوز فعال نشده است. رمز قبلی قابل بازیابی
+              نیست؛ رمز تازه ساخته می‌شود و پیامکی شامل نام کاربری، رمز عبور و نشانی
+              ورود برای تکمیل مشخصات به <span dir="ltr">{org.admin?.mobile}</span>{' '}
+              ارسال می‌شود.
+            </DialogDescription>
+          </DialogHeader>
+          {result ? (
+            <div className="space-y-3 rounded-md border p-3 text-sm">
+              <div className="space-y-1 rounded-md bg-muted p-3 font-mono text-sm" dir="ltr">
+                <p>username: {result.default_credentials.username}</p>
+                <p>password: {result.default_credentials.password}</p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {result.sms.ok
+                  ? 'پیامک با موفقیت به پنل تحویل شد؛ اگر تأخیر اپراتور بود، چند دقیقه صبر کنید.'
+                  : `پیامک ارسال نشد (${result.sms.error || 'خطای نامشخص'}) — اطلاعات بالا را خودتان اعلام کنید.`}
+              </p>
+              <div className="flex justify-end">
+                <Button onClick={onClose}>بستن</Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-start"
+                onClick={() => setEditingTemplate(true)}
+              >
+                <Pencil className="ml-1 h-4 w-4" />
+                ویرایش متن پیام
+              </Button>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={onClose}>
+                  انصراف
+                </Button>
+                <Button disabled={busy} onClick={() => void handleSend()}>
+                  {busy ? 'در حال ارسال…' : 'ارسال پیامک یادآوری'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {editingTemplate && (
+        <Dialog open onOpenChange={(value) => !value && setEditingTemplate(false)}>
+          <DialogContent className="max-h-[88vh] max-w-2xl overflow-y-auto p-4 sm:p-6">
+            <DialogHeader>
+              <DialogTitle>ویرایش متن پیامک یادآوری فعال‌سازی</DialogTitle>
+              <DialogDescription>
+                این متن سراسری است و برای همهٔ سازمان‌ها استفاده می‌شود.
+              </DialogDescription>
+            </DialogHeader>
+            <ActivationTemplateEditor />
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   );
 }
 
