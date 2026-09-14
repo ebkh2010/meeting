@@ -230,7 +230,6 @@ function DashboardBody() {
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-medium">{meeting.title}</span>
-                    <Badge variant="outline">{meeting.meeting_type}</Badge>
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {formatDateTime(meeting.starts_at)} • دبیر: {meeting.secretary_name || '—'}

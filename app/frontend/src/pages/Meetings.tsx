@@ -5,11 +5,11 @@ import { Link, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   CalendarPlus,
-  ChevronDown,
   Filter,
   ListChecks,
   MapPin,
   Paperclip,
+  Pencil,
   Plus,
   Search,
   Trash2,
@@ -26,6 +26,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -51,6 +52,7 @@ import {
 } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
 import LoadingGif from '@/components/LoadingGif';
+import FilePicker from '@/components/FilePicker';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
@@ -73,15 +75,11 @@ import {
 /** یک بند دستور جلسه در فرم ایجاد جلسه (پیش از ذخیرهٔ جلسه). */
 interface AgendaDraft {
   title: string;
-  planned_minutes: string;
-  owner_name: string;
   notes: string;
 }
 
 const EMPTY_AGENDA_ITEM: AgendaDraft = {
   title: '',
-  planned_minutes: '15',
-  owner_name: '',
   notes: '',
 };
 
@@ -204,7 +202,6 @@ function MeetingsBody({ bootstrap }: { bootstrap: Bootstrap }) {
               </Button>
             </DialogTrigger>
             <CreateMeetingDialog
-              bootstrap={bootstrap}
               members={members}
               onDone={() => {
                 setDialogOpen(false);
@@ -306,7 +303,6 @@ function MeetingsBody({ bootstrap }: { bootstrap: Bootstrap }) {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <CardTitle className="text-base">{meeting.title}</CardTitle>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="outline">{meeting.meeting_type}</Badge>
                     <Badge variant={meeting.status === 'cancelled' ? 'destructive' : 'secondary'}>
                       {MEETING_STATUS_LABELS[meeting.status] || meeting.status}
                     </Badge>
@@ -318,8 +314,7 @@ function MeetingsBody({ bootstrap }: { bootstrap: Bootstrap }) {
               </CardHeader>
               <CardContent className="space-y-1 pb-2 text-xs text-muted-foreground">
                 <p>
-                  {formatDateTime(meeting.starts_at)} • {toPersianDigits(meeting.duration_minutes)}{' '}
-                  دقیقه • دبیر: {meeting.secretary_name || '—'}
+                  {formatDateTime(meeting.starts_at)} • دبیر: {meeting.secretary_name || '—'}
                 </p>
                 <p>
                   دعوت‌شده: {toPersianDigits(meeting.counts?.total ?? 0)} • تأیید حضور:{' '}
@@ -360,9 +355,16 @@ function MeetingsBody({ bootstrap }: { bootstrap: Bootstrap }) {
   );
 }
 
-/** بخش بازشوی فرم ثبت جلسه: سربرگ خودش کلید است و محتوا فقط در حالت باز رندر می‌شود. */
+/**
+ * یک بخش فرم ثبت جلسه: کلید بازکنندهٔ پاپ‌آپ + خودِ پاپ‌آپ.
+ *
+ * چرا پاپ‌آپ: فرم ثبت جلسه باید کوتاه بماند؛ هر بخش در پنجرهٔ جداگانه باز می‌شود و
+ * با «ثبت و بازگشت» بسته می‌شود و کاربر به همان فرم برمی‌گردد. مقدارها همان لحظه
+ * در وضعیت فرم نوشته می‌شوند (کنترل‌شده)، پس «ثبت» فقط پنجره را می‌بندد.
+ */
 function FormSection({
   title,
+  description,
   icon: Icon,
   summary,
   open,
@@ -370,6 +372,7 @@ function FormSection({
   children,
 }: {
   title: string;
+  description?: string;
   icon: typeof Users2;
   summary?: string;
   open: boolean;
@@ -377,12 +380,13 @@ function FormSection({
   children: ReactNode;
 }) {
   return (
-    <div className="rounded-md border border-border">
-      <button
+    <>
+      <Button
         type="button"
+        variant="outline"
         onClick={onToggle}
-        aria-expanded={open}
-        className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-start transition-colors hover:bg-accent"
+        aria-haspopup="dialog"
+        className="flex h-auto w-full items-center justify-between gap-2 py-2.5"
       >
         <span className="flex min-w-0 items-center gap-2">
           <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -390,28 +394,38 @@ function FormSection({
         </span>
         <span className="flex shrink-0 items-center gap-2">
           {summary ? <span className="text-xs text-muted-foreground">{summary}</span> : null}
-          <ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} />
+          <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
         </span>
-      </button>
-      {open ? <div className="space-y-3 border-t border-border p-3">{children}</div> : null}
-    </div>
+      </Button>
+
+      <Dialog open={open} onOpenChange={(value) => !value && onToggle()}>
+        <DialogContent className="max-h-[88vh] max-w-2xl overflow-y-auto" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>{title}</DialogTitle>
+            {description ? <DialogDescription>{description}</DialogDescription> : null}
+          </DialogHeader>
+          <div className="space-y-3">{children}</div>
+          <DialogFooter>
+            <Button type="button" onClick={onToggle}>
+              ثبت و بازگشت
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
 function CreateMeetingDialog({
-  bootstrap,
   members,
   onDone,
 }: {
-  bootstrap: Bootstrap;
   members: Member[];
   onDone: () => void;
 }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [meetingType, setMeetingType] = useState(bootstrap.meeting_types[0] || 'عملیاتی');
   const [startsAt, setStartsAt] = useState(() => new Date().toISOString());
-  const [duration, setDuration] = useState('60');
   const [location, setLocation] = useState('');
   const [onlineUrl, setOnlineUrl] = useState('');
   const [secretaryId, setSecretaryId] = useState('none');
@@ -422,7 +436,11 @@ function CreateMeetingDialog({
    * پیامک دعوت جلسه برایشان ارسال می‌شود.
    */
   const [newPeople, setNewPeople] = useState<NewPersonDraft[]>([]);
-  const [openSection, setOpenSection] = useState<'members' | 'location' | 'agenda' | null>('members');
+  /**
+   * کدام بخش به‌صورت پاپ‌آپ باز است؛ ``null`` یعنی هیچ‌کدام. هر پاپ‌آپ با «ثبت»
+   * بسته می‌شود و کاربر به همین فرم ثبت جلسه برمی‌گردد.
+   */
+  const [section, setSection] = useState<'members' | 'location' | 'agenda' | null>(null);
   const [agendaItems, setAgendaItems] = useState<AgendaDraft[]>([{ ...EMPTY_AGENDA_ITEM }]);
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
@@ -438,9 +456,9 @@ function CreateMeetingDialog({
   const [stage, setStage] = useState<'idle' | 'creating' | 'uploading'>('idle');
   const limits = getUploadLimits();
 
-  /** باز/بسته کردن بخش‌های فرم؛ هر بار فقط یک بخش باز می‌ماند تا فرم کوتاه بماند. */
-  const toggleSection = (section: 'members' | 'location' | 'agenda') =>
-    setOpenSection((prev) => (prev === section ? null : section));
+  /** باز/بسته کردن پاپ‌آپ بخش‌ها. */
+  const toggleSection = (target: 'members' | 'location' | 'agenda') =>
+    setSection((prev) => (prev === target ? null : target));
 
   const addNewPerson = () => setNewPeople((prev) => [...prev, { ...EMPTY_NEW_PERSON }]);
   const removeNewPerson = (index: number) =>
@@ -502,7 +520,7 @@ function CreateMeetingDialog({
         Boolean(person.first_name || person.last_name || person.mobile || person.email),
     );
     if (incomplete.length > 0) {
-      setOpenSection('members');
+      setSection('members');
       toast.error('برای هر فرد جدید، نام و نام خانوادگی و شمارهٔ موبایل را کامل کنید.');
       return;
     }
@@ -518,8 +536,6 @@ function CreateMeetingDialog({
       .map((item) => ({
         title: item.title.trim(),
         notes: item.notes.trim(),
-        planned_minutes: Number(item.planned_minutes) || 15,
-        owner_name: item.owner_name.trim(),
       }));
 
     setSaving(true);
@@ -533,9 +549,7 @@ function CreateMeetingDialog({
       const meeting = await api.createMeeting({
         title: title.trim(),
         description: description.trim(),
-        meeting_type: meetingType,
         starts_at: iso,
-        duration_minutes: Number(duration) || 60,
         location: location.trim(),
         online_url: onlineUrl.trim(),
         secretary_membership_id: secretaryId === 'none' ? null : Number(secretaryId),
@@ -625,9 +639,10 @@ function CreateMeetingDialog({
 
         <FormSection
           title="اعضای جلسه"
+          description="دبیر جلسه و دعوت‌شدگان را مشخص کنید. افراد خارج از فهرست اعضا را هم می‌توانید فقط با نام و شمارهٔ موبایل دعوت کنید."
           icon={Users2}
           summary={membersSummary}
-          open={openSection === 'members'}
+          open={section === 'members'}
           onToggle={() => toggleSection('members')}
         >
           <div className="space-y-2">
@@ -747,40 +762,15 @@ function CreateMeetingDialog({
         </FormSection>
 
         <FormSection
-          title="زمان و محل برگزاری"
+          title="محل و لینک برگزاری"
+          description="محل حضوری و نشانی جلسهٔ برخط را وارد کنید؛ هر کدام لازم باشد."
           icon={MapPin}
           summary={placeSummary}
-          open={openSection === 'location'}
+          open={section === 'location'}
           onToggle={() => toggleSection('location')}
         >
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3">
             <div className="space-y-2">
-              <Label>نوع جلسه</Label>
-              <Select value={meetingType} onValueChange={setMeetingType}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {bootstrap.meeting_types.map((type) => (
-                    <SelectItem key={type} value={type}>
-                      {type}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="meeting-duration">مدت (دقیقه)</Label>
-              <Input
-                id="meeting-duration"
-                type="number"
-                min={5}
-                max={600}
-                value={duration}
-                onChange={(event) => setDuration(event.target.value)}
-              />
-            </div>
-            <div className="space-y-2 sm:col-span-2">
               <Label htmlFor="meeting-location">محل برگزاری</Label>
               <Input
                 id="meeting-location"
@@ -789,7 +779,7 @@ function CreateMeetingDialog({
                 placeholder="اتاق جلسات طبقهٔ سوم"
               />
             </div>
-            <div className="space-y-2 sm:col-span-2">
+            <div className="space-y-2">
               <Label htmlFor="meeting-url">نشانی جلسهٔ برخط</Label>
               <Input
                 id="meeting-url"
@@ -803,9 +793,10 @@ function CreateMeetingDialog({
 
         <FormSection
           title="دستور جلسه و پیوست"
+          description="بندهای دستور جلسه همراه دعوت‌نامه ارسال می‌شود. پیوست‌ها پس از ثبت جلسه بارگذاری می‌شوند."
           icon={ListChecks}
           summary={agendaSummary}
-          open={openSection === 'agenda'}
+          open={section === 'agenda'}
           onToggle={() => toggleSection('agenda')}
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -844,23 +835,6 @@ function CreateMeetingDialog({
                   placeholder="عنوان بند، مثال: بررسی گزارش فروش"
                   onChange={(event) => updateAgenda(index, { title: event.target.value })}
                 />
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Input
-                    type="number"
-                    min={1}
-                    max={480}
-                    value={item.planned_minutes}
-                    placeholder="زمان پیش‌بینی‌شده (دقیقه)"
-                    onChange={(event) =>
-                      updateAgenda(index, { planned_minutes: event.target.value })
-                    }
-                  />
-                  <Input
-                    value={item.owner_name}
-                    placeholder="مسئول ارائهٔ بند"
-                    onChange={(event) => updateAgenda(index, { owner_name: event.target.value })}
-                  />
-                </div>
                 <Textarea
                   rows={2}
                   value={item.notes}
@@ -873,19 +847,16 @@ function CreateMeetingDialog({
 
           <div className="space-y-3">
             <Label htmlFor="meeting-files">پیوست دستور جلسه</Label>
-          <p className="text-xs text-muted-foreground">
-            فایل‌های انتخاب‌شده پس از ثبت جلسه بارگذاری و همراه ایمیل دعوت برای شرکت‌کنندگان ارسال
-            می‌شود. سقف حجم هر پیوست: {toPersianDigits(limits.maxAttachmentMb)} مگابایت.
-          </p>
-          <Input
-            id="meeting-files"
-            type="file"
-            multiple
-            onChange={(event) => {
-              pickFiles(event.target.files);
-              event.target.value = '';
-            }}
-          />
+            <p className="text-xs text-muted-foreground">
+              فایل‌های انتخاب‌شده پس از ثبت جلسه بارگذاری و همراه ایمیل دعوت برای شرکت‌کنندگان
+              ارسال می‌شود. سقف حجم هر پیوست: {toPersianDigits(limits.maxAttachmentMb)} مگابایت.
+            </p>
+            <FilePicker
+              id="meeting-files"
+              multiple
+              onSelect={pickFiles}
+              label="انتخاب فایل پیوست"
+            />
           {files.length > 0 && (
             <div className="space-y-2">
               {files.map((file, index) => {

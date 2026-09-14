@@ -52,6 +52,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import MarkdownText from '@/components/MarkdownText';
 import HighlightText from '@/components/HighlightText';
+import FilePicker from '@/components/FilePicker';
 import {
   ACTION_STATUS_LABELS,
   api,
@@ -277,12 +278,10 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
             <HighlightText text={meeting.title} query={focusQuery} />
           </h1>
           <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-            <Badge variant="outline">{meeting.meeting_type}</Badge>
             <Badge variant={meeting.status === 'cancelled' ? 'destructive' : 'secondary'}>
               {MEETING_STATUS_LABELS[meeting.status] || meeting.status}
             </Badge>
             <span>{formatDateTime(meeting.starts_at)}</span>
-            <span>• {toPersianDigits(meeting.duration_minutes)} دقیقه</span>
             <span>• دبیر: {meeting.secretary_name || '—'}</span>
           </div>
           {meeting.description && (
@@ -1202,15 +1201,11 @@ function AudioAndTranscript({
               <Separator />
               <div className="space-y-3">
                 <Label htmlFor="audio-file">بارگذاری فایل صوتی یا ویدیوی جلسه</Label>
-                <Input
+                <FilePicker
                   id="audio-file"
-                  type="file"
-                  accept="audio/*,video/*"
                   multiple
-                  onChange={(event) => {
-                    pickMediaFiles(event.target.files);
-                    event.target.value = '';
-                  }}
+                  accept="audio/*,video/*"
+                  onSelect={pickMediaFiles}
                 />
                 <label className="flex items-start gap-2 text-xs text-muted-foreground">
                   <Checkbox
