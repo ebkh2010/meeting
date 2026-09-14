@@ -57,17 +57,17 @@ export default function PlatformAdmin() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-bold">مدیریت پلتفرم</h1>
-        <Tabs value={tab} onValueChange={(value) => setTab(value as PlatformTab)}>
-          <TabsList className="flex flex-wrap">
-            <TabsTrigger value="orgs">سازمان‌ها</TabsTrigger>
-            <TabsTrigger value="usage">مصرف هوش مصنوعی</TabsTrigger>
-            <TabsTrigger value="templates">قالب پیام‌ها</TabsTrigger>
-            <TabsTrigger value="trash">سطل آشغال</TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
+      <h1 className="text-xl font-bold">مدیریت پلتفرم</h1>
+      <Tabs value={tab} onValueChange={(value) => setTab(value as PlatformTab)}>
+        {/* یک ردیفِ قابل‌اسکرول در موبایل: چهار تب در عرض کم به‌جای شکستن به
+            چند خط، کنار هم می‌مانند و افقی اسکرول می‌شوند. */}
+        <TabsList className="w-full max-w-full justify-start overflow-x-auto">
+          <TabsTrigger value="orgs">سازمان‌ها</TabsTrigger>
+          <TabsTrigger value="usage">مصرف هوش مصنوعی</TabsTrigger>
+          <TabsTrigger value="templates">قالب پیام‌ها</TabsTrigger>
+          <TabsTrigger value="trash">سطل آشغال</TabsTrigger>
+        </TabsList>
+      </Tabs>
       {tab === 'orgs' && <OrgsView />}
       {tab === 'usage' && <AiUsageView />}
       {tab === 'templates' && <MessagesView />}
@@ -506,11 +506,11 @@ function OrgsView() {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted-foreground">
           تعریف مدیر سازمان، تغییر تنظیمات و سقف‌های مصرف هر سازمان
         </p>
-        <Button onClick={() => setCreateOpen(true)}>
+        <Button className="w-full sm:w-auto" onClick={() => setCreateOpen(true)}>
           <UserPlus className="ml-1 h-4 w-4" />
           تعریف مدیر سازمان
         </Button>
@@ -528,14 +528,14 @@ function OrgsView() {
         <Card>
           <CardContent className="divide-y p-0">
             {items.map((org) => (
-              <div key={org.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-start gap-3">
+              <div key={org.id} className="flex flex-col gap-3 p-4">
+                <div className="flex min-w-0 items-start gap-3">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-brand/10 text-brand-foreground">
                     <Building2 className="h-5 w-5" />
                   </div>
-                  <div>
+                  <div className="min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{org.name}</span>
+                      <span className="break-words font-medium">{org.name}</span>
                       {org.status === 'trashed' ? (
                         <Badge variant="destructive">در سطل آشغال</Badge>
                       ) : org.admin?.pending_activation ? (
@@ -546,26 +546,42 @@ function OrgsView() {
                         <Badge variant="secondary">فعال</Badge>
                       )}
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      مدیر: {org.admin ? `${org.admin.full_name} (${org.admin.mobile})` : '—'}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      آخرین ورود: {org.admin?.last_login_at ? formatDateTime(org.admin.last_login_at) : '—'}
-                      {org.admin?.must_change_password ? ' · در انتظار تکمیل مشخصات' : ''}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      سهمیهٔ رونویسی سازمان: {org.quota.org_stt_limit_minutes ?? '—'} دقیقه · مصرف:{' '}
-                      {org.quota.org_ai_minutes_used} · سقف دلاری مدل زبانی:{' '}
-                      {org.quota.org_llm_limit_cents != null
-                        ? `${(org.quota.org_llm_limit_cents / 100).toFixed(2)}$`
-                        : 'بدون سقف'}
-                    </p>
+
+                    {/* هر مقدار در یک قطعهٔ جدا؛ در موبایل تمیز می‌شکند و
+                        وسط عبارت بریده نمی‌شود. */}
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                      <span className="break-words">
+                        مدیر: {org.admin ? `${org.admin.full_name} (${org.admin.mobile})` : '—'}
+                      </span>
+                      <span>
+                        آخرین ورود:{' '}
+                        {org.admin?.last_login_at ? formatDateTime(org.admin.last_login_at) : '—'}
+                        {org.admin?.must_change_password ? ' · در انتظار تکمیل مشخصات' : ''}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                      <span>سهمیهٔ رونویسی: {org.quota.org_stt_limit_minutes ?? '—'} دقیقه</span>
+                      <span>مصرف: {org.quota.org_ai_minutes_used}</span>
+                      <span>
+                        سقف دلاری مدل زبانی:{' '}
+                        {org.quota.org_llm_limit_cents != null
+                          ? `${(org.quota.org_llm_limit_cents / 100).toFixed(2)}$`
+                          : 'بدون سقف'}
+                      </span>
+                    </div>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
+
+                {/* شبکهٔ ثابتِ کلیدها: هر کارت همیشه همین پنج کلید را در همین
+                    ترتیب دارد (کلید یادآوری برای سازمان فعال هم هست ولی غیرفعال
+                    است) تا ستون‌ها بین کارت‌ها همراستا بمانند.
+                    موبایل ۲ ستون، تبلت ۳ ستون، دسکتاپ ۵ ستون در یک ردیف. */}
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
                   <Button
                     variant="outline"
                     size="sm"
+                    className="w-full"
                     onClick={() => setActivityOrg(org)}
                   >
                     <History className="ml-1 h-4 w-4" />
@@ -574,29 +590,43 @@ function OrgsView() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setResendOrg(org)}
+                    className="w-full"
                     disabled={!org.admin}
+                    onClick={() => setResendOrg(org)}
                   >
                     <RefreshCcw className="ml-1 h-4 w-4" />
                     ارسال دوبارهٔ رمز
                   </Button>
-                  {org.admin?.pending_activation && org.status !== 'trashed' && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setReminderOrg(org)}
-                    >
-                      <BellRing className="ml-1 h-4 w-4" />
-                      یادآوری فعال‌سازی
-                    </Button>
-                  )}
-                  <Button variant="outline" size="sm" onClick={() => setSettingsOrg(org)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    disabled={!org.admin?.pending_activation || org.status === 'trashed'}
+                    title={
+                      org.status === 'trashed'
+                        ? 'سازمان در سطل آشغال است.'
+                        : org.admin?.pending_activation
+                          ? 'ارسال پیامک یادآوری فعال‌سازی'
+                          : 'این سازمان قبلاً فعال شده است.'
+                    }
+                    onClick={() => setReminderOrg(org)}
+                  >
+                    <BellRing className="ml-1 h-4 w-4" />
+                    یادآوری فعال‌سازی
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => setSettingsOrg(org)}
+                  >
                     <Settings2 className="ml-1 h-4 w-4" />
                     تنظیمات
                   </Button>
                   <Button
                     variant="destructive"
                     size="sm"
+                    className="col-span-2 w-full xl:col-span-1"
                     disabled={org.status === 'trashed'}
                     onClick={() => void handleTrash(org)}
                   >
