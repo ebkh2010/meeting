@@ -3,10 +3,14 @@
 مدیر پلتفرم به هیچ سازمانی تعلق ندارد و فقط از endpointهای ``/api/v1/platform``
 استفاده می‌کند؛ توکن آن با نوع ``vidara_platform`` امضا می‌شود و در وابستگی‌های
 فضای کاری (که نوع ``vidara_app`` را می‌خواهند) رد می‌شود.
+
+``is_owner`` یعنی «مدیر اصلی»: تنها حسابی که می‌تواند مدیر پلتفرم دیگری تعریف،
+ویرایش یا حذف کند. حساب ساخته‌شده از متغیرهای محیطی در نخستین راه‌اندازی مدیر
+اصلی است و همیشه باید دست‌کم یک مدیر اصلی باقی بماند.
 """
 from core.database import Base
 from datetime import datetime
-from sqlalchemy import Column, DateTime, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Integer, String
 
 
 class Platform_admins(Base):
@@ -18,5 +22,8 @@ class Platform_admins(Base):
     password_hash = Column(String, nullable=False)
     display_name = Column(String, nullable=True)
     status = Column(String, nullable=True)
+    # nullable=True چون این ستون روی دیتابیس‌های از قبل مستقرشده با ALTER و بدون
+    # NOT NULL اضافه می‌شود؛ در کد همیشه با bool() خوانده می‌شود.
+    is_owner = Column(Boolean, nullable=True, default=False)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)

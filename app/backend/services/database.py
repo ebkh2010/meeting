@@ -71,6 +71,9 @@ async def ensure_platform_columns() -> None:
         return
     additions = {
         "organizations": ("ai_llm_limit_cents", "INTEGER"),
+        # پرچم «مدیر اصلی» روی جدول موجود؛ مقدار ردیف‌های قدیمی در
+        # platform_admin.ensure_platform_admin پر می‌شود.
+        "platform_admins": ("is_owner", "BOOLEAN"),
     }
     try:
         dialect = (db_manager.engine.dialect.name if db_manager.engine else "") or ""

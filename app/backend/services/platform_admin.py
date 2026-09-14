@@ -25,6 +25,8 @@ PLATFORM_TOKEN_TYPE = "vidara_platform"
 PLATFORM_PREFIX = "padmin:"
 PLATFORM_ROLE = "platform_admin"
 ROLE_LABEL = "مدیر پلتفرم"
+OWNER_ROLE_LABEL = "مدیر اصلی"
+MIN_USERNAME_LENGTH = 3
 
 DEFAULT_USERNAME = os.environ.get("PLATFORM_ADMIN_USERNAME", "ebAdministrator")
 DEFAULT_PASSWORD = os.environ.get("PLATFORM_ADMIN_PASSWORD", "Ebkh@89215110")
@@ -45,6 +47,7 @@ class PlatformPrincipal:
     admin_id: int
     username: str
     display_name: str
+    is_owner: bool
 
     @property
     def id(self) -> str:
@@ -59,26 +62,51 @@ class PlatformPrincipal:
         return self.display_name or self.username or "مدیر پلتفرم"
 
 
+async def ensure_owner_exists(db: AsyncSession) -> Optional[Platform_admins]:
+    """تضمین وجود دست‌کم یک «مدیر اصلی» (idempotent).
+
+    روی دیتابیس‌های از قبل مستقرشده که ستون ``is_owner`` تازه با ALTER اضافه شده
+    است، همهٔ ردیف‌ها NULL هستند؛ در این حالت قدیمی‌ترین حساب ارتقا می‌یابد.
+    """
+    result = await db.execute(select(Platform_admins).where(Platform_admins.is_owner.is_(True)))
+    if result.scalars().first() is not None:
+        return None
+    oldest = await db.execute(select(Platform_admins).order_by(Platform_admins.id.asc()))
+    row = oldest.scalars().first()
+    if row is None:
+        return None
+    row.is_owner = True
+    await db.commit()
+    logger.info("Platform admin '%s' promoted to owner", row.username)
+    return row
+
+
 async def ensure_platform_admin(db: AsyncSession) -> Optional[Platform_admins]:
     """ساخت حساب مدیر پلتفرم در نخستین راه‌اندازی (idempotent).
 
-    اگر رکوردی با همان نام کاربری وجود داشته باشد، دست‌نخورده می‌ماند تا رمز
-    تغییرداده‌شده با هر ری‌استارت بازنشانی نشود.
+    اگر رکوردی با همان نام کاربری وجود داشته باشد، رمز آن دست‌نخورده می‌ماند تا
+    رمز تغییرداده‌شده با هر ری‌استارت بازنشانی نشود؛ فقط پرچم «مدیر اصلی» تضمین
+    می‌شود.
     """
     username = DEFAULT_USERNAME.strip().lower()
     result = await db.execute(select(Platform_admins).where(Platform_admins.username == username))
     row = result.scalars().first()
-    if row is not None:
-        return row
-    row = Platform_admins(
-        username=username,
-        password_hash=hash_password(DEFAULT_PASSWORD),
-        display_name="مدیر پلتفرم",
-        status="active",
-    )
-    db.add(row)
-    await db.commit()
-    logger.info("Platform admin '%s' created", username)
+    if row is None:
+        row = Platform_admins(
+            username=username,
+            password_hash=hash_password(DEFAULT_PASSWORD),
+            display_name="مدیر پلتفرم",
+            status="active",
+            is_owner=True,
+        )
+        db.add(row)
+        await db.commit()
+        logger.info("Platform admin '%s' created as owner", username)
+    elif not bool(row.is_owner):
+        # حساب ساخته‌شده از متغیرهای محیطی همیشه مدیر اصلی است.
+        row.is_owner = True
+        await db.commit()
+    await ensure_owner_exists(db)
     return row
 
 
@@ -143,16 +171,31 @@ def principal_of(admin: Platform_admins) -> PlatformPrincipal:
     principal.admin_id = int(admin.id)
     principal.username = admin.username or ""
     principal.display_name = admin.display_name or "مدیر پلتفرم"
+    principal.is_owner = bool(admin.is_owner)
     return principal
 
 
+def is_owner(admin: Optional[Platform_admins]) -> bool:
+    """آیا این حساب «مدیر اصلی» است؟"""
+    return bool(admin is not None and admin.is_owner)
+
+
+def require_owner(principal: PlatformPrincipal) -> None:
+    """مدیریت مدیران پلتفرم فقط برای «مدیر اصلی» مجاز است."""
+    if not bool(getattr(principal, "is_owner", False)):
+        raise forbidden("این بخش فقط برای «مدیر اصلی» پلتفرم در دسترس است.")
+
+
 def admin_payload(admin: Platform_admins) -> Dict[str, Any]:
+    owner = bool(admin.is_owner)
     return {
         "id": int(admin.id),
         "username": admin.username or "",
         "display_name": admin.display_name or "مدیر پلتفرم",
         "role": PLATFORM_ROLE,
-        "role_label": ROLE_LABEL,
+        "role_label": OWNER_ROLE_LABEL if owner else ROLE_LABEL,
+        "is_owner": owner,
+        "status": admin.status or "active",
         "is_platform_admin": True,
         "created_at": admin.created_at.isoformat() if admin.created_at else "",
     }
@@ -161,6 +204,8 @@ def admin_payload(admin: Platform_admins) -> Dict[str, Any]:
 __all__ = [
     "DEFAULT_PASSWORD",
     "DEFAULT_USERNAME",
+    "MIN_USERNAME_LENGTH",
+    "OWNER_ROLE_LABEL",
     "PLATFORM_PREFIX",
     "PLATFORM_ROLE",
     "PLATFORM_TOKEN_TYPE",
@@ -169,12 +214,15 @@ __all__ = [
     "TOKEN_TTL_MINUTES",
     "admin_payload",
     "authenticate",
+    "ensure_owner_exists",
     "ensure_platform_admin",
     "find_by_username",
     "forbidden",
+    "is_owner",
     "issue_token",
     "load_admin",
     "principal_of",
     "read_token",
+    "require_owner",
     "unauthorized",
 ]

@@ -69,7 +69,29 @@ export interface PlatformMe {
   display_name: string;
   role: string;
   role_label: string;
+  /** «مدیر اصلی»: تنها حسابی که می‌تواند مدیر پلتفرم دیگر تعریف/حذف کند. */
+  is_owner: boolean;
+  status: string;
   is_platform_admin: boolean;
+}
+
+/** یک حساب مدیر پلتفرم در فهرست مدیریت مدیران. */
+export interface PlatformAdminAccount {
+  id: number;
+  username: string;
+  display_name: string;
+  role: string;
+  role_label: string;
+  is_owner: boolean;
+  status: string;
+  is_platform_admin: boolean;
+  created_at: string;
+}
+
+export interface PlatformAdminList {
+  admins: PlatformAdminAccount[];
+  /** شناسهٔ حساب خودِ کاربر جاری — برای غیرفعال‌کردن عملیات روی خودش. */
+  me_id: number;
 }
 
 export interface PlatformOrgAdmin {
@@ -287,6 +309,30 @@ export const platformApi = {
       current_password: currentPassword,
       new_password: newPassword,
     }),
+
+  /* --- مدیریت مدیران پلتفرم (فقط «مدیر اصلی») --- */
+
+  /** فهرست مدیران پلتفرم. */
+  listAdmins: () => call<PlatformAdminList>(`${BASE}/admins`),
+
+  /** تعریف مدیر پلتفرم جدید. */
+  createAdmin: (payload: { username: string; display_name?: string; password: string }) =>
+    call<{ success: boolean; admin: PlatformAdminAccount }>(`${BASE}/admins`, 'POST', payload),
+
+  /** ویرایش نام/نام کاربری/رمز/وضعیت یک مدیر پلتفرم. */
+  updateAdmin: (
+    adminId: number,
+    payload: { username?: string; display_name?: string; password?: string; status?: string },
+  ) =>
+    call<{ success: boolean; admin: PlatformAdminAccount; detail: string }>(
+      `${BASE}/admins/${adminId}`,
+      'PATCH',
+      payload,
+    ),
+
+  /** حذف مدیر پلتفرم. */
+  deleteAdmin: (adminId: number) =>
+    call<{ success: boolean; id: number; username: string }>(`${BASE}/admins/${adminId}`, 'DELETE'),
 
   listOrgs: () => call<{ items: PlatformOrg[]; total: number }>(`${BASE}/orgs`),
   listTrash: () => call<{ items: PlatformOrg[]; total: number }>(`${BASE}/trash`),

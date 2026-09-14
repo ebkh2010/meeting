@@ -22,12 +22,14 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import LoadingGif from '@/components/LoadingGif';
-import { Building2, BarChart3, BellRing, Bot, Coins, History, MessageSquareText, Mic, Pencil, RefreshCcw, RotateCcw, Settings2, Trash2, UserPlus } from 'lucide-react';
+import { Ban, Building2, BarChart3, BellRing, Bot, CheckCircle2, Coins, History, KeyRound, MessageSquareText, Mic, Pencil, RefreshCcw, RotateCcw, Settings2, ShieldCheck, Trash2, UserCog, UserPlus } from 'lucide-react';
 import {
   errorMessage,
   platformApi,
   type CreateOrgResult,
   type PlatformActivationTemplate,
+  type PlatformAdminAccount,
+  type PlatformAdminList,
   type PlatformAiProvider,
   type PlatformAiSummary,
   type PlatformMessagePlaceholder,
@@ -50,27 +52,47 @@ const AI_PROVIDER_LABELS: Record<string, string> = {
   kimi: 'Kimi',
 };
 
-type PlatformTab = 'orgs' | 'usage' | 'templates' | 'trash';
+type PlatformTab = 'orgs' | 'usage' | 'templates' | 'admins' | 'trash';
 
 export default function PlatformAdmin() {
   const [tab, setTab] = useState<PlatformTab>('orgs');
+  // تب «مدیران پلتفرم» فقط برای «مدیر اصلی» نمایش داده می‌شود؛ بک‌اند هم
+  // مستقل از این، هر درخواست غیرمدیر اصلی را با ۴۰۳ رد می‌کند.
+  const [isOwner, setIsOwner] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const data = await platformApi.me();
+        if (alive) setIsOwner(Boolean(data.user?.is_owner));
+      } catch {
+        if (alive) setIsOwner(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-bold">مدیریت پلتفرم</h1>
       <Tabs value={tab} onValueChange={(value) => setTab(value as PlatformTab)}>
-        {/* یک ردیفِ قابل‌اسکرول در موبایل: چهار تب در عرض کم به‌جای شکستن به
+        {/* یک ردیفِ قابل‌اسکرول در موبایل: تب‌ها در عرض کم به‌جای شکستن به
             چند خط، کنار هم می‌مانند و افقی اسکرول می‌شوند. */}
         <TabsList className="w-full max-w-full justify-start overflow-x-auto">
           <TabsTrigger value="orgs">سازمان‌ها</TabsTrigger>
           <TabsTrigger value="usage">مصرف هوش مصنوعی</TabsTrigger>
           <TabsTrigger value="templates">قالب پیام‌ها</TabsTrigger>
+          {isOwner && <TabsTrigger value="admins">مدیران پلتفرم</TabsTrigger>}
           <TabsTrigger value="trash">سطل آشغال</TabsTrigger>
         </TabsList>
       </Tabs>
       {tab === 'orgs' && <OrgsView />}
       {tab === 'usage' && <AiUsageView />}
       {tab === 'templates' && <MessagesView />}
+      {tab === 'admins' && isOwner && <AdminsView />}
       {tab === 'trash' && <TrashView onChanged={() => setTab('orgs')} />}
     </div>
   );
@@ -280,6 +302,346 @@ function ActivationTemplateEditor({ onSaved }: { onSaved?: () => void }) {
         </Button>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* مدیران پلتفرم (فقط «مدیر اصلی»)                                     */
+/* ------------------------------------------------------------------ */
+
+function AdminsView() {
+  const [data, setData] = useState<PlatformAdminList | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<PlatformAdminAccount | null>(null);
+  const [removing, setRemoving] = useState<PlatformAdminAccount | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setData(await platformApi.listAdmins());
+    } catch (err) {
+      toast.error(errorMessage(err, 'خواندن فهرست مدیران پلتفرم ناموفق بود.'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const openCreate = () => {
+    setEditTarget(null);
+    setFormOpen(true);
+  };
+
+  const toggleStatus = async (admin: PlatformAdminAccount) => {
+    const next = admin.status === 'active' ? 'disabled' : 'active';
+    try {
+      const result = await platformApi.updateAdmin(admin.id, { status: next });
+      toast.success(result.detail || 'وضعیت حساب تغییر کرد.');
+      void load();
+    } catch (err) {
+      toast.error(errorMessage(err, 'تغییر وضعیت حساب ناموفق بود.'));
+    }
+  };
+
+  if (loading) {
+    return <LoadingGif label="در حال دریافت مدیران پلتفرم…" />;
+  }
+
+  const admins = data?.admins ?? [];
+  const meId = data?.me_id ?? -1;
+  const activeOwners = admins.filter((item) => item.is_owner && item.status === 'active').length;
+  /** حساب اصلی و آخرین مدیر اصلیِ فعال قابل حذف/غیرفعال‌سازی نیستند. */
+  const isProtected = (item: PlatformAdminAccount) =>
+    item.id === meId || (item.is_owner && activeOwners <= 1);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-muted-foreground">
+          حساب‌های مدیریتی سطح سامانه (مستقل از سازمان‌ها). فقط «مدیر اصلی» می‌تواند مدیر
+          پلتفرم تعریف، ویرایش یا حذف کند.
+        </p>
+        <Button className="w-full sm:w-auto" onClick={openCreate}>
+          <UserPlus className="ml-1 h-4 w-4" />
+          تعریف مدیر پلتفرم
+        </Button>
+      </div>
+
+      {admins.length === 0 ? (
+        <Card>
+          <CardContent className="py-10 text-center text-muted-foreground">
+            هنوز مدیری ثبت نشده است.
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="divide-y p-0">
+            {admins.map((admin) => (
+              <div key={admin.id} className="flex flex-col gap-3 p-4">
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-brand/10 text-brand-foreground">
+                    {admin.is_owner ? (
+                      <ShieldCheck className="h-5 w-5" />
+                    ) : (
+                      <UserCog className="h-5 w-5" />
+                    )}
+                  </div>
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="break-words font-medium">{admin.display_name}</span>
+                      {admin.is_owner && (
+                        <Badge className="border border-brand/40 bg-brand/10 text-brand-foreground">
+                          مدیر اصلی
+                        </Badge>
+                      )}
+                      {admin.status === 'active' ? (
+                        <Badge variant="secondary">فعال</Badge>
+                      ) : (
+                        <Badge variant="destructive">غیرفعال</Badge>
+                      )}
+                      {admin.id === meId && <Badge variant="outline">حساب شما</Badge>}
+                    </div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                      <span>
+                        نام کاربری: <span dir="ltr">{admin.username}</span>
+                      </span>
+                      <span>ایجاد: {admin.created_at ? formatDateTime(admin.created_at) : '—'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => {
+                      setEditTarget(admin);
+                      setFormOpen(true);
+                    }}
+                  >
+                    <Pencil className="ml-1 h-4 w-4" />
+                    ویرایش
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    disabled={isProtected(admin)}
+                    title={isProtected(admin) ? 'حساب شما یا آخرین مدیر اصلی فعال' : ''}
+                    onClick={() => void toggleStatus(admin)}
+                  >
+                    {admin.status === 'active' ? (
+                      <Ban className="ml-1 h-4 w-4" />
+                    ) : (
+                      <CheckCircle2 className="ml-1 h-4 w-4" />
+                    )}
+                    {admin.status === 'active' ? 'غیرفعال' : 'فعال'}
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="w-full"
+                    disabled={isProtected(admin)}
+                    title={isProtected(admin) ? 'حساب شما یا آخرین مدیر اصلی فعال' : ''}
+                    onClick={() => setRemoving(admin)}
+                  >
+                    <Trash2 className="ml-1 h-4 w-4" />
+                    حذف
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {formOpen && (
+        <AdminFormDialog
+          admin={editTarget}
+          onClose={() => setFormOpen(false)}
+          onSaved={() => void load()}
+        />
+      )}
+      {removing && (
+        <AdminDeleteDialog
+          admin={removing}
+          onClose={() => setRemoving(null)}
+          onDeleted={() => void load()}
+        />
+      )}
+    </div>
+  );
+}
+
+/** دیالوگ ساخت/ویرایش مدیر پلتفرم (``admin === null`` یعنی حالت ساخت). */
+function AdminFormDialog({
+  admin,
+  onClose,
+  onSaved,
+}: {
+  admin: PlatformAdminAccount | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const editing = admin !== null;
+  const [username, setUsername] = useState(admin?.username ?? '');
+  const [displayName, setDisplayName] = useState(admin?.display_name ?? '');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const handleSubmit = async () => {
+    setBusy(true);
+    try {
+      if (editing && admin) {
+        const payload: { username?: string; display_name?: string; password?: string } = {};
+        const nextUsername = username.trim();
+        const nextName = displayName.trim();
+        if (nextUsername && nextUsername !== admin.username) payload.username = nextUsername;
+        if (nextName && nextName !== admin.display_name) payload.display_name = nextName;
+        if (password) payload.password = password;
+        const result = await platformApi.updateAdmin(admin.id, payload);
+        toast.success(result.detail || 'حساب به‌روزرسانی شد.');
+      } else {
+        await platformApi.createAdmin({
+          username: username.trim(),
+          display_name: displayName.trim(),
+          password,
+        });
+        toast.success('مدیر پلتفرم ساخته شد.');
+      }
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast.error(errorMessage(err, editing ? 'ویرایش حساب ناموفق بود.' : 'ساخت مدیر پلتفرم ناموفق بود.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const canSubmit = username.trim().length >= 3 && (editing || password.length >= 6);
+
+  return (
+    <Dialog open onOpenChange={(value) => !value && onClose()}>
+      <DialogContent className="max-h-[88vh] max-w-md overflow-y-auto p-4 sm:p-6">
+        <DialogHeader>
+          <DialogTitle>
+            {editing ? `ویرایش «${admin?.display_name}»` : 'تعریف مدیر پلتفرم جدید'}
+          </DialogTitle>
+          <DialogDescription>
+            {editing
+              ? 'برای تغییر رمز عبور مقدار تازه را وارد کنید؛ خالی گذاشتن یعنی رمز فعلی حفظ شود.'
+              : 'این حساب همان دسترسی کامل مسیرهای پلتفرم را می‌گیرد، اما خودش نمی‌تواند مدیر پلتفرم دیگری تعریف یا حذف کند.'}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="admin-username">نام کاربری</Label>
+            <Input
+              id="admin-username"
+              dir="ltr"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              placeholder="ops.admin"
+              autoComplete="off"
+            />
+            <p className="text-xs text-muted-foreground">
+              حروف لاتین کوچک، رقم، نقطه، خط تیره و زیرخط.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="admin-display-name">نام نمایشی</Label>
+            <Input
+              id="admin-display-name"
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              placeholder="مثلاً: پشتیبانی فنی"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="admin-password">
+              {editing ? 'رمز عبور جدید (اختیاری)' : 'رمز عبور'}
+            </Label>
+            <Input
+              id="admin-password"
+              type="password"
+              dir="ltr"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="new-password"
+            />
+            {!editing && password.length > 0 && password.length < 6 && (
+              <p className="text-xs text-destructive">رمز عبور باید دست‌کم ۶ نویسه باشد.</p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>
+            انصراف
+          </Button>
+          <Button disabled={busy || !canSubmit} onClick={() => void handleSubmit()}>
+            {busy ? 'در حال ذخیره…' : editing ? 'ذخیرهٔ تغییرات' : 'ساخت مدیر پلتفرم'}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** تأیید حذف مدیر پلتفرم. */
+function AdminDeleteDialog({
+  admin,
+  onClose,
+  onDeleted,
+}: {
+  admin: PlatformAdminAccount;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  const handleDelete = async () => {
+    setBusy(true);
+    try {
+      await platformApi.deleteAdmin(admin.id);
+      toast.success(`مدیر پلتفرم «${admin.display_name}» حذف شد.`);
+      onDeleted();
+      onClose();
+    } catch (err) {
+      toast.error(errorMessage(err, 'حذف مدیر پلتفرم ناموفق بود.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(value) => !value && onClose()}>
+      <DialogContent className="max-h-[88vh] max-w-md overflow-y-auto p-4 sm:p-6">
+        <DialogHeader>
+          <DialogTitle>حذف مدیر پلتفرم</DialogTitle>
+          <DialogDescription>
+            حساب «{admin.display_name}» (<span dir="ltr">{admin.username}</span>) حذف می‌شود و
+            دیگر نمی‌تواند وارد سامانه شود. این کار برگشت‌پذیر نیست.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>
+            انصراف
+          </Button>
+          <Button variant="destructive" disabled={busy} onClick={() => void handleDelete()}>
+            {busy ? 'در حال حذف…' : 'حذف حساب'}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

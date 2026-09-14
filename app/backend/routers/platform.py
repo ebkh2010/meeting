@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -38,6 +39,7 @@ from models.audit_logs import Audit_logs
 from models.org_ai_providers import Org_ai_providers
 from models.org_notify_settings import Org_notify_settings
 from models.organizations import Organizations
+from models.platform_admins import Platform_admins
 from schemas.storage import OSSBaseModel, ObjectRequest
 from services import ai_providers
 from services import ai_usage
@@ -428,6 +430,201 @@ async def platform_change_password(
     await db.commit()
     logger.info("رمز عبور مدیر پلتفرم %s تغییر کرد", admin.username)
     return {"ok": True, "detail": "رمز عبور با موفقیت تغییر کرد."}
+
+
+# ---------------------------------------------------------------------------
+# مدیران پلتفرم — تعریف و مدیریت حساب‌های مدیریتی دیگر (فقط «مدیر اصلی»)
+# ---------------------------------------------------------------------------
+
+
+class PlatformAdminCreateIn(BaseModel):
+    """ورودی ساخت مدیر پلتفرم جدید."""
+
+    username: str = Field(..., min_length=platform_admin.MIN_USERNAME_LENGTH, max_length=100)
+    display_name: str = Field(default="", max_length=200)
+    password: str = Field(..., min_length=6, max_length=200)
+
+
+class PlatformAdminUpdateIn(BaseModel):
+    """ورودی ویرایش مدیر پلتفرم؛ هر فیلد اختیاری است."""
+
+    username: Optional[str] = Field(default=None, max_length=100)
+    display_name: Optional[str] = Field(default=None, max_length=200)
+    password: Optional[str] = Field(default=None, max_length=200)
+    status: Optional[str] = Field(default=None, max_length=20)
+
+
+def _normalize_admin_username(raw: str) -> str:
+    """یکدست‌سازی و اعتبارسنجی نام کاربری مدیر پلتفرم (لاتین کوچک)."""
+    username = (raw or "").strip().lower()
+    if len(username) < platform_admin.MIN_USERNAME_LENGTH:
+        raise _bad(f"نام کاربری باید دست‌کم {platform_admin.MIN_USERNAME_LENGTH} نویسه باشد.")
+    if not re.match(r"^[a-z0-9._-]+$", username):
+        raise _bad("نام کاربری فقط می‌تواند شامل حروف لاتین کوچک، رقم، نقطه، خط تیره و زیرخط باشد.")
+    return username
+
+
+async def _platform_admin_or_404(db: AsyncSession, admin_id: int) -> Platform_admins:
+    result = await db.execute(select(Platform_admins).where(Platform_admins.id == admin_id))
+    row = result.scalars().first()
+    if row is None:
+        raise _not_found("مدیر پلتفرم یافت نشد.")
+    return row
+
+
+async def _owner_count(db: AsyncSession) -> int:
+    """شمار «مدیران اصلی» فعال — برای جلوگیری از قفل‌شدن کامل دسترسی."""
+    result = await db.execute(
+        select(func.count())
+        .select_from(Platform_admins)
+        .where(Platform_admins.is_owner.is_(True), Platform_admins.status == "active")
+    )
+    return int(result.scalar() or 0)
+
+
+@router.get("/admins")
+async def list_platform_admins(
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """فهرست مدیران پلتفرم — فقط «مدیر اصلی»."""
+    platform_admin.require_owner(principal)
+    result = await db.execute(select(Platform_admins).order_by(Platform_admins.id.asc()))
+    rows = list(result.scalars().all())
+    return {
+        "admins": [platform_admin.admin_payload(row) for row in rows],
+        "me_id": int(principal.admin_id),
+    }
+
+
+@router.post("/admins")
+async def create_platform_admin(
+    data: PlatformAdminCreateIn,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """تعریف مدیر پلتفرم جدید — فقط «مدیر اصلی».
+
+    حساب تازه همان دسترسی کامل مسیرهای ``/api/v1/platform`` را می‌گیرد؛ تنها
+    تفاوتش این است که خودش نمی‌تواند مدیر پلتفرم دیگری تعریف یا حذف کند.
+    """
+    platform_admin.require_owner(principal)
+    username = _normalize_admin_username(data.username)
+    existing = await platform_admin.find_by_username(db, username)
+    if existing is not None:
+        raise app_auth.conflict("این نام کاربری قبلاً برای مدیر پلتفرم دیگری ثبت شده است.")
+    password = app_auth.validate_password(data.password)
+
+    row = Platform_admins(
+        username=username,
+        password_hash=app_auth.hash_password(password),
+        display_name=(data.display_name or "").strip() or "مدیر پلتفرم",
+        status="active",
+        is_owner=False,
+    )
+    db.add(row)
+    await db.flush()
+    admin_id = int(row.id)
+
+    # سازمان صفر = رویداد سطح پلتفرم؛ این حساب به هیچ مستأجری تعلق ندارد.
+    await _audit(
+        db, 0, principal, "platform.admin_created",
+        entity_type="platform_admin", entity_id=admin_id,
+        detail=f"مدیر پلتفرم «{row.display_name}» ({username}) ساخته شد",
+    )
+    await db.commit()
+    await db.refresh(row)
+    return {"success": True, "admin": platform_admin.admin_payload(row)}
+
+
+@router.patch("/admins/{admin_id}")
+async def update_platform_admin(
+    admin_id: int,
+    data: PlatformAdminUpdateIn,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """ویرایش نام/نام کاربری/رمز/وضعیت مدیر پلتفرم — فقط «مدیر اصلی»."""
+    platform_admin.require_owner(principal)
+    row = await _platform_admin_or_404(db, admin_id)
+    changes: List[str] = []
+
+    if data.username is not None and data.username.strip():
+        new_username = _normalize_admin_username(data.username)
+        if new_username != (row.username or ""):
+            existing = await platform_admin.find_by_username(db, new_username)
+            if existing is not None and int(existing.id) != int(row.id):
+                raise app_auth.conflict("این نام کاربری قبلاً برای مدیر پلتفرم دیگری ثبت شده است.")
+            row.username = new_username
+            changes.append("نام کاربری")
+
+    if data.display_name is not None:
+        cleaned = data.display_name.strip()
+        if cleaned and cleaned != (row.display_name or ""):
+            row.display_name = cleaned
+            changes.append("نام نمایشی")
+
+    if data.password:
+        row.password_hash = app_auth.hash_password(app_auth.validate_password(data.password))
+        changes.append("رمز عبور")
+
+    if data.status is not None:
+        new_status = (data.status or "").strip().lower()
+        if new_status not in ("active", "disabled"):
+            raise _bad("وضعیت نامعتبر است؛ فقط active یا disabled پذیرفته می‌شود.")
+        if new_status != (row.status or "active"):
+            if new_status != "active":
+                if int(row.id) == int(principal.admin_id):
+                    raise app_auth.conflict("حساب خودتان را نمی‌توانید غیرفعال کنید.")
+                if bool(row.is_owner) and await _owner_count(db) <= 1:
+                    raise app_auth.conflict("آخرین «مدیر اصلی» فعال را نمی‌توان غیرفعال کرد.")
+            row.status = new_status
+            changes.append("وضعیت")
+
+    if not changes:
+        return {
+            "success": True,
+            "admin": platform_admin.admin_payload(row),
+            "detail": "تغییری اعمال نشد.",
+        }
+
+    await _audit(
+        db, 0, principal, "platform.admin_updated",
+        entity_type="platform_admin", entity_id=int(row.id),
+        detail=f"ویرایش مدیر پلتفرم «{row.username}»: {'، '.join(changes)}",
+    )
+    await db.commit()
+    await db.refresh(row)
+    return {
+        "success": True,
+        "admin": platform_admin.admin_payload(row),
+        "detail": "تغییرات ذخیره شد: " + "، ".join(changes),
+    }
+
+
+@router.delete("/admins/{admin_id}")
+async def delete_platform_admin(
+    admin_id: int,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """حذف مدیر پلتفرم — فقط «مدیر اصلی»؛ حساب خودش و آخرین مدیر اصلی حذف نمی‌شود."""
+    platform_admin.require_owner(principal)
+    row = await _platform_admin_or_404(db, admin_id)
+    if int(row.id) == int(principal.admin_id):
+        raise app_auth.conflict("حساب خودتان را نمی‌توانید حذف کنید.")
+    if bool(row.is_owner) and await _owner_count(db) <= 1:
+        raise app_auth.conflict("آخرین «مدیر اصلی» فعال را نمی‌توان حذف کرد.")
+
+    username = row.username or ""
+    await db.delete(row)
+    await _audit(
+        db, 0, principal, "platform.admin_deleted",
+        entity_type="platform_admin", entity_id=admin_id,
+        detail=f"مدیر پلتفرم «{username}» حذف شد",
+    )
+    await db.commit()
+    return {"success": True, "id": admin_id, "username": username}
 
 
 @router.post("/orgs")
