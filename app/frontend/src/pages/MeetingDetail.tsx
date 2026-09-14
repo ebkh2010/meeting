@@ -1590,6 +1590,8 @@ function MinutesPanel({
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // «تولید» نخست دیالوگ تنظیمات را باز می‌کند؛ پس از ذخیرهٔ موفق، تولید خودکار آغاز می‌شود.
+  const [generateAfterSettings, setGenerateAfterSettings] = useState(false);
   // نمایش مارک‌داون: پیش‌فرض نمایش قالب‌بندی‌شده؛ ویرایش با دکمهٔ تغییر وضعیت
   const [editingBody, setEditingBody] = useState(false);
 
@@ -1623,7 +1625,17 @@ function MinutesPanel({
       {settingsOpen && (
         <MinutesSettingsDialog
           meetingId={detail.meeting.id}
-          onClose={() => setSettingsOpen(false)}
+          generateAfterSave={generateAfterSettings}
+          onClose={() => {
+            setSettingsOpen(false);
+            setGenerateAfterSettings(false);
+          }}
+          onGenerate={() =>
+            runAction(
+              () => api.startMinutesDraft(detail.meeting.id),
+              'ساخت پیش‌نویس هوشمند در صف قرار گرفت.',
+            )
+          }
         />
       )}
       <Card className="lg:col-span-2">
@@ -1731,12 +1743,12 @@ function MinutesPanel({
                   variant="outline"
                   className="!bg-transparent gap-2"
                   disabled={busy || !transcript}
-                  onClick={() =>
-                    runAction(
-                      () => api.startMinutesDraft(detail.meeting.id),
-                      'ساخت پیش‌نویس هوشمند در صف قرار گرفت.',
-                    )
-                  }
+                  onClick={() => {
+                    // تنظیمات تولید پیش از شروع نمایش داده می‌شود تا کاربر همان‌جا
+                    // لحاظ دستور/مدعوین، طول هدف و ملاحظات را تعیین کند.
+                    setGenerateAfterSettings(true);
+                    setSettingsOpen(true);
+                  }}
                 >
                   <Sparkles className="h-4 w-4" />
                   {detail.minutes
@@ -1747,7 +1759,10 @@ function MinutesPanel({
                   variant="outline"
                   className="!bg-transparent gap-2"
                   disabled={busy}
-                  onClick={() => setSettingsOpen(true)}
+                  onClick={() => {
+                    setGenerateAfterSettings(false);
+                    setSettingsOpen(true);
+                  }}
                 >
                   <Settings2 className="h-4 w-4" />
                   تنظیمات تولید
@@ -2443,9 +2458,15 @@ function DecisionsPanel({
 function MinutesSettingsDialog({
   meetingId,
   onClose,
+  onGenerate,
+  generateAfterSave = false,
 }: {
   meetingId: number;
   onClose: () => void;
+  /** اگر داده شود، پس از ذخیرهٔ موفق، تولید پیش‌نویس هم آغاز می‌شود. */
+  onGenerate?: () => void;
+  /** حالت «تولید»: متن دکمه و توضیح دیالوگ بر همین اساس تغییر می‌کند. */
+  generateAfterSave?: boolean;
 }) {
   const [settings, setSettings] = useState<MinutesSettings | null>(null);
   const [draft, setDraft] = useState({
@@ -2476,27 +2497,27 @@ function MinutesSettingsDialog({
   const save = async () => {
     setBusy(true);
     try {
-      const data = await api.updateMeetingMinutesSettings(meetingId, {
+      await api.updateMeetingMinutesSettings(meetingId, {
         use_agenda: draft.use_agenda,
         use_attendees: draft.use_attendees,
         words_per_hour: Number(draft.words_per_hour),
         generate_items: draft.generate_items,
         considerations: draft.considerations,
       });
-      setSettings(data);
-      setDraft({
-        use_agenda: data.use_agenda,
-        use_attendees: data.use_attendees,
-        words_per_hour: String(data.words_per_hour),
-        generate_items: data.generate_items,
-        considerations: data.considerations,
-      });
-      toast.success('تنظیمات تولید این جلسه ذخیره شد.');
     } catch (err) {
+      // در خطا دیالوگ باز می‌ماند تا مقدارها از دست نروند و کاربر دوباره تلاش کند.
       toast.error(errorMessage(err, 'ذخیرهٔ تنظیمات ناموفق بود.'));
-    } finally {
       setBusy(false);
+      return;
     }
+    setBusy(false);
+    toast.success(
+      generateAfterSave
+        ? 'تنظیمات ذخیره شد؛ تولید پیش‌نویس آغاز می‌شود…'
+        : 'تنظیمات تولید این جلسه ذخیره شد.',
+    );
+    onClose();
+    onGenerate?.();
   };
 
   return (
@@ -2507,6 +2528,9 @@ function MinutesSettingsDialog({
           <DialogDescription>
             این تنظیمات فقط برای همین جلسه اعمال می‌شوند و هنگام تولید پیش‌نویس و پیشنهاد
             مصوبات/اقدامات در پرامپت لحاظ می‌گردند.
+            {generateAfterSave
+              ? ' با زدن کلید زیر، تنظیمات ذخیره و تولید پیش‌نویس همین حالا آغاز می‌شود.'
+              : ''}
           </DialogDescription>
         </DialogHeader>
 
@@ -2573,12 +2597,16 @@ function MinutesSettingsDialog({
             </p>
           </div>
 
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <Button variant="outline" onClick={onClose}>
-              بستن
+              انصراف
             </Button>
             <Button disabled={busy} onClick={() => void save()}>
-              {busy ? 'در حال ذخیره…' : 'ذخیرهٔ تنظیمات'}
+              {busy
+                ? 'در حال ذخیره…'
+                : generateAfterSave
+                  ? 'ذخیره و تولید صورتجلسه'
+                  : 'ذخیره و بستن'}
             </Button>
           </div>
         </div>

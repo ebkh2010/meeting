@@ -25,6 +25,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -318,6 +319,63 @@ def trim_around_match(text: str, tokens: List[str], limit: int = MAX_CHUNK_CHARS
     prefix = "… " if start > 0 else ""
     suffix = " …" if start + limit < len(body) else ""
     return f"{prefix}{snippet}{suffix}"
+
+
+# ---------------------------------------------------------------------------
+# پیوند مقصد با برجسته‌سازی: کاربر با کلیک روی منبع، به همان برگه و همان بخش
+# می‌رود و واژهٔ کلیدی در متن برجسته می‌شود.
+# ---------------------------------------------------------------------------
+
+#: نگاشت نوع قطعه به ``scope`` صفحهٔ جزئیات جلسه (هم‌راستا با TAB_BY_SCOPE فرانت).
+SCOPE_BY_KIND: Dict[str, str] = {
+    "meeting": "title",
+    "agenda": "agenda",
+    "participants": "agenda",
+    "transcript": "transcript",
+    "minutes": "minutes",
+    "decision": "decisions",
+    "action": "actions",
+}
+
+
+def highlight_token(text: str, tokens: List[str]) -> str:
+    """واژهٔ کلیدیِ قابل‌برجسته‌سازی در متن این قطعه.
+
+    عمداً فقط **یک واژه** برگردانده می‌شود (نه عبارت چندکلمه‌ای): برجسته‌سازی
+    فرانت با نرمال‌سازی فارسی تطبیق می‌دهد ولی نشانه‌های مارک‌داون صورتجلسه را
+    حذف نمی‌کند؛ یک واژهٔ تنها در هر حالت (متن مارک‌داون، رونویسی، عنوان) پیدا
+    می‌شود. بلندترین واژه ترجیح داده می‌شود (معمولاً خاص‌ترین است) و در تساوی
+    طول، واژه‌ای که زودتر در متن آمده تا احتمال بودنش در بخش برجسته بیشتر باشد.
+    """
+    normalized = fa_normalize(text or "")
+    if not normalized:
+        return ""
+    present = [token for token in tokens if token and token in normalized]
+    if not present:
+        return ""
+    return min(present, key=lambda token: (-len(token), normalized.find(token)))
+
+
+def focus_link(chunk: "Chunk", tokens: List[str]) -> str:
+    """لینک منبع با ``scope`` (برگهٔ هدف) و ``q`` (واژهٔ برجسته).
+
+    برای بخش راهنما لینک دست‌نخورده می‌ماند؛ آن‌ها مسیرهای خود سامانه‌اند و
+    بخشی از یک جلسه نیستند.
+    """
+    if chunk.kind == "guide" or chunk.meeting_id is None:
+        return chunk.link
+    scope = SCOPE_BY_KIND.get(chunk.kind, "")
+    token = highlight_token(chunk.text, tokens)
+    if not scope and not token:
+        return chunk.link
+    pairs = []
+    if scope:
+        pairs.append(f"scope={scope}")
+    if token:
+        pairs.append("q=" + quote(token))
+    if not pairs:
+        return chunk.link
+    return f"/meetings/{int(chunk.meeting_id)}?{'&'.join(pairs)}"
 
 
 def ms_label(start_ms: Any) -> str:
@@ -762,6 +820,9 @@ def _select_proportional(
         quota = quotas.get(mid, 1)
         for chunk in bucket[:quota]:
             chunk.text = trim_around_match(chunk.text, tokens)
+            # پیوند مقصد با برگهٔ هدف و واژهٔ برجسته — کاربر با کلیک روی منبع
+            # دقیقاً همان بخشی را می‌بیند که پاسخ به آن استناد دارد.
+            chunk.link = focus_link(chunk, tokens)
             selected.append(chunk)
     selected.sort(key=lambda item: item.score, reverse=True)
     return selected[:top_k]
