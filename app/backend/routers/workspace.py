@@ -38,6 +38,7 @@ from models.notifications import Notifications
 from models.participants import Participants
 from models.recordings import Recordings
 from models.transcripts import Transcripts
+from services import app_auth
 from services import mgmt_core as core
 from services import minutes_settings as minutes_settings_service
 from services import upload_limits as limits_service
@@ -83,6 +84,19 @@ class AgendaItemIn(BaseModel):
     owner_name: str = ""
 
 
+class NewParticipantIn(BaseModel):
+    """فردی که در فهرست اعضای سازمان نیست و همراه فرم جلسه دعوت می‌شود.
+
+    بک‌اند برای او حساب کاربری می‌سازد، به اعضای سازمان اضافه می‌کند و پیامک
+    دعوت جلسه (شامل اعتبارنامهٔ ورود) برایش ارسال می‌شود. ایمیل اختیاری است.
+    """
+
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+    mobile: str = Field(..., min_length=10, max_length=20)
+    email: str = ""
+
+
 class MeetingIn(BaseModel):
     title: str = Field(..., min_length=2, max_length=300)
     description: str = ""
@@ -93,6 +107,9 @@ class MeetingIn(BaseModel):
     online_url: str = ""
     secretary_membership_id: Optional[int] = None
     participant_membership_ids: List[int] = Field(default_factory=list)
+    # افراد خارج از فهرست اعضا که فقط با نام/نام خانوادگی/موبایل دعوت می‌شوند؛
+    # پیش از ثبت شرکت‌کنندگان، حساب کاربری و عضویت سازمانی آن‌ها ساخته می‌شود.
+    new_participants: List[NewParticipantIn] = Field(default_factory=list)
     # بندهای دستور جلسه در همان فرم ایجاد؛ پیش از ارسال دعوت ثبت می‌شوند تا
     # متن ایمیل/پیامک دعوت شامل دستور جلسه باشد.
     agenda_items: List[AgendaItemIn] = Field(default_factory=list)
@@ -405,7 +422,24 @@ async def create_meeting(
             )
         )
 
-    for membership_id in dict.fromkeys(payload.participant_membership_ids):
+    # افراد خارج از فهرست اعضا: پیش از ثبت شرکت‌کنندگان، حساب کاربری و عضویت
+    # سازمانی هرکدام ساخته می‌شود تا مانند اعضای عادی دعوت شوند و پیامک بگیرند.
+    invited_membership_ids: List[int] = []
+    for person in payload.new_participants:
+        invited = await app_auth.find_or_create_invited_member(
+            db,
+            organization_id=ctx.organization_id,
+            first_name=person.first_name,
+            last_name=person.last_name,
+            mobile=person.mobile,
+            email=person.email,
+        )
+        if invited is not None:
+            invited_membership_ids.append(int(invited.id))
+
+    for membership_id in dict.fromkeys(
+        [*payload.participant_membership_ids, *invited_membership_ids]
+    ):
         member = await get_owned(db, Memberships, membership_id, ctx, "عضو دعوت‌شده")
         db.add(
             Participants(

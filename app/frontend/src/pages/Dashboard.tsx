@@ -15,7 +15,6 @@ import {
 } from 'recharts';
 import { AlertTriangle, CalendarDays, ClipboardCheck, FileClock } from 'lucide-react';
 import AppShell from '@/components/AppShell';
-import AdminQuickStart from '@/components/AdminQuickStart';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,7 +29,6 @@ import {
   MINUTES_STATUS_LABELS,
   toPersianDigits,
 } from '@/lib/mgmt';
-import { isAdminRole } from '@/lib/appAuth';
 
 const CHART_COLORS = [
   'hsl(var(--chart-1))',
@@ -68,12 +66,12 @@ function StatCard({
 export default function Dashboard() {
   return (
     <AppShell>
-      {(bootstrap) => <DashboardBody isAdmin={isAdminRole(bootstrap.membership.role)} />}
+      {() => <DashboardBody />}
     </AppShell>
   );
 }
 
-function DashboardBody({ isAdmin }: { isAdmin: boolean }) {
+function DashboardBody() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState('');
 
@@ -125,8 +123,6 @@ function DashboardBody({ isAdmin }: { isAdmin: boolean }) {
           <Button className="min-h-11 w-full sm:w-auto">مدیریت جلسات</Button>
         </Link>
       </div>
-
-      {isAdmin && <AdminQuickStart />}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard

@@ -336,8 +336,6 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
         </div>
       </div>
 
-      <RsvpBar detail={detail} onDone={loadDetail} />
-
       <div ref={sectionRef}>
         <Tabs value={tab} onValueChange={setTab} dir="rtl">
           <TabsList className="flex w-full flex-nowrap justify-start overflow-x-auto md:flex-wrap">
@@ -407,47 +405,6 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
 }
 
 /* ---------------------------------------------------------------- */
-
-function RsvpBar({ detail, onDone }: { detail: MeetingDetailData; onDone: () => void }) {
-  const [saving, setSaving] = useState(false);
-  const current = detail.my_rsvp || 'pending';
-
-  const submit = async (status: string) => {
-    setSaving(true);
-    try {
-      await api.submitRsvp(detail.meeting.id, status);
-      toast.success('پاسخ دعوت شما ثبت شد.');
-      onDone();
-    } catch (err) {
-      toast.error(errorMessage(err, 'ثبت پاسخ دعوت ناموفق بود.'));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Card>
-      <CardContent className="flex flex-wrap items-center gap-3 py-4">
-        <span className="text-sm font-medium">پاسخ شما به دعوت:</span>
-        <Badge variant="secondary">{RSVP_LABELS[current] || current}</Badge>
-        <div className="flex flex-wrap gap-2">
-          {(['accepted', 'tentative', 'declined'] as const).map((status) => (
-            <Button
-              key={status}
-              size="sm"
-              variant={current === status ? 'default' : 'outline'}
-              className={current === status ? '' : '!bg-transparent'}
-              disabled={saving}
-              onClick={() => submit(status)}
-            >
-              {RSVP_LABELS[status]}
-            </Button>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function AgendaAndAttendance({
   detail,

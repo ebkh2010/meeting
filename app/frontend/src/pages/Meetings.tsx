@@ -1,7 +1,21 @@
 /** فهرست جلسات با جست‌وجو، فیلتر و ساخت جلسهٔ تازه همراه با دستور جلسه و اعضا. */
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { ArrowLeft, CalendarPlus, Filter, Paperclip, Plus, Search, Trash2 } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import {
+  ArrowLeft,
+  CalendarPlus,
+  ChevronDown,
+  Filter,
+  ListChecks,
+  MapPin,
+  Paperclip,
+  Plus,
+  Search,
+  Trash2,
+  UserPlus,
+  Users2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import AppShell from '@/components/AppShell';
 import JalaliDateTimePicker from '@/components/JalaliDateTimePicker';
@@ -71,6 +85,34 @@ const EMPTY_AGENDA_ITEM: AgendaDraft = {
   notes: '',
 };
 
+/**
+ * فردی که در فهرست اعضای سازمان نیست و با نام/نام خانوادگی/موبایل دعوت می‌شود.
+ * بک‌اند برای او حساب کاربری می‌سازد، به اعضای سازمان اضافه می‌کند و پیامک
+ * دعوت جلسه را برایش می‌فرستد. ایمیل اختیاری است.
+ */
+interface NewPersonDraft {
+  first_name: string;
+  last_name: string;
+  mobile: string;
+  email: string;
+}
+
+const EMPTY_NEW_PERSON: NewPersonDraft = {
+  first_name: '',
+  last_name: '',
+  mobile: '',
+  email: '',
+};
+
+/** ردیف فرد جدید فقط وقتی معتبر است که نام، نام خانوادگی و موبایل داشته باشد. */
+function isCompleteNewPerson(person: NewPersonDraft): boolean {
+  return (
+    person.first_name.trim().length > 0 &&
+    person.last_name.trim().length > 0 &&
+    person.mobile.trim().length >= 10
+  );
+}
+
 /** محدوده‌های جست‌وجوی متن جلسات؛ مقدارها با `search_scope` سمت سرور یکسان‌اند. */
 const SEARCH_SCOPES = [
   { value: 'all', label: 'همهٔ موارد' },
@@ -93,10 +135,18 @@ function MeetingsBody({ bootstrap }: { bootstrap: Bootstrap }) {
   const [members, setMembers] = useState<Member[]>([]);
   const [canManage, setCanManage] = useState(false);
   const [scope, setScope] = useState('all');
-  const [search, setSearch] = useState('');
+  // عبارت جست‌وجو می‌تواند از کادر جست‌وجوی سراسری هدر بیاید (`/meetings?q=…`).
+  const [urlParams] = useSearchParams();
+  const [search, setSearch] = useState(() => urlParams.get('q') || '');
   const [searchScope, setSearchScope] = useState<SearchScope>('all');
   const [error, setError] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
+
+  // اگر کاربر از کادر جست‌وجوی هدر دوباره به همین صفحه بیاید، عبارت تازه اعمال شود.
+  useEffect(() => {
+    const fromUrl = urlParams.get('q');
+    if (fromUrl !== null) setSearch(fromUrl);
+  }, [urlParams]);
 
   const load = useCallback(async () => {
     try {
@@ -310,6 +360,44 @@ function MeetingsBody({ bootstrap }: { bootstrap: Bootstrap }) {
   );
 }
 
+/** بخش بازشوی فرم ثبت جلسه: سربرگ خودش کلید است و محتوا فقط در حالت باز رندر می‌شود. */
+function FormSection({
+  title,
+  icon: Icon,
+  summary,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  icon: typeof Users2;
+  summary?: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-md border border-border">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-start transition-colors hover:bg-accent"
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="truncate text-sm font-medium">{title}</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          {summary ? <span className="text-xs text-muted-foreground">{summary}</span> : null}
+          <ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} />
+        </span>
+      </button>
+      {open ? <div className="space-y-3 border-t border-border p-3">{children}</div> : null}
+    </div>
+  );
+}
+
 function CreateMeetingDialog({
   bootstrap,
   members,
@@ -328,6 +416,13 @@ function CreateMeetingDialog({
   const [onlineUrl, setOnlineUrl] = useState('');
   const [secretaryId, setSecretaryId] = useState('none');
   const [selected, setSelected] = useState<number[]>([]);
+  /**
+   * افرادی که در فهرست اعضای سازمان نیستند و فقط با نام/نام خانوادگی/موبایل
+   * دعوت می‌شوند. بک‌اند برای هرکدام حساب کاربری + عضویت سازمان می‌سازد و
+   * پیامک دعوت جلسه برایشان ارسال می‌شود.
+   */
+  const [newPeople, setNewPeople] = useState<NewPersonDraft[]>([]);
+  const [openSection, setOpenSection] = useState<'members' | 'location' | 'agenda' | null>('members');
   const [agendaItems, setAgendaItems] = useState<AgendaDraft[]>([{ ...EMPTY_AGENDA_ITEM }]);
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
@@ -342,6 +437,23 @@ function CreateMeetingDialog({
    */
   const [stage, setStage] = useState<'idle' | 'creating' | 'uploading'>('idle');
   const limits = getUploadLimits();
+
+  /** باز/بسته کردن بخش‌های فرم؛ هر بار فقط یک بخش باز می‌ماند تا فرم کوتاه بماند. */
+  const toggleSection = (section: 'members' | 'location' | 'agenda') =>
+    setOpenSection((prev) => (prev === section ? null : section));
+
+  const addNewPerson = () => setNewPeople((prev) => [...prev, { ...EMPTY_NEW_PERSON }]);
+  const removeNewPerson = (index: number) =>
+    setNewPeople((prev) => prev.filter((_, key) => key !== index));
+  const updateNewPerson = (index: number, patch: Partial<NewPersonDraft>) =>
+    setNewPeople((prev) => prev.map((item, key) => (key === index ? { ...item, ...patch } : item)));
+
+  const completeNewPeople = newPeople.filter(isCompleteNewPerson);
+  const membersSummary = `${toPersianDigits(selected.length + completeNewPeople.length)} نفر`;
+  const placeSummary = onlineUrl.trim() ? 'برخط' : location.trim() || 'تعیین نشده';
+  const agendaSummary = `${toPersianDigits(
+    agendaItems.filter((item) => item.title.trim().length >= 2).length,
+  )} بند${files.length ? ` · ${toPersianDigits(files.length)} پیوست` : ''}`;
 
   const toggle = (id: number) => {
     setSelected((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
@@ -383,6 +495,17 @@ function CreateMeetingDialog({
       toast.error('عنوان جلسه را وارد کنید.');
       return;
     }
+    // ردیف نیمه‌پرشدهٔ فرد جدید پیش از ارسال گرفته می‌شود تا حساب ناقص ساخته نشود.
+    const incomplete = newPeople.filter(
+      (person) =>
+        !isCompleteNewPerson(person) &&
+        Boolean(person.first_name || person.last_name || person.mobile || person.email),
+    );
+    if (incomplete.length > 0) {
+      setOpenSection('members');
+      toast.error('برای هر فرد جدید، نام و نام خانوادگی و شمارهٔ موبایل را کامل کنید.');
+      return;
+    }
     const startDate = startsAt ? new Date(startsAt) : null;
     if (!startDate || Number.isNaN(startDate.getTime())) {
       toast.error('زمان شروع جلسه معتبر نیست. تاریخ شمسی و ساعت را انتخاب کنید.');
@@ -417,6 +540,12 @@ function CreateMeetingDialog({
         online_url: onlineUrl.trim(),
         secretary_membership_id: secretaryId === 'none' ? null : Number(secretaryId),
         participant_membership_ids: selected,
+        new_participants: completeNewPeople.map((person) => ({
+          first_name: person.first_name.trim(),
+          last_name: person.last_name.trim(),
+          mobile: person.mobile.trim(),
+          email: person.email.trim(),
+        })),
         agenda_items: agendaPayload,
       });
 
@@ -466,8 +595,10 @@ function CreateMeetingDialog({
       <DialogHeader>
         <DialogTitle>ثبت جلسهٔ جدید</DialogTitle>
       </DialogHeader>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2 sm:col-span-2">
+      {/* حداقلِ لازم همیشه دیده می‌شود (عنوان، شرح، تاریخ)؛ بقیهٔ تنظیمات در سه بخش
+          بازشو هستند تا فرم هنگام باز شدن کوتاه و قابل اسکن بماند. */}
+      <div className="space-y-4">
+        <div className="space-y-2">
           <Label htmlFor="meeting-title">عنوان جلسه</Label>
           <Input
             id="meeting-title"
@@ -476,7 +607,8 @@ function CreateMeetingDialog({
             placeholder="مثال: جلسهٔ هفتگی عملیات"
           />
         </div>
-        <div className="space-y-2 sm:col-span-2">
+
+        <div className="space-y-2">
           <Label htmlFor="meeting-desc">شرح</Label>
           <Textarea
             id="meeting-desc"
@@ -485,93 +617,197 @@ function CreateMeetingDialog({
             rows={2}
           />
         </div>
+
         <div className="space-y-2">
-          <Label>نوع جلسه</Label>
-          <Select value={meetingType} onValueChange={setMeetingType}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {bootstrap.meeting_types.map((type) => (
-                <SelectItem key={type} value={type}>
-                  {type}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="meeting-start">زمان شروع (تاریخ شمسی)</Label>
-          <JalaliDateTimePicker
-            id="meeting-start"
-            value={startsAt}
-            onChange={setStartsAt}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="meeting-duration">مدت (دقیقه)</Label>
-          <Input
-            id="meeting-duration"
-            type="number"
-            min={5}
-            max={600}
-            value={duration}
-            onChange={(event) => setDuration(event.target.value)}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label>دبیر جلسه</Label>
-          <Select value={secretaryId} onValueChange={setSecretaryId}>
-            <SelectTrigger>
-              <SelectValue placeholder="انتخاب دبیر" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">تعیین نشده</SelectItem>
-              {members.map((member) => (
-                <SelectItem key={member.id} value={String(member.id)}>
-                  {member.full_name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="meeting-location">محل برگزاری</Label>
-          <Input
-            id="meeting-location"
-            value={location}
-            onChange={(event) => setLocation(event.target.value)}
-            placeholder="اتاق جلسات طبقهٔ سوم"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="meeting-url">نشانی جلسهٔ برخط</Label>
-          <Input
-            id="meeting-url"
-            value={onlineUrl}
-            onChange={(event) => setOnlineUrl(event.target.value)}
-            placeholder="https://"
-          />
-        </div>
-        <div className="space-y-2 sm:col-span-2">
-          <Label>دعوت‌شدگان</Label>
-          <div className="grid max-h-44 gap-2 overflow-y-auto rounded-md border border-border p-3 sm:grid-cols-2">
-            {members.length === 0 && (
-              <p className="text-xs text-muted-foreground">عضوی برای دعوت ثبت نشده است.</p>
-            )}
-            {members.map((member) => (
-              <label key={member.id} className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={selected.includes(member.id)}
-                  onCheckedChange={() => toggle(member.id)}
-                />
-                <span>{member.full_name}</span>
-              </label>
-            ))}
-          </div>
+          <Label htmlFor="meeting-start">تاریخ و زمان شروع</Label>
+          <JalaliDateTimePicker id="meeting-start" value={startsAt} onChange={setStartsAt} />
         </div>
 
-        <div className="space-y-3 sm:col-span-2">
+        <FormSection
+          title="اعضای جلسه"
+          icon={Users2}
+          summary={membersSummary}
+          open={openSection === 'members'}
+          onToggle={() => toggleSection('members')}
+        >
+          <div className="space-y-2">
+            <Label>دبیر جلسه</Label>
+            <Select value={secretaryId} onValueChange={setSecretaryId}>
+              <SelectTrigger>
+                <SelectValue placeholder="انتخاب دبیر" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">تعیین نشده</SelectItem>
+                {members.map((member) => (
+                  <SelectItem key={member.id} value={String(member.id)}>
+                    {member.full_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>دعوت‌شدگان از اعضای سازمان</Label>
+            <div className="grid max-h-44 gap-2 overflow-y-auto rounded-md border border-border p-3 sm:grid-cols-2">
+              {members.length === 0 && (
+                <p className="text-xs text-muted-foreground">عضوی برای دعوت ثبت نشده است.</p>
+              )}
+              {members.map((member) => (
+                <label key={member.id} className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={selected.includes(member.id)}
+                    onCheckedChange={() => toggle(member.id)}
+                  />
+                  <span>{member.full_name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label>دعوت افراد جدید (خارج از فهرست اعضا)</Label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={addNewPerson}
+              >
+                <UserPlus className="h-4 w-4" />
+                افزودن فرد
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              فقط نام، نام خانوادگی و شمارهٔ موبایل لازم است. برای این افراد حساب کاربری ساخته
+              می‌شود، به اعضای سازمان اضافه می‌شوند و پیامک دعوت جلسه برایشان ارسال می‌گردد.
+              ایمیل اختیاری است.
+            </p>
+            {newPeople.length === 0 ? (
+              <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
+                فرد جدیدی اضافه نشده است.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {newPeople.map((person, index) => (
+                  <div
+                    key={`new-person-${index}`}
+                    className="space-y-2 rounded-md border border-border p-3"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        فرد جدید {toPersianDigits(index + 1)}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeNewPerson(index)}
+                        title="حذف این فرد"
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <Input
+                        value={person.first_name}
+                        placeholder="نام"
+                        onChange={(event) =>
+                          updateNewPerson(index, { first_name: event.target.value })
+                        }
+                      />
+                      <Input
+                        value={person.last_name}
+                        placeholder="نام خانوادگی"
+                        onChange={(event) =>
+                          updateNewPerson(index, { last_name: event.target.value })
+                        }
+                      />
+                      <Input
+                        dir="ltr"
+                        inputMode="tel"
+                        value={person.mobile}
+                        placeholder="09xxxxxxxxx"
+                        onChange={(event) => updateNewPerson(index, { mobile: event.target.value })}
+                      />
+                      <Input
+                        dir="ltr"
+                        type="email"
+                        value={person.email}
+                        placeholder="ایمیل (اختیاری)"
+                        onChange={(event) => updateNewPerson(index, { email: event.target.value })}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </FormSection>
+
+        <FormSection
+          title="زمان و محل برگزاری"
+          icon={MapPin}
+          summary={placeSummary}
+          open={openSection === 'location'}
+          onToggle={() => toggleSection('location')}
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>نوع جلسه</Label>
+              <Select value={meetingType} onValueChange={setMeetingType}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {bootstrap.meeting_types.map((type) => (
+                    <SelectItem key={type} value={type}>
+                      {type}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="meeting-duration">مدت (دقیقه)</Label>
+              <Input
+                id="meeting-duration"
+                type="number"
+                min={5}
+                max={600}
+                value={duration}
+                onChange={(event) => setDuration(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="meeting-location">محل برگزاری</Label>
+              <Input
+                id="meeting-location"
+                value={location}
+                onChange={(event) => setLocation(event.target.value)}
+                placeholder="اتاق جلسات طبقهٔ سوم"
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="meeting-url">نشانی جلسهٔ برخط</Label>
+              <Input
+                id="meeting-url"
+                value={onlineUrl}
+                onChange={(event) => setOnlineUrl(event.target.value)}
+                placeholder="https://"
+              />
+            </div>
+          </div>
+        </FormSection>
+
+        <FormSection
+          title="دستور جلسه و پیوست"
+          icon={ListChecks}
+          summary={agendaSummary}
+          open={openSection === 'agenda'}
+          onToggle={() => toggleSection('agenda')}
+        >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <Label>دستور جلسه</Label>
             <Button type="button" variant="outline" size="sm" onClick={addAgendaRow} className="gap-1.5">
@@ -634,10 +870,9 @@ function CreateMeetingDialog({
               </div>
             ))}
           </div>
-        </div>
 
-        <div className="space-y-3 sm:col-span-2">
-          <Label htmlFor="meeting-files">پیوست دستور جلسه</Label>
+          <div className="space-y-3">
+            <Label htmlFor="meeting-files">پیوست دستور جلسه</Label>
           <p className="text-xs text-muted-foreground">
             فایل‌های انتخاب‌شده پس از ثبت جلسه بارگذاری و همراه ایمیل دعوت برای شرکت‌کنندگان ارسال
             می‌شود. سقف حجم هر پیوست: {toPersianDigits(limits.maxAttachmentMb)} مگابایت.
@@ -711,7 +946,8 @@ function CreateMeetingDialog({
               })}
             </div>
           )}
-        </div>
+          </div>
+        </FormSection>
       </div>
       {/* نمایشگر انتظار با گیف در مرحلهٔ ثبت جلسه و بارگذاری پیوست‌ها */}
       {stage !== 'idle' && (

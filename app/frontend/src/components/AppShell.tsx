@@ -24,6 +24,7 @@ import {
   Menu,
   PanelRightClose,
   PanelRightOpen,
+  Search,
   Settings2,
   UserCircle,
 } from 'lucide-react';
@@ -51,6 +52,7 @@ import { getSessionUser, isSignedIn } from '@/lib/session';
 import VidaraBranding from '@/components/VidaraBranding';
 import OrganizationSwitcher from '@/components/OrganizationSwitcher';
 import AssistantPanel from '@/components/AssistantPanel';
+import GlobalSearch from '@/components/GlobalSearch';
 
 const BASE_NAV = [
   { to: '/dashboard', label: 'داشبورد', icon: LayoutDashboard },
@@ -490,10 +492,22 @@ export default function AppShell({ children }: AppShellProps) {
             <span className="truncate text-sm font-bold">ویدارا - نسخه جلسات</span>
           </Link>
 
+          {/* در موبایل کادر جست‌وجو جا نمی‌شود؛ کلید آیکونی کاربر را به فهرست
+              جلسات (که جست‌وجوی کامل با فیلتر محدوده دارد) می‌برد. */}
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => navigate('/meetings')}
+            title="جست‌وجو در جلسات"
+            aria-label="جست‌وجو در جلسات"
+          >
+            <Search className="h-5 w-5" />
+          </Button>
+
           <NotificationsMenu items={notifications} unread={unread} onMarkRead={handleMarkRead} />
         </div>
 
-        {/* نوار دسکتاپ: دکمهٔ جمع‌کردن سایدبار + نام فضا + سهمیه + نقش + اعلان + خروج */}
+        {/* نوار دسکتاپ: دکمهٔ جمع‌کردن سایدبار + نام فضا + سهمیه + جست‌وجو + نقش + اعلان + خروج */}
         <div className="hidden h-14 items-center justify-between gap-3 px-4 md:flex">
           <div className="flex min-w-0 items-center gap-2">
             <Button
@@ -517,6 +531,10 @@ export default function AppShell({ children }: AppShellProps) {
               </span>
             )}
           </div>
+
+          {/* جست‌وجوی سراسری کنار توکن‌ها؛ در همهٔ صفحه‌های داخل پوسته در دسترس است. */}
+          <GlobalSearch className="mx-2 w-full max-w-sm flex-1" />
+
           <div className="flex shrink-0 items-center gap-2">
             <Badge variant="outline">{bootstrap.membership.role_label}</Badge>
             <NotificationsMenu items={notifications} unread={unread} onMarkRead={handleMarkRead} />

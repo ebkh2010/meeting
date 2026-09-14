@@ -675,8 +675,94 @@ async def membership_of(db: AsyncSession, app_user: App_users) -> Optional[Membe
     return result.scalars().first()
 
 
-def user_payload(app_user: App_users, membership_id: Optional[int] = None) -> Dict[str, Any]:
-    return {
+async def find_or_create_invited_member(
+    db: AsyncSession,
+    *,
+    organization_id: int,
+    first_name: str,
+    last_name: str,
+    mobile: str,
+    email: str = "",
+) -> Optional[Memberships]:
+    """عضویت سازمانی فردِ دعوت‌شده را برمی‌گرداند و اگر نبود می‌سازد.
+
+    برای دعوت افراد خارج از فهرست اعضا در فرم «تعریف جلسهٔ جدید»: حساب کاربری با
+    نام کاربری = شمارهٔ موبایل و رمز پیش‌فرض ساخته می‌شود، فرد در نخستین ورود ملزم
+    به تکمیل مشخصات است، و پیامک اعتبارنامهٔ ورود (بهترین تلاش) ارسال می‌گردد.
+    اگر همین موبایل از قبل در همین سازمان حساب داشته باشد، همان حساب و عضویتش
+    بازگردانده می‌شود تا حساب تکراری ساخته نشود.
+
+    خروجی ``None`` یعنی موبایل نامعتبر بود و فرد باید نادیده گرفته شود.
+    """
+    normalized_mobile = normalize_mobile(mobile)
+    if not normalized_mobile:
+        return None
+    normalized_email = normalize_email(email)
+    first = (first_name or "").strip()
+    last = (last_name or "").strip()
+
+    existing = await find_existing_account(
+        db, normalized_mobile, normalized_mobile, organization_id=organization_id
+    )
+    if existing is not None:
+        membership = await membership_of(db, existing)
+        if membership is not None:
+            return membership
+        # حساب بدون عضویت (وضعیت نادر): عضویت را می‌سازیم تا در جلسه قابل دعوت باشد.
+        membership = Memberships(
+            organization_id=organization_id,
+            member_user_id=f"{USER_PREFIX}{int(existing.id)}",
+            email=existing.email or "",
+            full_name=full_name_of(existing.first_name, existing.last_name),
+            role=existing.role or ROLE_MEMBER,
+            status="active",
+            is_virtual=False,
+        )
+        db.add(membership)
+        await db.flush()
+        return membership
+
+    app_user = await create_app_user(
+        db,
+        organization_id=organization_id,
+        username=normalized_mobile,
+        password=DEFAULT_PASSWORD,
+        first_name=first,
+        last_name=last,
+        mobile=normalized_mobile,
+        email=normalized_email,
+        national_id="",
+        gender="",
+        role=ROLE_MEMBER,
+        must_change_password=True,
+    )
+    membership = await membership_of(db, app_user)
+
+    # پیامک اعتبارنامهٔ ورود (بهترین تلاش)؛ پیامک دعوت جلسه جداگانه و پس از ثبت
+    # جلسه ارسال می‌شود. شکست پیامک هرگز نباید ساخت عضو را متوقف کند.
+    try:  # pragma: no cover - وابسته به شبکه
+        from core.config import settings as app_settings
+
+        from services import notify_channels as channels
+
+        sms_row = await channels.get_or_create_settings(db, int(organization_id))
+        await channels.send_sms(
+            sms_row,
+            receptor=normalized_mobile,
+            message=(
+                f"{full_name_of(first, last)} عزیز، شما به سامانهٔ «ویدارا - نسخه جلسات» "
+                f"به نشانی {app_settings.backend_url} دعوت شده‌اید. نام کاربری "
+                f"{normalized_mobile} و رمز عبور {DEFAULT_PASSWORD} است؛ پس از نخستین ورود "
+                f"مشخصات خود را تکمیل کنید.\nلغو ۱۱"
+            ),
+        )
+    except Exception:  # noqa: BLE001 - پیامک نباید جریان ساخت عضو را بشکند
+        logger.warning("ارسال پیامک اعتبارنامه به %s ناموفق بود", normalized_mobile, exc_info=True)
+
+    return membership
+
+
+def user_payload(app_user: App_users, membership_id: Optional[int] = None) -> Dict[str, Any]:    return {
         "id": int(app_user.id),
         "membership_id": membership_id,
         "username": app_user.username,
