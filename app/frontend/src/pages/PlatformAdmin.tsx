@@ -81,9 +81,9 @@ export default function PlatformAdmin() {
     <div className="space-y-4">
       <h1 className="text-xl font-bold">مدیریت پلتفرم</h1>
       <Tabs value={tab} onValueChange={(value) => setTab(value as PlatformTab)}>
-        {/* یک ردیفِ قابل‌اسکرول در موبایل: تب‌ها در عرض کم به‌جای شکستن به
-            چند خط، کنار هم می‌مانند و افقی اسکرول می‌شوند. */}
-        <TabsList className="w-full max-w-full justify-start overflow-x-auto">
+        {/* در موبایل تب‌ها به خط بعد می‌روند تا نوار تب کل صفحه را افقی
+            جابه‌جا نکند (اسکرول افقیِ نوار، سند را می‌لغزاند). */}
+        <TabsList className="flex h-auto w-full max-w-full flex-wrap justify-start gap-1">
           <TabsTrigger value="orgs">سازمان‌ها</TabsTrigger>
           <TabsTrigger value="usage">مصرف هوش مصنوعی</TabsTrigger>
           <TabsTrigger value="templates">قالب پیام‌ها</TabsTrigger>

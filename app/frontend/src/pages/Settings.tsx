@@ -80,7 +80,9 @@ function SettingsView({ isAdmin, roleLabel }: { isAdmin: boolean; roleLabel: str
       </div>
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-        <TabsList className="flex h-auto w-full flex-nowrap justify-start gap-1 overflow-x-auto md:flex-wrap">
+        {/* تب‌ها در موبایل به خط بعد می‌روند؛ نوارِ اسکرول‌شونده کل صفحه را
+            افقی جابه‌جا می‌کرد. */}
+        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             return (

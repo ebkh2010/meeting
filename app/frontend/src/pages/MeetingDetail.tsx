@@ -342,7 +342,10 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
 
       <div ref={sectionRef}>
         <Tabs value={tab} onValueChange={setTab} dir="rtl">
-          <TabsList className="flex w-full flex-nowrap justify-start overflow-x-auto md:flex-wrap">
+          {/* نوار تب‌ها در موبایل می‌شکند و به خط بعد می‌رود؛ اگر به‌جای شکستن،
+              افقی اسکرول شود، مرورگر هنگام فعال‌کردن تبِ دورتر کل صفحه را
+              جابه‌جا می‌کند و چیدمان موبایل به‌هم می‌ریزد. */}
+          <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1">
             <TabsTrigger value="agenda">دستور جلسه و حضور</TabsTrigger>
             <TabsTrigger value="audio">صوت و رونویسی</TabsTrigger>
             <TabsTrigger value="minutes">صورتجلسه</TabsTrigger>
@@ -1632,7 +1635,9 @@ function MinutesPanel({
           }
         />
       )}
-      <Card className="lg:col-span-2">
+      {/* min-w-0 لازم است: بدون آن «عرض کمینه» محتوای داخلی (جدول صورتجلسه)
+          از ستون شبکه بیرون می‌زند و کل صفحه را افقی می‌کشد. */}
+      <Card className="min-w-0 lg:col-span-2">
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle className="text-base">متن صورتجلسه</CardTitle>
@@ -1735,7 +1740,9 @@ function MinutesPanel({
               <>
                 <Button
                   variant="outline"
-                  className="!bg-transparent gap-2"
+                  /* برچسب بلند این کلید در موبایل باریک از قاب بیرون می‌زد؛ متن
+                     به خط بعد می‌رود و عرض به کارت محدود می‌ماند. */
+                  className="!bg-transparent h-auto max-w-full gap-2 whitespace-normal py-2 text-right leading-6"
                   disabled={busy || !transcript}
                   onClick={() => {
                     // تنظیمات تولید پیش از شروع نمایش داده می‌شود تا کاربر همان‌جا
@@ -1852,7 +1859,7 @@ function MinutesPanel({
         </CardContent>
       </Card>
 
-      <div className="space-y-4">
+      <div className="min-w-0 space-y-4">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">کارهای پیش‌نویس هوشمند</CardTitle>
@@ -2165,7 +2172,7 @@ function DecisionsPanel({
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       {canManage && (
-        <Card className="lg:col-span-2">
+        <Card className="min-w-0 lg:col-span-2">
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle className="text-base">پیشنهاد هوشمند مصوبات و اقدامات</CardTitle>
@@ -2200,7 +2207,7 @@ function DecisionsPanel({
 
             {hasSuggestions && suggested && (
               <div className="grid gap-4 lg:grid-cols-2">
-                <div className="space-y-3">
+                <div className="min-w-0 space-y-3">
                   <p className="text-sm font-medium">
                     مصوبات پیشنهادی ({toPersianDigits(suggested.decisions.length)})
                   </p>
@@ -2262,7 +2269,7 @@ function DecisionsPanel({
                   ))}
                 </div>
 
-                <div className="space-y-3">
+                <div className="min-w-0 space-y-3">
                   <p className="text-sm font-medium">
                     اقدامات پیشنهادی ({toPersianDigits(suggested.actions.length)})
                   </p>
@@ -2366,7 +2373,7 @@ function DecisionsPanel({
         </Card>
       )}
 
-      <Card>
+      <Card className="min-w-0">
         <CardHeader>
           <CardTitle className="text-base">مصوبات</CardTitle>
         </CardHeader>
@@ -2449,7 +2456,7 @@ function DecisionsPanel({
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="min-w-0">
         <CardHeader>
           <CardTitle className="text-base">اقدامات این جلسه</CardTitle>
         </CardHeader>
@@ -2803,7 +2810,7 @@ function DecisionEditDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-lg" dir="rtl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg" dir="rtl">
         <DialogHeader>
           <DialogTitle>ویرایش مصوبه</DialogTitle>
           <DialogDescription>عنوان و شرح مصوبه را اصلاح کنید.</DialogDescription>
