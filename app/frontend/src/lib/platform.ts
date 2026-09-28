@@ -296,6 +296,69 @@ export interface PlatformActivationTemplate {
   preview: string;
 }
 
+/** تنظیم سراسری مدت نگهداری فایل‌های مدیا. */
+export interface PlatformMediaRetentionSettings {
+  days: number;
+  default_days: number;
+  is_custom: boolean;
+  /** اجرای خودکار (انتقال/حذف پس از انقضا) — پیش‌فرض خاموش. */
+  auto: boolean;
+  /** اگر روشن باشد، مقدار ثبت‌شده توسط مدیر سازمان مقدم است. */
+  allow_org_override: boolean;
+  bounds: { min: number; max: number };
+}
+
+export interface PlatformMediaRetentionItem {
+  organization_id: number;
+  organization_name: string;
+  organization_days: number;
+  meeting_id: number;
+  meeting_title: string;
+  source_kind: string;
+  kind_label: string;
+  source_id: number;
+  file_name: string;
+  size_bytes: number;
+  age_days: number;
+  created_at: string;
+  /** archive = انتقال به استوریج خارجی، delete = حذف از سرور. */
+  action: string;
+  action_label: string;
+}
+
+export interface PlatformMediaRetention {
+  settings: PlatformMediaRetentionSettings;
+  summary: {
+    total: number;
+    total_bytes: number;
+    archive_count: number;
+    delete_count: number;
+    organizations: number;
+    generated_at: string;
+  };
+}
+
+export interface PlatformMediaRetentionReport {
+  days: number;
+  auto: boolean;
+  allow_org_override: boolean;
+  generated_at: string;
+  total: number;
+  total_bytes: number;
+  archive_count: number;
+  delete_count: number;
+  organizations: number;
+  dry_run?: boolean;
+  automatic?: boolean;
+  archived?: number;
+  deleted?: number;
+  failed?: number;
+  freed_bytes?: number;
+  errors?: { file_name: string; organization_name: string; action: string; message: string }[];
+  items: PlatformMediaRetentionItem[];
+  truncated: boolean;
+}
+
 export const platformApi = {
   me: () => call<{ user: PlatformMe }>(`${BASE}/me`),
 
@@ -381,6 +444,24 @@ export const platformApi = {
     call<{ preview: string }>(`${BASE}/settings/activation-reminder/preview`, 'POST', {
       template,
     }),
+
+  /** تنظیم سراسری مدت نگهداری فایل‌های مدیا + خلاصهٔ فایل‌های منقضی. */
+  getMediaRetention: () => call<PlatformMediaRetention>(`${BASE}/settings/media-retention`),
+
+  /** ثبت مدت نگهداری، کلید اجرای خودکار و اجازهٔ بازنویسی توسط مدیر سازمان. */
+  updateMediaRetention: (payload: {
+    days?: number;
+    auto?: boolean;
+    allow_org_override?: boolean;
+    reset_days?: boolean;
+  }) => call<PlatformMediaRetention>(`${BASE}/settings/media-retention`, 'PUT', payload),
+
+  /** گزارش فایل‌های منقضی و سرنوشت هرکدام (بدون تغییر). */
+  mediaRetentionReport: () => call<PlatformMediaRetentionReport>(`${BASE}/media-retention/report`),
+
+  /** اجرای دستی سیاست نگهداری: انتقال به استوریج خارجی یا حذف از سرور. */
+  runMediaRetention: () =>
+    call<PlatformMediaRetentionReport>(`${BASE}/media-retention/run`, 'POST'),
 
   updateNotify: (orgId: number, payload: Record<string, unknown>) =>
     call<PlatformNotify>(`${BASE}/orgs/${orgId}/notify`, 'PATCH', payload),

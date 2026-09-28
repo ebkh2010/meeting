@@ -490,7 +490,13 @@ def build_minutes_docx(payload: Dict[str, Any], logo_bytes: Optional[bytes] = No
                 [
                     _clean_inline_markdown(item.get("title") or "—"),
                     item.get("owner_name") or "—",
-                    jalali_date(item.get("due_date"), tz_name),
+                    # مهلت تعیین‌نشده خالی چاپ می‌شود (نه «—») تا زمانی از خودمان
+                    # ساخته نشود.
+                    (
+                        jalali_date(item.get("due_date"), tz_name)
+                        if str(item.get("due_date") or "").strip()
+                        else ""
+                    ),
                     ACTION_STATUS_LABELS.get(str(item.get("status") or ""), "—"),
                 ]
                 for item in actions

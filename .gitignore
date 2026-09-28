@@ -24,3 +24,8 @@ uploads/
 served_index.html
 fix_ai_providers.py
 .DS_Store
+/.android-toolchain/
+/.gitpush/
+
+# ابزار موقت استقرار (رمز در فایل نیست، فقط مسیر)
+.notes/.askpass.sh

@@ -236,3 +236,96 @@ async def get_activation_reminder_template(db: AsyncSession) -> str:
 def render_activation_reminder(template: str, **kwargs: Any) -> str:
     """ساخت متن نهایی پیامک یادآوری از قالب به‌همراه مقادیر واقعی."""
     return render_template(template, build_context(**kwargs))
+
+
+# ---------------------------------------------------------------------------
+# نگهداری فایل‌های مدیا (تنظیم سراسری مدیر سامانه)
+# ---------------------------------------------------------------------------
+
+MEDIA_RETENTION_DAYS_KEY = "media_retention_days"
+MEDIA_RETENTION_AUTO_KEY = "media_retention_auto"
+MEDIA_RETENTION_ORG_OVERRIDE_KEY = "media_retention_allow_org_override"
+
+#: مدت پیش‌فرض نگهداری مدیا (روز) — همان مقدار پیشین سامانه.
+DEFAULT_MEDIA_RETENTION_DAYS = 90
+
+#: کران‌های مجاز مدت نگهداری: دست‌کم یک روز و دست‌اکثر ده سال.
+MEDIA_RETENTION_BOUNDS = (1, 3650)
+
+
+def clamp_retention_days(value: Any) -> Optional[int]:
+    """تبدیل ورودی به عدد صحیح در بازهٔ مجاز؛ ``None`` اگر نامعتبر باشد."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        days = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    low, high = MEDIA_RETENTION_BOUNDS
+    return max(low, min(high, days))
+
+
+def _as_bool(value: Optional[str], default: bool = False) -> bool:
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def get_media_retention(db: AsyncSession) -> Dict[str, Any]:
+    """تنظیم فعال نگهداری مدیا به‌همراه پیش‌فرض‌ها و وضعیت سفارشی‌بودن."""
+    stored_days = await get_setting(db, MEDIA_RETENTION_DAYS_KEY)
+    days = clamp_retention_days(stored_days)
+    return {
+        "days": days if days is not None else DEFAULT_MEDIA_RETENTION_DAYS,
+        "default_days": DEFAULT_MEDIA_RETENTION_DAYS,
+        "is_custom": days is not None,
+        # اجرای خودکار به‌صورت پیش‌فرض خاموش است تا حذف ناخواسته رخ ندهد.
+        "auto": _as_bool(await get_setting(db, MEDIA_RETENTION_AUTO_KEY), False),
+        # اگر روشن باشد، مقداری که مدیر سازمان در تنظیمات خودش ثبت کرده اولویت دارد.
+        "allow_org_override": _as_bool(
+            await get_setting(db, MEDIA_RETENTION_ORG_OVERRIDE_KEY), True
+        ),
+        "bounds": {"min": MEDIA_RETENTION_BOUNDS[0], "max": MEDIA_RETENTION_BOUNDS[1]},
+    }
+
+
+async def set_media_retention(
+    db: AsyncSession,
+    *,
+    days: Optional[int] = None,
+    auto: Optional[bool] = None,
+    allow_org_override: Optional[bool] = None,
+    reset_days: bool = False,
+) -> Dict[str, Any]:
+    """ثبت تنظیم نگهداری مدیا (بدون commit)."""
+    if reset_days:
+        await set_setting(db, MEDIA_RETENTION_DAYS_KEY, None)
+    elif days is not None:
+        clamped = clamp_retention_days(days)
+        if clamped is None:
+            raise ValueError("مدت نگهداری مدیا باید یک عدد صحیح باشد.")
+        await set_setting(db, MEDIA_RETENTION_DAYS_KEY, str(clamped))
+    if auto is not None:
+        await set_setting(db, MEDIA_RETENTION_AUTO_KEY, "1" if auto else "0")
+    if allow_org_override is not None:
+        await set_setting(db, MEDIA_RETENTION_ORG_OVERRIDE_KEY, "1" if allow_org_override else "0")
+    return await get_media_retention(db)
+
+
+def resolve_retention_days(settings: Dict[str, Any], org_days: Any) -> int:
+    """مدت نگهداری مؤثر یک سازمان: مقدار سازمان (در صورت اجازه) وگرنه مقدار سراسری."""
+    if settings.get("allow_org_override", True):
+        org_value = clamp_retention_days(org_days)
+        if org_value is not None:
+            return org_value
+    return int(settings.get("days") or DEFAULT_MEDIA_RETENTION_DAYS)
+
+
+async def effective_media_retention_days(db: AsyncSession, organization: Any) -> int:
+    """مدت نگهداری مؤثر برای یک سازمان مشخص (برای نمایش در پنل‌ها)."""
+    try:
+        settings = await get_media_retention(db)
+    except Exception as exc:  # pragma: no cover - نبود جدول نباید صفحه را بشکند
+        logger.warning("خواندن تنظیم نگهداری مدیا ناموفق بود: %s", exc)
+        settings = {"days": DEFAULT_MEDIA_RETENTION_DAYS, "allow_org_override": True}
+    return resolve_retention_days(settings, getattr(organization, "audio_retention_days", None))

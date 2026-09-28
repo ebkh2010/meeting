@@ -727,7 +727,6 @@ async def suggest_decision_items(
 
     members = await list_owned(db, Memberships, ctx, Memberships.status == "active")
     member_by_name = {core.fa_normalize(member.full_name): member for member in members}
-    default_due = core.iso_utc(core.utc_now() + core.timedelta(days=14))
 
     suggested_actions: List[Dict[str, Any]] = []
     for item in draft.action_items:
@@ -735,10 +734,13 @@ async def suggest_decision_items(
         suggested_actions.append(
             {
                 "title": item["title"],
-                "description": item.get("due_hint", ""),
+                "description": item.get("description", ""),
                 "owner_membership_id": int(owner.id) if owner is not None else None,
                 "owner_name": owner.full_name if owner is not None else item.get("owner_name", ""),
-                "due_date": default_due,
+                # مهلت ساختگی ساخته نمی‌شود؛ فقط تاریخی که در جلسه صریح گفته شده
+                # ثبت می‌گردد و در غیر این صورت خالی می‌ماند.
+                "due_date": core.normalize_iso(item.get("due_date", "")) or "",
+                "due_hint": (item.get("due_hint") or "").strip(),
             }
         )
 
@@ -1477,6 +1479,15 @@ async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:
         )
         session.add(minutes)
     minutes.status = MINUTES_DRAFT
+    # متن نسخهٔ پیشین (اگر تاریخچه‌ای نداشت) پیش از بازنویسی ثبت می‌شود تا تولید
+    # مجدد، صورتجلسهٔ موجود را از بین نبرد؛ کاربر می‌تواند به آن بازگردد.
+    await core.ensure_minutes_baseline_version(
+        session,
+        organization_id=organization_id,
+        minutes=minutes,
+        meeting_id=meeting_id,
+        actor_name=job_row.created_by_name or "سامانه",
+    )
     minutes.body_markdown = draft.body_markdown
     minutes.summary = draft.summary
     minutes.generated_by = "ai"
@@ -1497,29 +1508,30 @@ async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:
         )
     )
 
-    # حذف مصوبات و اقدامات تولیدشدهٔ قبلی توسط AI تا داده تکراری نشود
-    old_decisions = await session.execute(
+    # تولید مجدد هیچ دادهٔ پیشینی را حذف نمی‌کند: مصوبات و اقدامات قبلی — حتی
+    # آن‌هایی که کاربر ویرایش یا پیگیری کرده — دست‌نخورده می‌مانند. تنها موردی که
+    # عنوان یکسان (پس از نرمال‌سازی فارسی) دارد دوباره ساخته نمی‌شود تا رکورد
+    # تکراری اضافه نشود؛ حذف موارد ناخواسته در اختیار خود کاربر است.
+    existing_decisions_result = await session.execute(
         select(Decisions).where(
-            Decisions.organization_id == organization_id,
-            Decisions.meeting_id == meeting_id,
-            Decisions.source == "ai",
+            Decisions.organization_id == organization_id, Decisions.meeting_id == meeting_id
         )
     )
-    old_decision_ids = []
-    for decision in old_decisions.scalars().all():
-        old_decision_ids.append(int(decision.id))
-        await session.delete(decision)
-    if old_decision_ids:
-        old_actions = await session.execute(
-            select(Action_items).where(
-                Action_items.organization_id == organization_id,
-                Action_items.decision_id.in_(old_decision_ids),
-                Action_items.source == "ai",
-            )
+    existing_decisions = list(existing_decisions_result.scalars().all())
+    existing_decision_titles = {
+        core.fa_normalize(row.title or "") for row in existing_decisions
+    }
+    next_position = max([int(row.position or 0) for row in existing_decisions], default=0) + 1
+
+    existing_actions_result = await session.execute(
+        select(Action_items).where(
+            Action_items.organization_id == organization_id,
+            Action_items.meeting_id == meeting_id,
         )
-        for action in old_actions.scalars().all():
-            await session.delete(action)
-    await session.flush()
+    )
+    existing_action_titles = {
+        core.fa_normalize(row.title or "") for row in existing_actions_result.scalars().all()
+    }
 
     member_result = await session.execute(
         select(Memberships).where(
@@ -1530,22 +1542,30 @@ async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:
     member_by_name = {core.fa_normalize(member.full_name): member for member in members}
 
     created_decisions: List[Decisions] = []
-    for index, item in enumerate(draft.decisions, start=1):
+    for item in draft.decisions:
+        title_key = core.fa_normalize(item["title"])
+        if title_key and title_key in existing_decision_titles:
+            continue
         decision = Decisions(
             organization_id=organization_id,
             meeting_id=meeting_id,
             minutes_id=int(minutes.id),
-            position=index,
+            position=next_position,
             title=item["title"],
             description=item.get("description", ""),
             source="ai",
         )
+        next_position += 1
+        existing_decision_titles.add(title_key)
         session.add(decision)
         created_decisions.append(decision)
     await session.flush()
 
-    default_due = core.iso_utc(core.utc_now() + core.timedelta(days=14))
     for index, item in enumerate(draft.action_items):
+        title_key = core.fa_normalize(item["title"])
+        if title_key and title_key in existing_action_titles:
+            continue
+        existing_action_titles.add(title_key)
         owner = member_by_name.get(core.fa_normalize(item.get("owner_name", "")))
         linked = created_decisions[index] if index < len(created_decisions) else (
             created_decisions[0] if created_decisions else None
@@ -1556,10 +1576,12 @@ async def _execute_minutes(session: AsyncSession, job: Jobs) -> None:
                 meeting_id=meeting_id,
                 decision_id=int(linked.id) if linked is not None else None,
                 title=item["title"],
-                description=item.get("due_hint", ""),
+                description=item.get("description", ""),
                 owner_membership_id=int(owner.id) if owner is not None else None,
                 owner_name=owner.full_name if owner is not None else item.get("owner_name", ""),
-                due_date=default_due,
+                # مهلت فقط از تاریخ اعلام‌شده در جلسه می‌آید؛ در غیر این صورت خالی
+                # می‌ماند تا مدیر سازمان یا دبیر آن را ثبت کند.
+                due_date=core.normalize_iso(item.get("due_date", "")) or "",
                 status="open",
                 progress_note="",
                 source="ai",

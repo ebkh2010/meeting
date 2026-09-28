@@ -262,7 +262,8 @@ function DashboardBody() {
                     </Badge>
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    مهلت: {formatDate(action.due_date)} • جلسه: {action.meeting_title || '—'}
+                    مهلت: {action.due_date ? formatDate(action.due_date) : 'تعیین‌نشده'} • جلسه:{' '}
+                    {action.meeting_title || '—'}
                   </p>
                 </Link>
               ))

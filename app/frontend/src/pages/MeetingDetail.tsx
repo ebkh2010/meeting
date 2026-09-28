@@ -10,11 +10,14 @@ import {
   CalendarDays,
   Download,
   FileText,
+  History,
   Loader2,
   Mic,
+  Pencil,
   Plus,
   Printer,
   RefreshCw,
+  RotateCcw,
   Settings2,
   Sparkles,
   Trash2,
@@ -55,8 +58,10 @@ import HighlightText from '@/components/HighlightText';
 import FilePicker from '@/components/FilePicker';
 import {
   ACTION_STATUS_LABELS,
+  ActionItem,
   api,
   Bootstrap,
+  Decision,
   downloadMinutesDocx,
   errorMessage,
   formatDate,
@@ -1546,11 +1551,48 @@ function MinutesPanel({
   const [generateAfterSettings, setGenerateAfterSettings] = useState(false);
   // نمایش مارک‌داون: پیش‌فرض نمایش قالب‌بندی‌شده؛ ویرایش با دکمهٔ تغییر وضعیت
   const [editingBody, setEditingBody] = useState(false);
+  // تاریخچهٔ نسخه‌ها: متن کدام نسخه باز است و کدام نسخه در حال بازگردانی است.
+  const [expandedVersion, setExpandedVersion] = useState<number | null>(null);
+  const [restoringId, setRestoringId] = useState<number | null>(null);
+  const [versionsBusy, setVersionsBusy] = useState(false);
 
   useEffect(() => {
     setBody(detail.minutes?.body_markdown || '');
     setSummary(detail.minutes?.summary || '');
   }, [detail.minutes]);
+
+  // تاریخچه بدون نیاز به کلیک کاربر بارگذاری می‌شود و با هر تولید/ذخیرهٔ تازه
+  // (تغییر شمارهٔ نسخه) خودکار به‌روز می‌گردد.
+  useEffect(() => {
+    void loadVersions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail.meeting.id, detail.minutes?.current_version]);
+
+  const refreshVersions = async () => {
+    setVersionsBusy(true);
+    try {
+      await loadVersions();
+    } finally {
+      setVersionsBusy(false);
+    }
+  };
+
+  /** بازگردانی متن صورتجلسه به یک نسخهٔ پیشین؛ نسخهٔ جاری پاک نمی‌شود. */
+  const restoreVersion = async (version: MinuteVersion) => {
+    setRestoringId(version.id);
+    try {
+      await api.restoreMinutesVersion(version.id);
+      toast.success(
+        `متن نسخهٔ ${toPersianDigits(version.version)} دوباره جاری شد و به‌عنوان نسخهٔ تازه ثبت گردید.`,
+      );
+      await onDone();
+      await loadVersions();
+    } catch (err) {
+      toast.error(errorMessage(err, 'بازگردانی نسخه ناموفق بود.'));
+    } finally {
+      setRestoringId(null);
+    }
+  };
 
   const status = minutes?.status || 'draft';
   const canManage = detail.permissions.can_manage;
@@ -1836,32 +1878,81 @@ function MinutesPanel({
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-base">تاریخچهٔ نسخه‌ها</CardTitle>
-            <Button size="sm" variant="ghost" onClick={loadVersions}>
-              بارگذاری
+            <Button
+              size="sm"
+              variant="ghost"
+              className="gap-2"
+              disabled={versionsBusy}
+              onClick={refreshVersions}
+            >
+              {versionsBusy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <History className="h-4 w-4" />
+              )}
+              به‌روزرسانی
             </Button>
           </CardHeader>
           <CardContent className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              هر تولید یا ذخیره، یک نسخهٔ تازه می‌سازد. متن هر نسخه را می‌بینید و هر زمان
+              خواستید همان را دوباره جاری می‌کنید؛ هیچ نسخه‌ای پاک نمی‌شود.
+            </p>
             {versions.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                برای دیدن تاریخچه، دکمهٔ بارگذاری را بزنید.
-              </p>
+              <p className="text-sm text-muted-foreground">هنوز نسخه‌ای ثبت نشده است.</p>
             ) : (
               versions.map((version) => (
-                <div key={version.id} className="rounded-md border border-border p-3">
-                  <div className="flex items-center justify-between gap-2">
+                <div key={version.id} className="space-y-2 rounded-md border border-border p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-sm font-medium">
                       نسخهٔ {toPersianDigits(version.version)}
                     </span>
-                    <Badge variant="outline">
-                      {MINUTES_STATUS_LABELS[version.status_at_version] ||
-                        version.status_at_version}
-                    </Badge>
+                    <div className="flex flex-wrap items-center gap-1">
+                      {version.is_current && <Badge>نسخهٔ جاری</Badge>}
+                      <Badge variant="outline">
+                        {MINUTES_STATUS_LABELS[version.status_at_version] ||
+                          version.status_at_version}
+                      </Badge>
+                    </div>
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     {version.changed_by_name || '—'} • {formatDateTime(version.created_at)}
                   </p>
-                  {version.change_note && (
-                    <p className="mt-1 text-xs">{version.change_note}</p>
+                  {version.change_note && <p className="text-xs">{version.change_note}</p>}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs"
+                      onClick={() =>
+                        setExpandedVersion((current) =>
+                          current === version.id ? null : version.id,
+                        )
+                      }
+                    >
+                      {expandedVersion === version.id ? 'بستن متن' : 'نمایش متن'}
+                    </Button>
+                    {canManage && !isLocked && !version.is_current && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="!bg-transparent h-7 gap-1 px-2 text-xs"
+                        disabled={restoringId === version.id}
+                        onClick={() => restoreVersion(version)}
+                      >
+                        {restoringId === version.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        )}
+                        استفاده از این نسخه
+                      </Button>
+                    )}
+                  </div>
+                  {expandedVersion === version.id && (
+                    <div className="max-h-72 overflow-y-auto rounded-md border border-dashed border-border p-2">
+                      <MarkdownText text={version.body_markdown || '—'} />
+                    </div>
                   )}
                 </div>
               ))
@@ -1892,6 +1983,26 @@ function DecisionsPanel({
   const [actionOwner, setActionOwner] = useState('none');
   const [actionDue, setActionDue] = useState('');
   const [actionDecision, setActionDecision] = useState('none');
+
+  // ویرایش/حذف اقدام و ویرایش مصوبه — روی موارد تولیدشده توسط هوش مصنوعی هم باز است.
+  const [editingAction, setEditingAction] = useState<ActionItem | null>(null);
+  const [editingDecision, setEditingDecision] = useState<Decision | null>(null);
+  const [confirmActionId, setConfirmActionId] = useState<number | null>(null);
+  const [deletingActionId, setDeletingActionId] = useState<number | null>(null);
+
+  const removeAction = async (action: ActionItem) => {
+    setDeletingActionId(action.id);
+    try {
+      await api.deleteAction(action.id);
+      toast.success('اقدام حذف شد.');
+      setConfirmActionId(null);
+      onDone();
+    } catch (err) {
+      toast.error(errorMessage(err, 'حذف اقدام ناموفق بود.'));
+    } finally {
+      setDeletingActionId(null);
+    }
+  };
 
   // پیشنهادهای هوش مصنوعی؛ تا زمانی که کاربر «افزودن» را نزند هیچ‌چیز ذخیره نمی‌شود.
   const [suggesting, setSuggesting] = useState(false);
@@ -2204,6 +2315,17 @@ function DecisionsPanel({
                           نام پیشنهادی مسئول: {item.owner_name} (در فهرست اعضا یافت نشد)
                         </p>
                       )}
+                      {!item.due_date && item.due_hint && (
+                        <p className="text-xs text-muted-foreground">
+                          زمان گفته‌شده در جلسه: «{item.due_hint}» — تاریخ دقیق را خودتان ثبت
+                          کنید.
+                        </p>
+                      )}
+                      {!item.due_date && !item.due_hint && (
+                        <p className="text-xs text-muted-foreground">
+                          در جلسه زمانی اعلام نشده؛ مهلت خالی می‌ماند.
+                        </p>
+                      )}
                       <div className="flex flex-wrap gap-2">
                         <Button
                           size="sm"
@@ -2274,6 +2396,16 @@ function DecisionsPanel({
                     <Button
                       size="icon"
                       variant="ghost"
+                      aria-label="ویرایش مصوبه"
+                      onClick={() => setEditingDecision(decision)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {canManage && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
                       aria-label="حذف مصوبه"
                       onClick={async () => {
                         try {
@@ -2326,25 +2458,79 @@ function DecisionsPanel({
             <p className="text-sm text-muted-foreground">اقدامی ثبت نشده است.</p>
           )}
           {detail.actions.map((action) => (
-            <div key={action.id} className="rounded-md border border-border p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-medium">
+            <div key={action.id} className="space-y-2 rounded-md border border-border p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <p className="min-w-0 text-sm font-medium">
                   <HighlightText text={action.title} query={query} />
                 </p>
-                <Badge variant={action.status === 'overdue' ? 'destructive' : 'secondary'}>
-                  {ACTION_STATUS_LABELS[action.status] || action.status}
-                </Badge>
+                <div className="flex flex-wrap items-center gap-1">
+                  <Badge variant={action.status === 'overdue' ? 'destructive' : 'secondary'}>
+                    {ACTION_STATUS_LABELS[action.status] || action.status}
+                  </Badge>
+                  {action.source === 'ai' && <Badge variant="outline">هوش مصنوعی</Badge>}
+                  {canManage && (
+                    <>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label="ویرایش اقدام"
+                        onClick={() => setEditingAction(action)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label="حذف اقدام"
+                        onClick={() =>
+                          setConfirmActionId((current) =>
+                            current === action.id ? null : action.id,
+                          )
+                        }
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </>
+                  )}
+                </div>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                مسئول: {action.owner_name || '—'} • مهلت: {formatDate(action.due_date)}
+              <p className="text-xs text-muted-foreground">
+                مسئول: {action.owner_name || '—'} • مهلت:{' '}
+                {action.due_date ? formatDate(action.due_date) : 'تعیین‌نشده'}
               </p>
+              {!action.due_date && canManage && (
+                <p className="text-xs text-muted-foreground">
+                  در جلسه زمانی برای این اقدام اعلام نشده است؛ می‌توانید با «ویرایش» مهلت آن را
+                  ثبت کنید.
+                </p>
+              )}
               {action.description && (
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   <HighlightText text={action.description} query={query} />
                 </p>
               )}
               {action.progress_note && (
-                <p className="mt-1 text-xs">یادداشت: {action.progress_note}</p>
+                <p className="text-xs">یادداشت: {action.progress_note}</p>
+              )}
+              {confirmActionId === action.id && (
+                <div className="flex flex-wrap items-center gap-2 rounded-md bg-destructive/10 p-2">
+                  <span className="text-xs">این اقدام برای همیشه حذف شود؟</span>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={deletingActionId === action.id}
+                    onClick={() => removeAction(action)}
+                  >
+                    {deletingActionId === action.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      'حذف قطعی'
+                    )}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirmActionId(null)}>
+                    انصراف
+                  </Button>
+                </div>
               )}
             </div>
           ))}
@@ -2400,7 +2586,258 @@ function DecisionsPanel({
           )}
         </CardContent>
       </Card>
+
+      {editingAction && (
+        <ActionEditDialog
+          action={editingAction}
+          members={members}
+          onClose={() => setEditingAction(null)}
+          onSaved={onDone}
+        />
+      )}
+
+      {editingDecision && (
+        <DecisionEditDialog
+          decision={editingDecision}
+          onClose={() => setEditingDecision(null)}
+          onSaved={onDone}
+        />
+      )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* ویرایش اقدام: عنوان، شرح، مسئول، مهلت، وضعیت و یادداشت پیشرفت        */
+/* ------------------------------------------------------------------ */
+
+function ActionEditDialog({
+  action,
+  members,
+  onClose,
+  onSaved,
+}: {
+  action: ActionItem;
+  members: Member[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(action.title);
+  const [description, setDescription] = useState(action.description || '');
+  const [owner, setOwner] = useState(
+    action.owner_membership_id ? String(action.owner_membership_id) : 'none',
+  );
+  const [due, setDue] = useState(action.due_date || '');
+  const [status, setStatus] = useState(action.status);
+  const [progressNote, setProgressNote] = useState(action.progress_note || '');
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (title.trim().length < 3) {
+      toast.error('عنوان اقدام باید حداقل سه نویسه باشد.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.updateAction(action.id, {
+        title: title.trim(),
+        description: description.trim(),
+        owner_membership_id: owner === 'none' ? null : Number(owner),
+        clear_owner: owner === 'none',
+        // رشتهٔ خالی یعنی حذف مهلت؛ پس اقدام بدون مهلت «تعیین‌نشده» می‌ماند.
+        due_date: due,
+        status,
+        progress_note: progressNote.trim(),
+      });
+      toast.success('اقدام به‌روزرسانی شد.');
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast.error(errorMessage(err, 'ویرایش اقدام ناموفق بود.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg" dir="rtl">
+        <DialogHeader>
+          <DialogTitle>ویرایش اقدام</DialogTitle>
+          <DialogDescription>
+            متن، مسئول، مهلت و وضعیت اقدام را می‌توانید تغییر دهید یا مهلت را خالی بگذارید.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="action-edit-title">عنوان اقدام</Label>
+            <Input
+              id="action-edit-title"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="action-edit-desc">شرح</Label>
+            <Textarea
+              id="action-edit-desc"
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              rows={3}
+            />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>مسئول اقدام</Label>
+              <Select value={owner} onValueChange={setOwner}>
+                <SelectTrigger>
+                  <SelectValue placeholder="مسئول" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">بدون مسئول</SelectItem>
+                  {members.map((member) => (
+                    <SelectItem key={member.id} value={String(member.id)}>
+                      {member.full_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>وضعیت</Label>
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger>
+                  <SelectValue placeholder="وضعیت" />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(ACTION_STATUS_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>مهلت</Label>
+            <div className="flex flex-wrap items-center gap-2">
+              <JalaliDateTimePicker value={due} onChange={setDue} withTime={false} />
+              {due && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-9"
+                  onClick={() => setDue('')}
+                >
+                  خالی کردن مهلت
+                </Button>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              اگر در جلسه زمانی اعلام نشده، این قسمت را خالی بگذارید.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="action-edit-note">یادداشت پیشرفت</Label>
+            <Textarea
+              id="action-edit-note"
+              value={progressNote}
+              onChange={(event) => setProgressNote(event.target.value)}
+              rows={2}
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={busy} onClick={save}>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              ذخیرهٔ تغییرات
+            </Button>
+            <Button variant="outline" className="!bg-transparent" disabled={busy} onClick={onClose}>
+              انصراف
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* ویرایش مصوبه                                                        */
+/* ------------------------------------------------------------------ */
+
+function DecisionEditDialog({
+  decision,
+  onClose,
+  onSaved,
+}: {
+  decision: Decision;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(decision.title);
+  const [description, setDescription] = useState(decision.description || '');
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (title.trim().length < 3) {
+      toast.error('عنوان مصوبه باید حداقل سه نویسه باشد.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.updateDecision(decision.id, {
+        title: title.trim(),
+        description: description.trim(),
+      });
+      toast.success('مصوبه به‌روزرسانی شد.');
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast.error(errorMessage(err, 'ویرایش مصوبه ناموفق بود.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-lg" dir="rtl">
+        <DialogHeader>
+          <DialogTitle>ویرایش مصوبه</DialogTitle>
+          <DialogDescription>عنوان و شرح مصوبه را اصلاح کنید.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="decision-edit-title">عنوان مصوبه</Label>
+            <Input
+              id="decision-edit-title"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="decision-edit-desc">شرح</Label>
+            <Textarea
+              id="decision-edit-desc"
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              rows={3}
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={busy} onClick={save}>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              ذخیرهٔ تغییرات
+            </Button>
+            <Button variant="outline" className="!bg-transparent" disabled={busy} onClick={onClose}>
+              انصراف
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 /* ------------------------------------------------------------------ */

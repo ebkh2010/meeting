@@ -1,9 +1,10 @@
+import asyncio
 import importlib
 import logging
 import os
 import pkgutil
 import traceback
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 
 from core.config import settings
@@ -129,11 +130,19 @@ async def lifespan(app: FastAPI):
     from core.database import db_manager as _db_manager
     async with _db_manager.async_session_maker() as _session:
         await platform_admin.ensure_platform_admin(_session)
+    # سیاست نگهداری فایل‌های مدیا: حلقهٔ پس‌زمینه فقط زمانی کاری می‌کند که مدیر
+    # سامانه «اجرای خودکار» را روشن کرده باشد؛ پیش‌فرض خاموش و بی‌خطر است.
+    from services import media_retention as _media_retention
+
+    media_retention_task = asyncio.create_task(_media_retention.auto_sweep_forever())
     # MODULE_STARTUP_END
 
     logger.info("=== Application startup completed successfully ===")
     yield
     # MODULE_SHUTDOWN_START
+    media_retention_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await media_retention_task
     await close_database()
     # MODULE_SHUTDOWN_END
 

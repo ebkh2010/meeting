@@ -22,7 +22,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import LoadingGif from '@/components/LoadingGif';
-import { Ban, Building2, BarChart3, BellRing, Bot, CheckCircle2, Coins, History, KeyRound, MessageSquareText, Mic, Pencil, RefreshCcw, RotateCcw, Settings2, ShieldCheck, Trash2, UserCog, UserPlus } from 'lucide-react';
+import { Ban, Building2, BarChart3, BellRing, Bot, CheckCircle2, Coins, HardDrive, History, KeyRound, MessageSquareText, Mic, Pencil, RefreshCcw, RotateCcw, Settings2, ShieldCheck, Trash2, UserCog, UserPlus } from 'lucide-react';
 import {
   errorMessage,
   platformApi,
@@ -32,6 +32,8 @@ import {
   type PlatformAdminList,
   type PlatformAiProvider,
   type PlatformAiSummary,
+  type PlatformMediaRetention,
+  type PlatformMediaRetentionReport,
   type PlatformMessagePlaceholder,
   type PlatformNotify,
   type PlatformOrg,
@@ -52,7 +54,7 @@ const AI_PROVIDER_LABELS: Record<string, string> = {
   kimi: 'Kimi',
 };
 
-type PlatformTab = 'orgs' | 'usage' | 'templates' | 'admins' | 'trash';
+type PlatformTab = 'orgs' | 'usage' | 'templates' | 'admins' | 'retention' | 'trash';
 
 export default function PlatformAdmin() {
   const [tab, setTab] = useState<PlatformTab>('orgs');
@@ -85,6 +87,7 @@ export default function PlatformAdmin() {
           <TabsTrigger value="orgs">سازمان‌ها</TabsTrigger>
           <TabsTrigger value="usage">مصرف هوش مصنوعی</TabsTrigger>
           <TabsTrigger value="templates">قالب پیام‌ها</TabsTrigger>
+          <TabsTrigger value="retention">نگهداری مدیا</TabsTrigger>
           {isOwner && <TabsTrigger value="admins">مدیران پلتفرم</TabsTrigger>}
           <TabsTrigger value="trash">سطل آشغال</TabsTrigger>
         </TabsList>
@@ -92,8 +95,350 @@ export default function PlatformAdmin() {
       {tab === 'orgs' && <OrgsView />}
       {tab === 'usage' && <AiUsageView />}
       {tab === 'templates' && <MessagesView />}
+      {tab === 'retention' && <MediaRetentionView />}
       {tab === 'admins' && isOwner && <AdminsView />}
       {tab === 'trash' && <TrashView onChanged={() => setTab('orgs')} />}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* سیاست نگهداری فایل‌های مدیا (سراسری)                                 */
+/* ------------------------------------------------------------------ */
+
+function formatBytes(value: number): string {
+  const bytes = Number(value || 0);
+  if (bytes < 1024) return `${toPersianDigits(bytes)} بایت`;
+  if (bytes < 1024 * 1024) return `${toPersianDigits(Math.round(bytes / 1024))} کیلوبایت`;
+  if (bytes < 1024 * 1024 * 1024)
+    return `${toPersianDigits((bytes / (1024 * 1024)).toFixed(1))} مگابایت`;
+  return `${toPersianDigits((bytes / (1024 * 1024 * 1024)).toFixed(2))} گیگابایت`;
+}
+
+function MediaRetentionView() {
+  const [data, setData] = useState<PlatformMediaRetention | null>(null);
+  const [report, setReport] = useState<PlatformMediaRetentionReport | null>(null);
+  const [days, setDays] = useState('90');
+  const [auto, setAuto] = useState(false);
+  const [allowOrgOverride, setAllowOrgOverride] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [confirmAuto, setConfirmAuto] = useState(false);
+  const [lastRun, setLastRun] = useState<PlatformMediaRetentionReport | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const payload = await platformApi.getMediaRetention();
+      setData(payload);
+      setDays(String(payload.settings.days));
+      setAuto(payload.settings.auto);
+      setAllowOrgOverride(payload.settings.allow_org_override);
+    } catch (err) {
+      toast.error(errorMessage(err, 'خواندن تنظیم نگهداری مدیا ناموفق بود.'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadReport = useCallback(async () => {
+    try {
+      setReport(await platformApi.mediaRetentionReport());
+    } catch (err) {
+      toast.error(errorMessage(err, 'گرفتن گزارش فایل‌های منقضی ناموفق بود.'));
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    void loadReport();
+  }, [load, loadReport]);
+
+  const save = async () => {
+    const parsed = Number(days);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      toast.error('مدت نگهداری باید یک عدد بزرگ‌تر از صفر باشد.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = await platformApi.updateMediaRetention({
+        days: Math.round(parsed),
+        auto,
+        allow_org_override: allowOrgOverride,
+      });
+      setData(payload);
+      toast.success('تنظیم نگهداری مدیا ذخیره شد.');
+      await loadReport();
+    } catch (err) {
+      toast.error(errorMessage(err, 'ذخیرهٔ تنظیم نگهداری مدیا ناموفق بود.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const runNow = async () => {
+    setRunning(true);
+    try {
+      const result = await platformApi.runMediaRetention();
+      setLastRun(result);
+      if (result.failed) {
+        toast.error(
+          `${toPersianDigits(result.archived || 0)} انتقال و ${toPersianDigits(
+            result.deleted || 0,
+          )} حذف انجام شد؛ ${toPersianDigits(result.failed)} مورد خطا داشت.`,
+        );
+      } else {
+        toast.success(
+          `${toPersianDigits(result.archived || 0)} فایل به استوریج خارجی منتقل و ${toPersianDigits(
+            result.deleted || 0,
+          )} فایل حذف شد.`,
+        );
+      }
+      await loadReport();
+      await load();
+    } catch (err) {
+      toast.error(errorMessage(err, 'اجرای سیاست نگهداری ناموفق بود.'));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  if (loading && !data) {
+    return (
+      <div className="flex justify-center py-10">
+        <LoadingGif />
+      </div>
+    );
+  }
+
+  const settings = data?.settings;
+  const summary = data?.summary;
+  const items = report?.items || [];
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <HardDrive className="h-5 w-5" />
+            مدت نگهداری فایل‌های مدیا
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            فایل‌های صوتی/ویدیویی و پیوست‌های قدیمی‌تر از این مدت، اگر سازمان «استوریج خارجی»
+            فعال داشته باشد به آن منتقل می‌شوند و در غیر این صورت از سرور پاک می‌شوند. متن
+            رونویسی، صورتجلسه، مصوبات و اقدامات همیشه باقی می‌مانند.
+          </p>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="space-y-2">
+              <Label htmlFor="media-retention-days">مدت نگهداری (روز)</Label>
+              <Input
+                id="media-retention-days"
+                type="number"
+                inputMode="numeric"
+                min={settings?.bounds.min ?? 1}
+                max={settings?.bounds.max ?? 3650}
+                value={days}
+                onChange={(event) => setDays(event.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                بازهٔ مجاز: {toPersianDigits(settings?.bounds.min ?? 1)} تا{' '}
+                {toPersianDigits(settings?.bounds.max ?? 3650)} روز — پیش‌فرض سامانه:{' '}
+                {toPersianDigits(settings?.default_days ?? 90)} روز
+              </p>
+            </div>
+
+            <div className="space-y-2 rounded-md border border-border p-3">
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="media-retention-auto" className="cursor-pointer">
+                  اجرای خودکار
+                </Label>
+                <Switch
+                  id="media-retention-auto"
+                  checked={auto}
+                  onCheckedChange={(checked) => {
+                    if (checked) {
+                      setConfirmAuto(true);
+                    } else {
+                      setAuto(false);
+                    }
+                  }}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {auto
+                  ? 'هر ۶ ساعت، فایل‌های منقضی خودکار منتقل یا حذف می‌شوند.'
+                  : 'خاموش است؛ فقط گزارش نمایش داده می‌شود و هیچ فایلی پاک نمی‌شود.'}
+              </p>
+            </div>
+
+            <div className="space-y-2 rounded-md border border-border p-3">
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="media-retention-org" className="cursor-pointer">
+                  مقدار سازمان‌ها مقدم باشد
+                </Label>
+                <Switch
+                  id="media-retention-org"
+                  checked={allowOrgOverride}
+                  onCheckedChange={setAllowOrgOverride}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {allowOrgOverride
+                  ? 'اگر مدیر سازمان مقدار خودش را ثبت کرده باشد، همان اعمال می‌شود.'
+                  : 'برای همهٔ سازمان‌ها همین مقدار سراسری اعمال می‌شود.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button className="gap-2" disabled={saving} onClick={save}>
+              {saving ? <RefreshCcw className="h-4 w-4 animate-spin" /> : <Settings2 className="h-4 w-4" />}
+              ذخیرهٔ تنظیمات
+            </Button>
+            <Button
+              variant="outline"
+              className="!bg-transparent gap-2"
+              disabled={running || (report?.total ?? 0) === 0}
+              onClick={runNow}
+            >
+              {running ? <RefreshCcw className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              اجرای همین حالا
+            </Button>
+            <Button variant="ghost" className="gap-2" onClick={loadReport}>
+              <History className="h-4 w-4" />
+              به‌روزرسانی گزارش
+            </Button>
+          </div>
+
+          {summary && (
+            <div className="grid gap-3 sm:grid-cols-4">
+              <div className="rounded-md border border-border p-3">
+                <p className="text-xs text-muted-foreground">فایل‌های منقضی</p>
+                <p className="text-lg font-bold">{toPersianDigits(summary.total)}</p>
+              </div>
+              <div className="rounded-md border border-border p-3">
+                <p className="text-xs text-muted-foreground">حجم کل</p>
+                <p className="text-lg font-bold">{formatBytes(summary.total_bytes)}</p>
+              </div>
+              <div className="rounded-md border border-border p-3">
+                <p className="text-xs text-muted-foreground">انتقال به استوریج خارجی</p>
+                <p className="text-lg font-bold">{toPersianDigits(summary.archive_count)}</p>
+              </div>
+              <div className="rounded-md border border-border p-3">
+                <p className="text-xs text-muted-foreground">حذف از سرور</p>
+                <p className="text-lg font-bold">{toPersianDigits(summary.delete_count)}</p>
+              </div>
+            </div>
+          )}
+
+          {lastRun && (
+            <div className="rounded-md border border-border bg-secondary/40 p-3 text-sm">
+              نتیجهٔ آخرین اجرا: {toPersianDigits(lastRun.archived || 0)} انتقال،{' '}
+              {toPersianDigits(lastRun.deleted || 0)} حذف، {toPersianDigits(lastRun.failed || 0)}{' '}
+              خطا — {formatBytes(lastRun.freed_bytes || 0)} آزاد شد.
+              {(lastRun.errors || []).length > 0 && (
+                <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-destructive">
+                  {(lastRun.errors || []).slice(0, 5).map((item, index) => (
+                    <li key={`retention-error-${index}`}>
+                      {item.file_name} ({item.organization_name}): {item.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">
+            فایل‌های منقضی ({toPersianDigits(items.length)})
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {items.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              فایلی از مدت نگهداری گذشته است، وجود ندارد.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[42rem] border-collapse text-sm">
+                <thead>
+                  <tr className="bg-secondary">
+                    <th className="border border-border p-2 text-right">فایل</th>
+                    <th className="border border-border p-2 text-right">سازمان</th>
+                    <th className="border border-border p-2 text-right">جلسه</th>
+                    <th className="border border-border p-2 text-right">سن (روز)</th>
+                    <th className="border border-border p-2 text-right">حجم</th>
+                    <th className="border border-border p-2 text-right">اقدام</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.slice(0, 50).map((item) => (
+                    <tr key={`${item.source_kind}-${item.source_id}`}>
+                      <td className="max-w-[16rem] truncate border border-border p-2">
+                        {item.file_name || '—'}
+                      </td>
+                      <td className="border border-border p-2">{item.organization_name || '—'}</td>
+                      <td className="max-w-[14rem] truncate border border-border p-2">
+                        {item.meeting_title || '—'}
+                      </td>
+                      <td className="border border-border p-2">
+                        {toPersianDigits(item.age_days)}
+                      </td>
+                      <td className="border border-border p-2">{formatBytes(item.size_bytes)}</td>
+                      <td className="border border-border p-2">
+                        <Badge variant={item.action === 'delete' ? 'destructive' : 'outline'}>
+                          {item.action_label}
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {items.length > 50 && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  ۵۰ مورد نخست نمایش داده شده است؛ کل موارد: {toPersianDigits(items.length)}
+                </p>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={confirmAuto} onOpenChange={setConfirmAuto}>
+        <DialogContent dir="rtl">
+          <DialogHeader>
+            <DialogTitle>فعال‌کردن اجرای خودکار</DialogTitle>
+            <DialogDescription>
+              با روشن‌شدن این گزینه، هر ۶ ساعت فایل‌های مدیای قدیمی‌تر از مدت تعیین‌شده به‌صورت
+              خودکار به استوریج خارجی سازمان منتقل می‌شوند و اگر سازمان استوریج خارجی نداشته
+              باشد، فایل‌ها برای همیشه از سرور پاک می‌شوند. متن رونویسی و صورتجلسه حذف نمی‌شود.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setAuto(true);
+                setConfirmAuto(false);
+                toast.info('برای اعمال، «ذخیرهٔ تنظیمات» را بزنید.');
+              }}
+            >
+              فعال کن
+            </Button>
+            <Button variant="ghost" onClick={() => setConfirmAuto(false)}>
+              انصراف
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

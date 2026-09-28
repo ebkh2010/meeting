@@ -34,7 +34,9 @@ from models.organizations import Organizations
 from models.participants import Participants
 from models.recordings import Recordings
 from models.transcripts import Transcripts
+from services import media_retention
 from services import mgmt_core as core
+from services import platform_settings
 from services.ai_gateway import transcription_providers_status
 from services.minutes_docx import build_minutes_docx, safe_file_name
 from services.mgmt_core import (
@@ -111,6 +113,8 @@ class ActionUpdateIn(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     owner_membership_id: Optional[int] = None
+    #: حذف مسئول اقدام (مقدار ``None`` در فیلد بالا یعنی «تغییری نده»).
+    clear_owner: Optional[bool] = None
     due_date: Optional[str] = None
     status: Optional[str] = None
     progress_note: Optional[str] = None
@@ -161,6 +165,16 @@ async def save_minutes(
         raise conflict(
             "این صورتجلسه تأیید شده است؛ ویرایش دوبارهٔ آن فقط توسط مدیر سازمان مجاز است."
         )
+
+    # اگر صورتجلسه از دورهٔ پیش از تاریخچه مانده باشد، متن فعلی نخست به‌عنوان
+    # نسخهٔ پایه ثبت می‌شود تا با این ویرایش از دست نرود.
+    await core.ensure_minutes_baseline_version(
+        db,
+        organization_id=ctx.organization_id,
+        minutes=minutes,
+        meeting_id=payload.meeting_id,
+        actor_name=ctx.actor_name,
+    )
 
     minutes.body_markdown = payload.body_markdown
     minutes.summary = (payload.summary or "").strip()[:1500]
@@ -359,8 +373,13 @@ async def minutes_versions(
         order_by=Minute_versions.version.desc(),
         limit=30,
     )
+    current_version = 0
+    minutes = await _get_minutes(db, ctx, meeting_id)
+    if minutes is not None:
+        current_version = int(minutes.current_version or 0)
     await db.commit()
     return {
+        "current_version": current_version,
         "items": [
             {
                 "id": int(item.id),
@@ -370,11 +389,88 @@ async def minutes_versions(
                 "status_at_version": item.status_at_version,
                 "changed_by_name": item.changed_by_name,
                 "change_note": item.change_note,
+                # نسخهٔ جاری پرچم می‌خورد تا فرانت دکمهٔ «بازگردانی» را برایش نشان ندهد.
+                "is_current": int(item.version) == current_version,
                 "created_at": core.iso_utc(item.created_at) if item.created_at else "",
             }
             for item in versions
         ]
     }
+
+
+@router.post("/versions/{version_id}/restore")
+async def restore_minutes_version(
+    version_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """بازگردانی متن صورتجلسه به یک نسخهٔ پیشین، بدون از دست رفتن هیچ نسخه‌ای.
+
+    نسخهٔ جاری حذف یا بازنویسی نمی‌شود؛ متن نسخهٔ انتخابی به‌عنوان یک نسخهٔ
+    تازه در تاریخچه ثبت می‌گردد تا مسیر تغییرات و امکان بازگشت دوباره به وضعیت
+    قبلی حفظ شود.
+    """
+    ctx = await resolve_context(db, current_user)
+    version = await get_owned(db, Minute_versions, version_id, ctx, "نسخهٔ صورتجلسه")
+    meeting_id = int(version.meeting_id or 0)
+    if not meeting_id:
+        raise bad_request("این نسخه به جلسه‌ای متصل نیست و قابل بازگردانی نیست.")
+    meeting = await get_owned(db, Meetings, meeting_id, ctx, "جلسه")
+    require_meeting_manager(ctx, meeting)
+
+    minutes = await _get_minutes(db, ctx, meeting_id)
+    if minutes is None:
+        raise bad_request("صورتجلسه‌ای برای این جلسه ثبت نشده است.")
+    if minutes.status == MINUTES_LOCKED:
+        raise conflict("این صورتجلسه قفل شده و بازگردانی نسخه مجاز نیست.")
+    if minutes.status == MINUTES_APPROVED and not ctx.is_admin():
+        raise conflict(
+            "این صورتجلسه تأیید شده است؛ بازگردانی نسخه فقط توسط مدیر سازمان مجاز است."
+        )
+    if not (version.body_markdown or "").strip():
+        raise bad_request("متن این نسخه خالی است و قابل بازگردانی نیست.")
+
+    # صورتجلسهٔ بی‌تاریخچه (از دورهٔ پیشین) پیش از بازگردانی، نسخهٔ پایه می‌گیرد.
+    await core.ensure_minutes_baseline_version(
+        db,
+        organization_id=ctx.organization_id,
+        minutes=minutes,
+        meeting_id=meeting_id,
+        actor_name=ctx.actor_name,
+    )
+
+    minutes.body_markdown = version.body_markdown
+    minutes.summary = version.summary or ""
+    minutes.current_version = int(minutes.current_version or 0) + 1
+    if minutes.status == MINUTES_APPROVED:
+        minutes.status = MINUTES_DRAFT
+        minutes.approved_by_name = ""
+        minutes.approved_at = ""
+    await db.flush()
+
+    db.add(
+        Minute_versions(
+            organization_id=ctx.organization_id,
+            minutes_id=int(minutes.id),
+            meeting_id=meeting_id,
+            version=int(minutes.current_version),
+            body_markdown=minutes.body_markdown,
+            summary=minutes.summary,
+            status_at_version=minutes.status,
+            changed_by_name=ctx.actor_name,
+            change_note=f"بازگردانی به نسخهٔ {int(version.version)}"[:300],
+        )
+    )
+    await audit(
+        db,
+        ctx,
+        "minutes.version_restored",
+        "minutes",
+        int(minutes.id),
+        f"نسخهٔ {int(version.version)} → نسخهٔ {int(minutes.current_version)}",
+    )
+    await db.commit()
+    return dump(minutes, MINUTES_FIELDS)
 
 
 # ---------------------------------------------------------------------------
@@ -515,9 +611,9 @@ async def create_action(
     if payload.decision_id:
         await get_owned(db, Decisions, payload.decision_id, ctx, "مصوبه")
 
-    due = core.normalize_iso(payload.due_date) or core.iso_utc(
-        core.utc_now() + core.timedelta(days=14)
-    )
+    # هیچ مهلتی از خودمان نمی‌سازیم: اگر کاربر (یا متن جلسه) زمانی نداده باشد،
+    # مهلت خالی می‌ماند تا مدیر سازمان یا دبیر آن را ثبت کند.
+    due = core.normalize_iso(payload.due_date) or ""
     action = Action_items(
         organization_id=ctx.organization_id,
         meeting_id=payload.meeting_id,
@@ -580,11 +676,19 @@ async def update_action(
         if payload.description is not None:
             action.description = payload.description.strip()
         if payload.due_date is not None:
-            normalized = core.normalize_iso(payload.due_date)
-            if not normalized:
-                raise bad_request("مهلت اقدام معتبر نیست.")
-            action.due_date = normalized
-        if payload.owner_membership_id is not None:
+            # رشتهٔ خالی یعنی «حذف مهلت»؛ مقدار نامعتبر پذیرفته نمی‌شود.
+            raw_due = (payload.due_date or "").strip()
+            if not raw_due:
+                action.due_date = ""
+            else:
+                normalized = core.normalize_iso(raw_due)
+                if not normalized:
+                    raise bad_request("مهلت اقدام معتبر نیست.")
+                action.due_date = normalized
+        if payload.clear_owner:
+            action.owner_membership_id = None
+            action.owner_name = ""
+        elif payload.owner_membership_id is not None:
             owner = await get_owned(
                 db, Memberships, payload.owner_membership_id, ctx, "مسئول اقدام"
             )
@@ -592,16 +696,26 @@ async def update_action(
             action.owner_name = owner.full_name
     elif any(
         value is not None
-        for value in (payload.title, payload.description, payload.due_date, payload.owner_membership_id)
+        for value in (
+            payload.title,
+            payload.description,
+            payload.due_date,
+            payload.owner_membership_id,
+            payload.clear_owner,
+        )
     ):
         raise core.forbidden(
             "دسترسی لازم را ندارید. تغییر عنوان، مهلت یا مسئول اقدام فقط برای دبیر جلسه یا مدیر سازمان مجاز است."
         )
 
-    if action.status in ("open", "in_progress"):
-        due = core.parse_iso(action.due_date)
-        if due and due < core.utc_now():
-            action.status = "overdue"
+    # وضعیت «تأخیر» تنها از مهلت گذشته می‌آید؛ اقدام بدون مهلت هرگز تأخیر نمی‌گیرد
+    # و اگر مهلتش حذف شود به «باز» برمی‌گردد.
+    due = core.parse_iso(action.due_date)
+    if due is None:
+        if action.status == "overdue":
+            action.status = "open"
+    elif action.status in ("open", "in_progress") and due < core.utc_now():
+        action.status = "overdue"
 
     await audit(db, ctx, "action.updated", "action_item", action_id, f"{action.title} / {action.status}")
     await db.commit()
@@ -796,6 +910,12 @@ async def admin_console(
     for member in members:
         role_counts[member.role] = role_counts.get(member.role, 0) + 1
 
+    # مدت نگهداری مؤثر از تنظیم سراسری سامانه می‌آید مگر سازمان مقدار خودش را
+    # داشته باشد و مدیر سامانه اجازهٔ بازنویسی را باز گذاشته باشد.
+    retention_days = await platform_settings.effective_media_retention_days(
+        db, ctx.organization
+    )
+
     await db.commit()
     return {
         "organization": {
@@ -803,7 +923,7 @@ async def admin_console(
             "name": ctx.organization.name,
             "plan_code": ctx.organization.plan_code,
             "timezone": ctx.organization.timezone,
-            "audio_retention_days": ctx.organization.audio_retention_days,
+            "audio_retention_days": retention_days,
             "is_demo": bool(ctx.organization.is_demo),
         },
         "quota": quota_snapshot(ctx.organization),
@@ -824,7 +944,7 @@ async def admin_console(
         "storage": {
             "files": len(recordings),
             "total_mb": round(storage_bytes / (1024 * 1024), 2),
-            "retention_days": int(ctx.organization.audio_retention_days or core.DEMO_AUDIO_RETENTION_DAYS),
+            "retention_days": retention_days,
         },
         "transcription_providers": transcription_providers_status(),
         "low_quality_transcripts": low_quality,
@@ -843,17 +963,25 @@ async def purge_expired_audio(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    """اجرای دستی سیاست نگه‌داری صوت؛ فایل‌های منقضی حذف می‌شوند."""
+    """اجرای دستی سیاست نگه‌داری مدیای همین سازمان.
+
+    مسیر «آرشیو یا حذف» دقیقاً همان سیاست سراسری سامانه است: اگر سازمان مقصد
+    ذخیره‌سازی خارجی فعال داشته باشد فایل‌ها نخست به آن منتقل می‌شوند و تنها در
+    نبود مقصد از سرور پاک می‌گردند. رونویسی متنی و صورتجلسه دست‌نخورده می‌مانند.
+    """
     ctx = await resolve_context(db, current_user)
     require_role(ctx, ROLE_ADMIN)
-    recordings = await list_owned(db, Recordings, ctx)
-    now = core.utc_now()
-    removed = 0
-    for recording in recordings:
-        purge_at = core.parse_iso(recording.purge_after)
-        if purge_at and purge_at < now:
-            await db.delete(recording)
-            removed += 1
-    await audit(db, ctx, "recording.purged", "organization", ctx.organization_id, f"{removed} فایل")
-    await db.commit()
-    return {"success": True, "removed": removed}
+    report = await media_retention.run(
+        db,
+        actor_name=ctx.actor_name,
+        execute=True,
+        organization_id=ctx.organization_id,
+    )
+    return {
+        "success": True,
+        "removed": int(report.get("deleted", 0)),
+        "archived": int(report.get("archived", 0)),
+        "failed": int(report.get("failed", 0)),
+        "total": int(report.get("total", 0)),
+        "freed_bytes": int(report.get("freed_bytes", 0)),
+    }

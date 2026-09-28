@@ -483,6 +483,49 @@ async def refresh_overdue_actions(db: AsyncSession, organization_id: int) -> Non
             item.status = "overdue"
 
 
+async def ensure_minutes_baseline_version(
+    db: AsyncSession,
+    *,
+    organization_id: int,
+    minutes: Any,
+    meeting_id: int,
+    actor_name: str = "",
+) -> bool:
+    """ثبت متن موجود صورتجلسه به‌عنوان «نسخهٔ پایه» اگر تاریخچه‌ای ندارد.
+
+    صورتجلسه‌هایی که پیش از افزوده‌شدن تاریخچهٔ نسخه‌ها ساخته شده‌اند هیچ رکورد
+    نسخه‌ای ندارند؛ پیش از نخستین بازنویسی، متن فعلی یک‌بار در تاریخچه ثبت
+    می‌شود تا با تولید مجدد یا ویرایش از دست نرود.
+    """
+    if minutes is None or not (getattr(minutes, "body_markdown", "") or "").strip():
+        return False
+    existing = await db.execute(
+        select(Minute_versions.id)
+        .where(
+            Minute_versions.organization_id == int(organization_id),
+            Minute_versions.minutes_id == int(minutes.id),
+        )
+        .limit(1)
+    )
+    if existing.scalars().first() is not None:
+        return False
+    db.add(
+        Minute_versions(
+            organization_id=int(organization_id),
+            minutes_id=int(minutes.id),
+            meeting_id=int(meeting_id),
+            version=max(1, int(minutes.current_version or 1)),
+            body_markdown=minutes.body_markdown,
+            summary=minutes.summary,
+            status_at_version=minutes.status,
+            changed_by_name=(actor_name or "سامانه")[:120],
+            change_note="نسخهٔ پایه پیش از افزوده‌شدن تاریخچه",
+        )
+    )
+    await db.flush()
+    return True
+
+
 # ---------------------------------------------------------------------------
 # متن فارسی: نرمال‌سازی برای جست‌وجو
 # ---------------------------------------------------------------------------

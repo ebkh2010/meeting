@@ -194,7 +194,10 @@ export default function PrintMinutes() {
                   <tr key={action.id}>
                     <td className="border border-border p-2">{action.title}</td>
                     <td className="border border-border p-2">{action.owner_name || '—'}</td>
-                    <td className="border border-border p-2">{formatDate(action.due_date)}</td>
+                    <td className="border border-border p-2">
+                      {/* مهلت تعیین‌نشده خالی چاپ می‌شود تا زمانی از خودمان ساخته نشود. */}
+                      {action.due_date ? formatDate(action.due_date) : ''}
+                    </td>
                     <td className="border border-border p-2">
                       {ACTION_STATUS_LABELS[action.status] || action.status}
                     </td>

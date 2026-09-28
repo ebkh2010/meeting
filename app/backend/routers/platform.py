@@ -44,6 +44,7 @@ from schemas.storage import OSSBaseModel, ObjectRequest
 from services import ai_providers
 from services import ai_usage
 from services import app_auth
+from services import media_retention
 from services import notify_channels as channels
 from services import platform_admin
 from services import platform_settings
@@ -898,6 +899,95 @@ async def preview_activation_reminder_template(
     return {
         "preview": platform_settings.render_template(template, platform_settings.sample_context())
     }
+
+
+class MediaRetentionIn(BaseModel):
+    """ورودی تنظیم مدت نگهداری فایل‌های مدیا (سراسری)."""
+
+    days: Optional[int] = None
+    auto: Optional[bool] = None
+    allow_org_override: Optional[bool] = None
+    #: بازگرداندن مدت به مقدار پیش‌فرض سامانه
+    reset_days: bool = False
+
+
+@router.get("/settings/media-retention")
+async def get_media_retention_settings(
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """تنظیم فعال نگهداری مدیا برای نمایش در پنل مدیریت سامانه."""
+    settings = await platform_settings.get_media_retention(db)
+    report = await media_retention.plan(db, include_items=False)
+    return {
+        "settings": settings,
+        "summary": {
+            key: report[key]
+            for key in (
+                "total",
+                "total_bytes",
+                "archive_count",
+                "delete_count",
+                "organizations",
+                "generated_at",
+            )
+        },
+    }
+
+
+@router.put("/settings/media-retention")
+async def update_media_retention_settings(
+    data: MediaRetentionIn,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """ثبت مدت نگهداری، کلید اجرای خودکار و اجازهٔ بازنویسی توسط مدیر سازمان.
+
+    تا وقتی «اجرای خودکار» روشن نشود، هیچ فایلی حذف یا منتقل نمی‌شود و تنها
+    گزارشِ فایل‌های منقضی در پنل نمایش داده می‌شود.
+    """
+    try:
+        settings = await platform_settings.set_media_retention(
+            db,
+            days=data.days,
+            auto=data.auto,
+            allow_org_override=data.allow_org_override,
+            reset_days=data.reset_days,
+        )
+    except ValueError as exc:
+        raise _bad(str(exc))
+
+    parts = [f"مدت نگهداری مدیا: {settings['days']} روز"]
+    if data.auto is not None:
+        parts.append("اجرای خودکار روشن" if data.auto else "اجرای خودکار خاموش")
+    if data.allow_org_override is not None:
+        parts.append(
+            "مقدار سازمان‌ها مقدم است" if data.allow_org_override else "مقدار سراسری مقدم است"
+        )
+    await _audit(db, 0, principal, "platform.media_retention_updated", detail=" — ".join(parts))
+    await db.commit()
+    return await get_media_retention_settings(principal, db)
+
+
+@router.get("/media-retention/report")
+async def media_retention_report(
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """گزارش فایل‌های منقضی و سرنوشت هرکدام (بدون هیچ تغییری)."""
+    return await media_retention.plan(db)
+
+
+@router.post("/media-retention/run")
+async def run_media_retention(
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """اجرای دستی سیاست نگهداری: انتقال به استوریج خارجی یا حذف از سرور."""
+    # ثبت Audit داخل خود سرویس انجام می‌شود (سطح سازمان + سطح پلتفرم).
+    return await media_retention.run(
+        db, actor_name=principal.actor_name or "مدیر سامانه", execute=True
+    )
 
 
 @router.get("/orgs")

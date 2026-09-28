@@ -365,6 +365,8 @@ export interface MinuteVersion {
   status_at_version: string;
   changed_by_name: string;
   change_note: string;
+  /** آیا این نسخه همان نسخهٔ جاری صورتجلسه است؟ */
+  is_current?: boolean;
   created_at: string;
 }
 
@@ -452,7 +454,10 @@ export interface SuggestedItems {
     description: string;
     owner_membership_id: number | null;
     owner_name: string;
+    /** تاریخ میلادی ISO فقط اگر در جلسه صریح گفته شده باشد؛ در غیر این صورت خالی. */
     due_date: string;
+    /** عبارت زمانی گفته‌شده در جلسه («تا دو هفته») برای راهنمایی کاربر. */
+    due_hint?: string;
   }[];
   model: string;
   attempts: string;
@@ -729,7 +734,10 @@ export const api = {
   lockMinutes: (meetingId: number, note = '') =>
     invoke<Minutes>(`${MF}/lock`, 'POST', { meeting_id: meetingId, note }),
   minutesVersions: (meetingId: number) =>
-    invoke<{ items: MinuteVersion[] }>(`${MF}/versions/${meetingId}`),
+    invoke<{ items: MinuteVersion[]; current_version: number }>(`${MF}/versions/${meetingId}`),
+  /** بازگردانی متن صورتجلسه به یک نسخهٔ پیشین (نسخهٔ جاری حذف نمی‌شود). */
+  restoreMinutesVersion: (versionId: number) =>
+    invoke<Minutes>(`${MF}/versions/${versionId}/restore`, 'POST'),
 
   createDecision: (payload: {
     meeting_id: number;
