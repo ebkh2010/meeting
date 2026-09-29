@@ -65,7 +65,9 @@ export default function PrintMinutes() {
 
   return (
     <div className="min-h-screen bg-muted/40 py-8" dir="rtl">
-      <div className="no-print mx-auto mb-4 flex max-w-3xl items-center justify-between px-4">
+      {/* اندازه‌ها به ۱۰۰٪ عرض هم محدود می‌شوند تا با بزرگ‌کردن اندازهٔ متن
+          مرورگر، برگه از قاب بیرون نزند. */}
+      <div className="no-print mx-auto mb-4 flex max-w-[min(48rem,100%)] flex-wrap items-center justify-between gap-2 px-4">
         <p className="text-sm text-muted-foreground">
           برای گرفتن فایل PDF، از گفت‌وگوی چاپ گزینهٔ «ذخیره به‌صورت PDF» را انتخاب کنید.
         </p>
@@ -75,7 +77,7 @@ export default function PrintMinutes() {
         </Button>
       </div>
 
-      <article className="print-sheet mx-auto max-w-3xl rounded-lg border border-border bg-card p-10 text-[13px] leading-8 text-foreground shadow-sm">
+      <article className="print-sheet mx-auto max-w-[min(48rem,100%)] rounded-lg border border-border bg-card p-4 text-[13px] leading-8 text-foreground shadow-sm sm:p-8 lg:p-10">
         <header className="border-b border-border pb-4">
           <p className="text-xs text-muted-foreground">{data.organization.name}</p>
           <h1 className="mt-1 text-2xl font-bold">صورتجلسه: {meeting.title}</h1>

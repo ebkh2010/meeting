@@ -556,7 +556,10 @@ export default function AppShell({ children }: AppShellProps) {
         <aside
           className={cn(
             'sticky top-14 hidden h-[calc(100vh-3.5rem)] shrink-0 flex-col gap-1 border-l border-border bg-sidebar/50 transition-[width] duration-200 md:flex',
-            sidebarCollapsed ? 'w-[76px]' : 'w-64',
+            /* عرض سایدبار با vw محدود می‌شود: اگر کاربر اندازهٔ متن مرورگر را
+               بزرگ کند، rem بزرگ می‌شود و سایدبار ۲۵۶ پیکسلی به بیش از نیمی از
+               صفحه می‌رسد و محتوا را از قاب بیرون می‌برد. */
+            sidebarCollapsed ? 'w-[76px]' : 'w-[min(16rem,34vw)]',
           )}
         >
           <div className={cn('flex items-center gap-2 px-3 pt-4 pb-3', sidebarCollapsed && 'justify-center px-0')}>
