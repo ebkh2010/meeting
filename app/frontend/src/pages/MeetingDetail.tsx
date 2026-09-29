@@ -2755,7 +2755,9 @@ function ActionEditDialog({
               rows={2}
             />
           </div>
-          <div className="flex flex-wrap gap-2">
+          {/* کلیدها در موبایل چسبان‌اند: فرم بلندتر از ارتفاع صفحه است و بدون
+              این، «ذخیرهٔ تغییرات» زیر خط دید می‌افتد. */}
+          <div className="sticky bottom-0 -mx-6 -mb-6 flex flex-wrap gap-2 border-t border-border bg-background px-6 py-3">
             <Button disabled={busy} onClick={save}>
               {busy && <Loader2 className="h-4 w-4 animate-spin" />}
               ذخیرهٔ تغییرات
