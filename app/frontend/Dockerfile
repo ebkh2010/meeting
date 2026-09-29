@@ -21,6 +21,18 @@ COPY . .
 ENV VITE_API_BASE_URL=""
 RUN pnpm run build
 
+# پیش‌فشرده‌سازی فایل‌های استاتیک: nginx با gzip_static نسخهٔ .gz را بدون مصرف
+# CPU سرو می‌کند و نسبت فشرده‌سازی بهتری هم می‌دهد (سطح ۹ در زمان ساخت).
+# فایل اصلی دست‌نخورده می‌ماند تا درخواست‌های بدون Accept-Encoding هم پاسخ بگیرند.
+RUN if ! command -v gzip >/dev/null 2>&1; then \
+      apt-get update && apt-get install -y --no-install-recommends gzip \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi \
+ && find dist -type f \( -name '*.js' -o -name '*.css' -o -name '*.html' \
+      -o -name '*.svg' -o -name '*.json' -o -name '*.txt' \) \
+      -size +1k -exec gzip -9 -k {} + \
+ && echo "precompressed files: $(find dist -name '*.gz' | wc -l)"
+
 
 FROM nginx:1.27-alpine AS runtime
 
@@ -33,14 +45,19 @@ RUN printf '%s\n' \
     '    root /usr/share/nginx/html;' \
     '    index index.html;' \
     '    gzip on;' \
-    '    gzip_types text/plain text/css application/javascript application/json image/svg+xml;' \
+    '    gzip_vary on;' \
+    '    gzip_static on;' \
+    '    gzip_comp_level 6;' \
+    '    gzip_min_length 1024;' \
+    '    gzip_proxied any;' \
+    '    gzip_types text/plain text/css application/javascript application/json application/manifest+json image/svg+xml application/wasm;' \
     '    location /assets/ {' \
-    '        expires 30d;' \
-    '        add_header Cache-Control "public, max-age=2592000, immutable";' \
+    '        add_header Cache-Control "public, max-age=2592000, immutable" always;' \
+    '        add_header Vary "Accept-Encoding" always;' \
     '        try_files $uri =404;' \
     '    }' \
     '    location = /index.html {' \
-    '        add_header Cache-Control "no-store";' \
+    '        add_header Cache-Control "no-store" always;' \
     '    }' \
     '    location / {' \
     '        try_files $uri $uri/ /index.html;' \
