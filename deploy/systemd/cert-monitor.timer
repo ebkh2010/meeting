@@ -1,0 +1,11 @@
+[Unit]
+# اجرای روزانهٔ پایش گواهی (ساعت ۹ صبح به وقت محلی)
+Description=Run SSL certificate expiry monitor daily
+
+[Timer]
+OnCalendar=*-*-* 09:00:00
+Persistent=true
+Unit=cert-monitor.service
+
+[Install]
+WantedBy=timers.target

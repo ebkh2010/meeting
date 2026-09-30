@@ -1,0 +1,13 @@
+[Unit]
+# با رسیدن یا تغییر فایل incoming.bundle، استقرار خودکار اجرا می‌شود.
+# بنابراین کافی است از ماشین توسعه بنویسید:
+#   git bundle create hr.bundle main
+#   scp -P 2224 hr.bundle samim@SERVER:/home/samim/hr-meetings/incoming.bundle
+Description=Watch incoming.bundle for HR auto-deploy
+
+[Path]
+PathChanged=/home/samim/hr-meetings/incoming.bundle
+Unit=hr-bundle-import.service
+
+[Install]
+WantedBy=paths.target

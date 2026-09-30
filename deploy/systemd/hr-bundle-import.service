@@ -1,0 +1,13 @@
+[Unit]
+# واردکردن bundle ارسالی و استقرار خودکار نسخهٔ دوم (HR)
+Description=Import incoming git bundle and deploy HR meetings
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=samim
+Group=samim
+WorkingDirectory=/home/samim/hr-meetings/app
+ExecStart=/usr/bin/env bash /home/samim/hr-meetings/app/deploy/bundle-import.sh /home/samim/hr-meetings/incoming.bundle
+TimeoutStartSec=3600
+Nice=10

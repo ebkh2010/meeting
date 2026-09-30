@@ -1,0 +1,11 @@
+[Unit]
+# پایش روزانهٔ انقضای گواهی SSL (هر دو سامانه روی این سرور)
+Description=Daily SSL certificate expiry monitor
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/hr-cert-monitor.sh
+# گواهی فقط برای root قابل خواندن است
+User=root
+Nice=10
