@@ -4,6 +4,10 @@
 > مخزن کار (این نسخه): [`ebkh2010/HRmeeting`](https://github.com/ebkh2010/HRmeeting) — شاخهٔ `main` (خصوصی)
 > مخزن بررسی‌شده (نسخهٔ پایه): [`ebkh2010/meeting`](https://github.com/ebkh2010/meeting) — کامیت `9fa5027`
 > دامنهٔ بررسی: `app/backend` (FastAPI + SQLAlchemy 2)، `app/frontend` (React 18 + TS + Vite + shadcn/ui)، `deploy/`، `docs/`
+> ⚠️ **این سند، سند «طرح اولیه» است.** اسناد نهایی و حاکم:
+> [`HR-DECISIONS.md`](HR-DECISIONS.md) (تصمیم‌های قطعی) · [`HR-ARCHITECTURE.md`](HR-ARCHITECTURE.md) (معماری)
+> · [`HR-FEATURES.md`](HR-FEATURES.md) (فهرست نهایی ۵۴ فیچر). هرجا تناقض بود، آن‌ها مقدم‌اند.
+>
 > هدف سند: تعیین دقیق «چه چیزی باید اضافه شود» و «چه مهارت‌هایی برای سپردن این کار به DeepSeek Harness لازم است».
 
 ---
