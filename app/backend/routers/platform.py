@@ -901,6 +901,148 @@ async def preview_activation_reminder_template(
     }
 
 
+class PlatformAiDefaultIn(BaseModel):
+    """ورودی ویرایش پیش‌فرض هوش مصنوعی همهٔ سازمان‌ها."""
+
+    kind: str
+    enabled: Optional[bool] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    priority: Optional[int] = None
+    diarization: Optional[bool] = None
+    auth_username: Optional[str] = None
+    api_key: Optional[str] = None
+    clear_api_key: Optional[bool] = None
+    password: Optional[str] = None
+    clear_password: Optional[bool] = None
+
+
+@router.get("/settings/ai-defaults")
+async def read_ai_defaults(
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """پیش‌فرض‌های هوش مصنوعی برای همهٔ سازمان‌ها.
+
+    همان مقادیری که پیش‌تر فقط در کد و متغیرهای محیطی بود (سرویس «حرف» و کلید
+    DeepSeek) اکنون از این مسیر خوانده و ویرایش می‌شود. هر سازمانی که خودش کلید یا
+    اعتبارنامه ثبت کرده باشد از این پیش‌فرض‌ها اثر نمی‌گیرد.
+    """
+    return await ai_providers.read_platform_defaults(db)
+
+
+@router.put("/settings/ai-defaults/{provider_key}")
+async def update_ai_default(
+    provider_key: str,
+    data: PlatformAiDefaultIn,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """ثبت پیش‌فرض یک تأمین‌کننده: مدل، نشانی، توکن، اعتبارنامه و فعال/غیرفعال."""
+    try:
+        saved = await ai_providers.set_platform_default(
+            db, provider_key, data.kind, data.model_dump(exclude_unset=True)
+        )
+    except ValueError as exc:
+        raise _bad(str(exc))
+
+    await _audit(
+        db,
+        0,
+        principal,
+        "platform.ai_default_updated",
+        entity_type="ai_provider",
+        detail=(
+            f"پیش‌فرض «{saved['display_name']}» ({data.kind}) به‌روزرسانی شد — "
+            + ("فعال" if saved["enabled"] else "غیرفعال")
+            + f"، مدل: {saved['model'] or '—'}"
+            + ("، توکن ثبت شد" if data.api_key else "")
+            + ("، توکن حذف شد" if data.clear_api_key else "")
+        ),
+    )
+    await db.commit()
+    payload = await ai_providers.read_platform_defaults(db)
+    return {"defaults": payload["defaults"]}
+
+
+@router.delete("/settings/ai-defaults/{provider_key}")
+async def clear_ai_default(
+    provider_key: str,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """حذف پیش‌فرض پنل و بازگشت به پیش‌فرض کد/متغیر محیطی سرور."""
+    await ai_providers.clear_platform_default(db, provider_key)
+    await _audit(
+        db,
+        0,
+        principal,
+        "platform.ai_default_cleared",
+        entity_type="ai_provider",
+        detail=f"پیش‌فرض پنل برای {provider_key} حذف شد و مقدار کد/سرور بازگشت",
+    )
+    await db.commit()
+    payload = await ai_providers.read_platform_defaults(db)
+    return {"defaults": payload["defaults"]}
+
+
+@router.post("/settings/ai-defaults/{provider_key}/test")
+async def test_ai_default(
+    provider_key: str,
+    data: PlatformAiDefaultIn,
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """تست اتصال پیش‌فرض بدون ذخیره‌سازی.
+
+    اگر در همین درخواست توکن/نشانی/مدل تازه‌ای فرستاده شود همان‌ها آزمایش
+    می‌شوند تا مدیر پیش از ذخیره، درستی کلید را ببیند.
+    """
+    try:
+        row = await ai_providers.platform_default_provider(
+            db, provider_key, data.kind, data.model_dump(exclude_unset=True)
+        )
+    except Exception as exc:  # pragma: no cover - محافظ عملیاتی
+        raise _bad(f"آماده‌سازی تست ناموفق بود: {exc}")
+
+    try:
+        ok, message = await ai_providers.test_provider(row)
+    except Exception as exc:  # pragma: no cover - محافظ عملیاتی
+        ok, message = False, f"خطای اجرای تست: {exc}"
+
+    await _audit(
+        db,
+        0,
+        principal,
+        "platform.ai_default_tested",
+        entity_type="ai_provider",
+        detail=f"تست پیش‌فرض {provider_key}: {'موفق' if ok else 'ناموفق'} — {message}",
+    )
+    await db.commit()
+    return {"ok": ok, "message": message}
+
+
+@router.post("/settings/ai-defaults-apply")
+async def apply_ai_defaults(
+    principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """اعمال فوری پیش‌فرض‌ها روی سازمان‌هایی که خودشان تنظیمی ندارند."""
+    report = await ai_providers.apply_platform_defaults(db)
+    await _audit(
+        db,
+        0,
+        principal,
+        "platform.ai_defaults_applied",
+        detail=(
+            f"پیش‌فرض‌های AI روی {report['updated_organizations']} سازمان اعمال شد "
+            f"({report['updated_providers']} تنظیم) از {report['organizations']} سازمان فعال"
+        ),
+    )
+    await db.commit()
+    return report
+
+
 class MediaRetentionIn(BaseModel):
     """ورودی تنظیم مدت نگهداری فایل‌های مدیا (سراسری)."""
 

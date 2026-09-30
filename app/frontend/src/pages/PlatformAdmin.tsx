@@ -22,7 +22,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import LoadingGif from '@/components/LoadingGif';
-import { Ban, Building2, BarChart3, BellRing, Bot, CheckCircle2, Coins, HardDrive, History, KeyRound, MessageSquareText, Mic, Pencil, RefreshCcw, RotateCcw, Settings2, ShieldCheck, Trash2, UserCog, UserPlus } from 'lucide-react';
+import { Ban, Building2, BarChart3, BellRing, Bot, CheckCircle2, Coins, HardDrive, History, KeyRound, MessageSquareText, Mic, Pencil, RefreshCcw, RotateCcw, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, UserPlus } from 'lucide-react';
 import {
   errorMessage,
   platformApi,
@@ -30,6 +30,8 @@ import {
   type PlatformActivationTemplate,
   type PlatformAdminAccount,
   type PlatformAdminList,
+  type PlatformAiDefault,
+  type PlatformAiDefaults,
   type PlatformAiProvider,
   type PlatformAiSummary,
   type PlatformMediaRetention,
@@ -54,7 +56,7 @@ const AI_PROVIDER_LABELS: Record<string, string> = {
   kimi: 'Kimi',
 };
 
-type PlatformTab = 'orgs' | 'usage' | 'templates' | 'admins' | 'retention' | 'trash';
+type PlatformTab = 'orgs' | 'usage' | 'templates' | 'ai-defaults' | 'admins' | 'retention' | 'trash';
 
 export default function PlatformAdmin() {
   const [tab, setTab] = useState<PlatformTab>('orgs');
@@ -87,6 +89,7 @@ export default function PlatformAdmin() {
           <TabsTrigger value="orgs">سازمان‌ها</TabsTrigger>
           <TabsTrigger value="usage">مصرف هوش مصنوعی</TabsTrigger>
           <TabsTrigger value="templates">قالب پیام‌ها</TabsTrigger>
+          <TabsTrigger value="ai-defaults">هوش مصنوعی پیش‌فرض</TabsTrigger>
           <TabsTrigger value="retention">نگهداری مدیا</TabsTrigger>
           {isOwner && <TabsTrigger value="admins">مدیران پلتفرم</TabsTrigger>}
           <TabsTrigger value="trash">سطل آشغال</TabsTrigger>
@@ -95,10 +98,417 @@ export default function PlatformAdmin() {
       {tab === 'orgs' && <OrgsView />}
       {tab === 'usage' && <AiUsageView />}
       {tab === 'templates' && <MessagesView />}
+      {tab === 'ai-defaults' && <AiDefaultsView />}
       {tab === 'retention' && <MediaRetentionView />}
       {tab === 'admins' && isOwner && <AdminsView />}
       {tab === 'trash' && <TrashView onChanged={() => setTab('orgs')} />}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* هوش مصنوعی پیش‌فرض همهٔ سازمان‌ها                                     */
+/* ------------------------------------------------------------------ */
+
+const AI_SOURCE_LABELS: Record<string, string> = {
+  panel: 'تنظیم‌شده در پنل',
+  code: 'پیش‌فرض کد/سرور',
+  none: 'تعریف‌نشده',
+};
+
+/**
+ * انتخاب مدل از فهرست پیشنهادی + گزینهٔ «مدل دیگر…» برای نام‌های تازه.
+ * مقدار نهایی همان رشتهٔ مدل می‌ماند تا با قرارداد بک‌اند یکی باشد.
+ */
+function ModelField({
+  label,
+  value,
+  options,
+  onChange,
+  hint,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+  hint?: string;
+}) {
+  const known = options.includes(value);
+  const [custom, setCustom] = useState(false);
+  const showInput = custom || !known;
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs">{label}</Label>
+      <Select
+        value={known ? value : '__custom__'}
+        onValueChange={(next) => {
+          if (next === '__custom__') {
+            setCustom(true);
+            return;
+          }
+          setCustom(false);
+          onChange(next);
+        }}
+      >
+        <SelectTrigger>
+          <SelectValue placeholder="انتخاب مدل" />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option} value={option}>
+              {option}
+            </SelectItem>
+          ))}
+          <SelectItem value="__custom__">مدل دیگر…</SelectItem>
+        </SelectContent>
+      </Select>
+      {showInput && (
+        <Input
+          value={value}
+          dir="ltr"
+          className="text-left"
+          placeholder="نام دقیق مدل"
+          onChange={(event) => onChange(event.target.value)}
+        />
+      )}
+      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
+
+function AiDefaultsView() {
+  const [data, setData] = useState<PlatformAiDefaults | null>(null);
+  const [kind, setKind] = useState<'llm' | 'stt'>('llm');
+  const [loading, setLoading] = useState(true);
+  const [applying, setApplying] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setData(await platformApi.getAiDefaults());
+    } catch (err) {
+      toast.error(errorMessage(err, 'خواندن پیش‌فرض‌های هوش مصنوعی ناموفق بود.'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const apply = async () => {
+    setApplying(true);
+    try {
+      const result = await platformApi.applyAiDefaults();
+      toast.success(
+        `پیش‌فرض‌ها روی ${toPersianDigits(result.updated_organizations)} سازمان اعمال شد ` +
+          `(${toPersianDigits(result.updated_providers)} تنظیم از ${toPersianDigits(
+            result.organizations,
+          )} سازمان فعال).`,
+      );
+      await load();
+    } catch (err) {
+      toast.error(errorMessage(err, 'اعمال پیش‌فرض‌ها ناموفق بود.'));
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  if (loading && !data) {
+    return (
+      <div className="flex justify-center py-10">
+        <LoadingGif />
+      </div>
+    );
+  }
+
+  const items = data?.defaults[kind] || [];
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Sparkles className="h-5 w-5" />
+            هوش مصنوعی پیش‌فرض همهٔ سازمان‌ها
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            این مقادیر برای سازمان‌هایی اعمال می‌شود که خودشان کلید یا اعتبارنامه‌ای ثبت نکرده‌اند؛
+            سازمانی که مقدار خودش را دارد هرگز بازنویسی نمی‌شود. پیش از این، همین پیش‌فرض‌ها فقط
+            داخل کد و متغیرهای محیطی سرور بود و تغییرشان نیاز به ویرایش فایل و راه‌اندازی مجدد داشت.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button className="gap-2" disabled={applying} onClick={apply}>
+              {applying ? (
+                <RefreshCcw className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4" />
+              )}
+              اعمال روی سازمان‌های تنظیم‌نشده
+            </Button>
+            <Button variant="ghost" className="gap-2" onClick={load}>
+              <History className="h-4 w-4" />
+              به‌روزرسانی
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Tabs value={kind} onValueChange={(value) => setKind(value as 'llm' | 'stt')}>
+        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1">
+          <TabsTrigger value="llm">مدل زبانی (LLM)</TabsTrigger>
+          <TabsTrigger value="stt">رونویسی گفتار (STT)</TabsTrigger>
+        </TabsList>
+        <TabsContent value={kind} className="space-y-3 pt-3">
+          <p className="text-xs text-muted-foreground">
+            ترتیب امتحان تأمین‌کنندگان فعال بر پایهٔ «اولویت» است؛ اگر یکی پاسخ ندهد بعدی امتحان
+            می‌شود و در پایان آداپتر خود سامانه به‌عنوان پشتیبان اجرا می‌گردد.
+          </p>
+          {items.map((item) => (
+            <AiDefaultCard key={`${item.kind}-${item.provider_key}`} item={item} onSaved={load} />
+          ))}
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function AiDefaultCard({ item, onSaved }: { item: PlatformAiDefault; onSaved: () => void }) {
+  const [draft, setDraft] = useState<Record<string, string | boolean>>({});
+  const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testMessage, setTestMessage] = useState('');
+
+  const usesLogin = item.auth_mode === 'username_password';
+  const value = (key: string): string =>
+    String(draft[key] ?? (item as unknown as Record<string, unknown>)[key] ?? '');
+  const boolValue = (key: string, fallback: boolean): boolean =>
+    Boolean(draft[key] ?? (item as unknown as Record<string, unknown>)[key] ?? fallback);
+  const set = (key: string, val: string | boolean) =>
+    setDraft((prev) => ({ ...prev, [key]: val }));
+
+  const buildPayload = (): Record<string, unknown> => {
+    const body: Record<string, unknown> = {
+      kind: item.kind,
+      enabled: boolValue('enabled', item.enabled),
+      model: value('model'),
+      base_url: value('base_url'),
+      priority: Number(value('priority') || item.priority || 1),
+      diarization: boolValue('diarization', item.diarization),
+      auth_username: value('auth_username'),
+    };
+    if (draft.api_key) body.api_key = String(draft.api_key);
+    if (draft.password) body.password = String(draft.password);
+    if (draft.clear_api_key) body.clear_api_key = true;
+    if (draft.clear_password) body.clear_password = true;
+    return body;
+  };
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await platformApi.updateAiDefault(item.provider_key, buildPayload());
+      setDraft({});
+      setTestMessage('');
+      toast.success(`پیش‌فرض «${item.display_name}» ذخیره شد.`);
+      onSaved();
+    } catch (err) {
+      toast.error(errorMessage(err, 'ذخیرهٔ پیش‌فرض ناموفق بود.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const test = async () => {
+    setTesting(true);
+    try {
+      const result = await platformApi.testAiDefault(item.provider_key, buildPayload());
+      setTestMessage(result.message);
+      if (result.ok) toast.success(`${item.display_name}: ${result.message}`);
+      else toast.error(`${item.display_name}: ${result.message}`);
+    } catch (err) {
+      toast.error(errorMessage(err, 'تست اتصال ناموفق بود.'));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const hasSavedSecret = usesLogin ? item.has_password : item.has_api_key;
+  const willClearSecret = Boolean(draft.clear_api_key || draft.clear_password);
+
+  const resetToServerDefault = async () => {
+    setBusy(true);
+    try {
+      await platformApi.removeAiDefault(item.provider_key);
+      setDraft({});
+      setTestMessage('');
+      toast.success(`پیش‌فرض «${item.display_name}» حذف شد و مقدار کد/سرور بازگشت.`);
+      onSaved();
+    } catch (err) {
+      toast.error(errorMessage(err, 'حذف پیش‌فرض ناموفق بود.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-1">
+        <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+          {item.display_name}
+          <Badge variant="outline">{item.kind === 'stt' ? 'رونویسی' : 'مدل زبانی'}</Badge>
+          <Badge variant={item.source === 'panel' ? 'default' : 'secondary'}>
+            {AI_SOURCE_LABELS[item.source] || item.source}
+          </Badge>
+        </CardTitle>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            {boolValue('enabled', item.enabled) ? 'فعال' : 'غیرفعال'}
+          </span>
+          <Switch
+            checked={boolValue('enabled', item.enabled)}
+            onCheckedChange={(checked) => set('enabled', checked)}
+          />
+        </div>
+      </CardHeader>
+      <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <ModelField
+          label="مدل"
+          value={value('model')}
+          options={item.model_options || []}
+          onChange={(next) => set('model', next)}
+          hint={`پیش‌فرض کاتالوگ: ${item.default_model || '—'}`}
+        />
+        <Field
+          label="نشانی سرویس"
+          value={value('base_url')}
+          onChange={(next) => set('base_url', next)}
+          dir="ltr"
+          placeholder={item.default_base_url}
+        />
+        <Field
+          label="اولویت (کمتر = زودتر)"
+          value={value('priority')}
+          onChange={(next) => set('priority', next)}
+          dir="ltr"
+        />
+        {!usesLogin && (
+          <Field
+            label="توکن / کلید API"
+            type="password"
+            value={String(draft.api_key || '')}
+            onChange={(next) => {
+              set('api_key', next);
+              set('clear_api_key', false);
+            }}
+            dir="ltr"
+            placeholder={
+              item.has_api_key
+                ? `ثبت‌شده: ${item.api_key_masked} — برای تغییر مقدار تازه وارد کنید`
+                : 'توکن سرویس را وارد کنید'
+            }
+            hint={
+              item.has_api_key
+                ? 'توکن ذخیره شده است؛ خالی گذاشتن یعنی بدون تغییر.'
+                : 'بدون توکن، این تأمین‌کننده برای سازمان‌های تنظیم‌نشده فعال نمی‌شود.'
+            }
+          />
+        )}
+        {usesLogin && (
+          <>
+            <Field
+              label="نام کاربری سرویس"
+              value={value('auth_username')}
+              onChange={(next) => set('auth_username', next)}
+              dir="ltr"
+            />
+            <Field
+              label="رمز عبور سرویس"
+              type="password"
+              value={String(draft.password || '')}
+              onChange={(next) => {
+                set('password', next);
+                set('clear_password', false);
+              }}
+              dir="ltr"
+              placeholder={
+                item.has_password
+                  ? `ثبت‌شده: ${item.password_masked} — برای تغییر مقدار تازه وارد کنید`
+                  : 'رمز سرویس را وارد کنید'
+              }
+            />
+          </>
+        )}
+        {item.supports_diarization && (
+          <label className="col-span-2 flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={boolValue('diarization', item.diarization)}
+              onChange={(event) => set('diarization', event.target.checked)}
+            />
+            تفکیک گوینده (diarization)
+          </label>
+        )}
+        {item.note && <p className="col-span-2 text-xs text-muted-foreground">{item.note}</p>}
+        {hasSavedSecret && !willClearSecret && (
+          <div className="col-span-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <KeyRound className="h-3.5 w-3.5" />
+            <span>
+              {usesLogin
+                ? `رمز ثبت‌شده: ${item.password_masked}`
+                : `توکن ثبت‌شده: ${item.api_key_masked}`}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-destructive"
+              onClick={() => {
+                if (usesLogin) {
+                  set('clear_password', true);
+                  set('password', '');
+                } else {
+                  set('clear_api_key', true);
+                  set('api_key', '');
+                }
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              حذف
+            </Button>
+          </div>
+        )}
+        {willClearSecret && (
+          <p className="col-span-2 text-xs text-destructive">
+            این کلید/رمز با ذخیره‌کردن حذف می‌شود و پیش‌فرض برای سازمان‌های تنظیم‌نشده غیرفعال
+            می‌گردد.
+          </p>
+        )}
+        <div className="col-span-2 flex flex-wrap items-center justify-end gap-2">
+          {testMessage && (
+            <span className="ml-auto text-xs text-muted-foreground">{testMessage}</span>
+          )}
+          {item.configured && (
+            <Button
+              variant="ghost"
+              className="text-destructive"
+              disabled={busy}
+              onClick={() => void resetToServerDefault()}
+            >
+              بازگشت به پیش‌فرض سرور
+            </Button>
+          )}
+          <Button variant="outline" disabled={testing} onClick={() => void test()}>
+            {testing ? 'در حال تست…' : 'تست اتصال'}
+          </Button>
+          <Button disabled={busy} onClick={() => void save()}>
+            {busy ? 'در حال ذخیره…' : 'ذخیره'}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1941,12 +2351,16 @@ function Field({
   onChange,
   type = 'text',
   dir,
+  placeholder,
+  hint,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
   dir?: string;
+  placeholder?: string;
+  hint?: string;
 }) {
   return (
     <div className="space-y-1">
@@ -1955,9 +2369,11 @@ function Field({
         type={type}
         value={value}
         dir={dir}
+        placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
         className={dir === 'ltr' ? 'text-left' : ''}
       />
+      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
     </div>
   );
 }
@@ -2043,6 +2459,8 @@ function ProvidersList({
       };
       if (d.api_key) payload.api_key = String(d.api_key);
       if (d.password) payload.password = String(d.password);
+      if (d.clear_api_key) payload.clear_api_key = true;
+      if (d.clear_password) payload.clear_password = true;
       await platformApi.updateAiProvider(orgId, provider.id, payload);
       setDrafts((prev) => ({ ...prev, [provider.id]: {} }));
       toast.success(`تنظیمات ${provider.display_name} ذخیره شد.`);
@@ -2091,28 +2509,55 @@ function ProvidersList({
               onChange={(v) => setDraft(provider.id, 'base_url', v)}
               dir="ltr"
             />
-            <Field label="نام مدل" value={draft(provider, 'model')} onChange={(v) => setDraft(provider.id, 'model', v)} dir="ltr" />
+            {/* مدل از فهرست پیشنهادی انتخاب می‌شود و «مدل دیگر…» برای نام‌های تازه است. */}
+            <ModelField
+              label="مدل"
+              value={draft(provider, 'model')}
+              options={provider.model_options || []}
+              onChange={(v) => setDraft(provider.id, 'model', v)}
+            />
             <Field label="اولویت" value={draft(provider, 'priority')} onChange={(v) => setDraft(provider.id, 'priority', v)} dir="ltr" />
-            <Field
-              label="نام کاربری (حرف)"
-              value={draft(provider, 'auth_username')}
-              onChange={(v) => setDraft(provider.id, 'auth_username', v)}
-              dir="ltr"
-            />
-            <Field
-              label="کلید API (خالی = بدون تغییر)"
-              type="password"
-              value={draft(provider, 'api_key')}
-              onChange={(v) => setDraft(provider.id, 'api_key', v)}
-              dir="ltr"
-            />
-            <Field
-              label="رمز عبور (خالی = بدون تغییر)"
-              type="password"
-              value={draft(provider, 'password')}
-              onChange={(v) => setDraft(provider.id, 'password', v)}
-              dir="ltr"
-            />
+            {(provider.auth_mode || 'api_key') === 'username_password' ? (
+              <>
+                <Field
+                  label="نام کاربری سرویس"
+                  value={draft(provider, 'auth_username')}
+                  onChange={(v) => setDraft(provider.id, 'auth_username', v)}
+                  dir="ltr"
+                />
+                <Field
+                  label="رمز عبور سرویس (خالی = بدون تغییر)"
+                  type="password"
+                  value={String(drafts[provider.id]?.password || '')}
+                  onChange={(v) => {
+                    setDraft(provider.id, 'password', v);
+                    setDraft(provider.id, 'clear_password', false);
+                  }}
+                  dir="ltr"
+                  placeholder={
+                    provider.has_password
+                      ? `ثبت‌شده: ${provider.password_masked} — برای تغییر مقدار تازه وارد کنید`
+                      : 'رمز سرویس را وارد کنید'
+                  }
+                />
+              </>
+            ) : (
+              <Field
+                label="توکن / کلید API (خالی = بدون تغییر)"
+                type="password"
+                value={String(drafts[provider.id]?.api_key || '')}
+                onChange={(v) => {
+                  setDraft(provider.id, 'api_key', v);
+                  setDraft(provider.id, 'clear_api_key', false);
+                }}
+                dir="ltr"
+                placeholder={
+                  provider.has_api_key
+                    ? `ثبت‌شده: ${provider.api_key_masked} — برای تغییر مقدار تازه وارد کنید`
+                    : 'توکن سرویس را وارد کنید'
+                }
+              />
+            )}
             {provider.supports_diarization && (
               <label className="col-span-2 flex items-center gap-2 text-sm">
                 <input
@@ -2122,6 +2567,41 @@ function ProvidersList({
                 />
                 تفکیک گوینده (diarization)
               </label>
+            )}
+            {(provider.has_api_key || provider.has_password) &&
+              !drafts[provider.id]?.clear_api_key &&
+              !drafts[provider.id]?.clear_password && (
+                <div className="col-span-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <KeyRound className="h-3.5 w-3.5" />
+                  <span>
+                    {(provider.auth_mode || 'api_key') === 'username_password'
+                      ? `رمز ثبت‌شده: ${provider.password_masked}`
+                      : `توکن ثبت‌شده: ${provider.api_key_masked}`}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs text-destructive"
+                    onClick={() => {
+                      if ((provider.auth_mode || 'api_key') === 'username_password') {
+                        setDraft(provider.id, 'clear_password', true);
+                        setDraft(provider.id, 'password', '');
+                      } else {
+                        setDraft(provider.id, 'clear_api_key', true);
+                        setDraft(provider.id, 'api_key', '');
+                      }
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    حذف
+                  </Button>
+                </div>
+              )}
+            {(drafts[provider.id]?.clear_api_key || drafts[provider.id]?.clear_password) && (
+              <p className="col-span-2 text-xs text-destructive">
+                این کلید/رمز با ذخیره‌کردن حذف می‌شود و تا ثبت مقدار تازه، سرویس برای این سازمان
+                غیرفعال می‌ماند.
+              </p>
             )}
             <div className="col-span-2 flex items-center justify-end gap-2">
               {provider.last_test_message ? (

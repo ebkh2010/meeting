@@ -159,14 +159,71 @@ export interface PlatformAiProvider {
   priority: number;
   base_url: string;
   model: string;
+  /** مدل‌های پیشنهادی این تأمین‌کننده برای انتخاب از فهرست. */
+  model_options?: string[];
   api_key_masked: string;
+  has_api_key?: boolean;
+  auth_mode?: string;
   auth_username: string;
+  has_password?: boolean;
   password_masked: string;
   diarization: boolean;
   supports_diarization: boolean;
   last_test_ok: boolean;
   last_test_message: string;
   [key: string]: unknown;
+}
+
+/** پیش‌فرض سراسری یک تأمین‌کنندهٔ هوش مصنوعی برای همهٔ سازمان‌ها. */
+export interface PlatformAiDefault {
+  provider_key: string;
+  kind: string;
+  display_name: string;
+  auth_mode: string;
+  supports_diarization: boolean;
+  note: string;
+  model_options: string[];
+  default_base_url: string;
+  default_model: string;
+  /** آیا مقداری از همین پنل ثبت شده است؟ */
+  configured: boolean;
+  enabled: boolean;
+  model: string;
+  base_url: string;
+  priority: number | null;
+  diarization: boolean;
+  auth_username: string;
+  api_key_masked: string;
+  has_api_key: boolean;
+  password_masked: string;
+  has_password: boolean;
+  updated_at: string;
+  /** panel = ثبت‌شده در پنل، code = پیش‌فرض کد/متغیر محیطی، none = تعریف‌نشده */
+  source: string;
+}
+
+export interface PlatformAiDefaults {
+  defaults: { stt: PlatformAiDefault[]; llm: PlatformAiDefault[] };
+  catalog: Record<
+    string,
+    {
+      provider_key: string;
+      display_name: string;
+      auth_mode: string;
+      supports_diarization: boolean;
+      default_base_url: string;
+      default_model: string;
+      model_options: string[];
+      note: string;
+    }[]
+  >;
+}
+
+export interface PlatformAiDefaultApplyResult {
+  organizations: number;
+  updated_organizations: number;
+  updated_providers: number;
+  providers: Record<string, number>;
 }
 
 export interface PlatformStorage {
@@ -484,6 +541,36 @@ export const platformApi = {
 
   updateAiProvider: (orgId: number, providerId: number, payload: Record<string, unknown>) =>
     call<PlatformAiProvider>(`${BASE}/orgs/${orgId}/ai-providers/${providerId}`, 'PATCH', payload),
+
+  /** پیش‌فرض‌های هوش مصنوعی همهٔ سازمان‌ها (قابل ویرایش از پنل). */
+  getAiDefaults: () => call<PlatformAiDefaults>(`${BASE}/settings/ai-defaults`),
+
+  /** ثبت پیش‌فرض یک تأمین‌کننده: مدل، نشانی، توکن و اعتبارنامه. */
+  updateAiDefault: (providerKey: string, payload: Record<string, unknown>) =>
+    call<{ defaults: PlatformAiDefaults['defaults'] }>(
+      `${BASE}/settings/ai-defaults/${providerKey}`,
+      'PUT',
+      payload,
+    ),
+
+  /** تست اتصال پیش‌فرض؛ مقادیر ارسالی (تست پیش از ذخیره) مقدم‌اند. */
+  testAiDefault: (providerKey: string, payload: Record<string, unknown>) =>
+    call<{ ok: boolean; message: string }>(
+      `${BASE}/settings/ai-defaults/${providerKey}/test`,
+      'POST',
+      payload,
+    ),
+
+  /** حذف پیش‌فرض پنل و بازگشت به پیش‌فرض کد/سرور. */
+  removeAiDefault: (providerKey: string) =>
+    call<{ defaults: PlatformAiDefaults['defaults'] }>(
+      `${BASE}/settings/ai-defaults/${providerKey}`,
+      'DELETE',
+    ),
+
+  /** اعمال فوری پیش‌فرض‌ها روی سازمان‌های تنظیم‌نشده. */
+  applyAiDefaults: () =>
+    call<PlatformAiDefaultApplyResult>(`${BASE}/settings/ai-defaults-apply`, 'POST'),
 
   testAiProvider: (orgId: number, providerId: number) =>
     call<{ ok: boolean; message: string }>(

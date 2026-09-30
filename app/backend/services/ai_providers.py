@@ -146,6 +146,49 @@ LLM_CATALOG: List[Dict[str, Any]] = [
 
 CATALOG: Dict[str, List[Dict[str, Any]]] = {KIND_STT: STT_CATALOG, KIND_LLM: LLM_CATALOG}
 
+#: مدل‌های پیشنهادی هر تأمین‌کننده برای انتخاب در پنل. فهرست بسته نیست؛ در رابط
+#: گزینهٔ «مدل دیگر» هم هست تا اگر نام مدلی تازه تغییر کرد، بدون تغییر کد ثبت شود.
+MODEL_OPTIONS: Dict[str, List[str]] = {
+    "harf": ["harf-transcribe"],
+    "elevenlabs": ["scribe_v1"],
+    "whisper_openai": ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"],
+    "deepseek": ["deepseek-chat", "deepseek-reasoner"],
+    "avalai": [
+        "gpt-4o-mini",
+        "gpt-4o",
+        "gpt-4.1-mini",
+        "gpt-4.1",
+        "o4-mini",
+        "deepseek-chat",
+    ],
+    "chatgpt": ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "o4-mini"],
+    "kimi": [
+        "moonshot-v1-8k",
+        "moonshot-v1-32k",
+        "moonshot-v1-128k",
+        "kimi-k2-0905-preview",
+    ],
+}
+
+
+def model_options_for(provider_key: str) -> List[str]:
+    """فهرست مدل‌های پیشنهادی یک تأمین‌کننده (همیشه شامل مدل پیش‌فرض کاتالوگ)."""
+    entry = catalog_entry_of(provider_key)
+    options = [str(item) for item in MODEL_OPTIONS.get(provider_key, []) if str(item).strip()]
+    default_model = str(entry.get("model") or "").strip()
+    if default_model and default_model not in options:
+        options.insert(0, default_model)
+    return options
+
+
+def catalog_entry_of(provider_key: str) -> Dict[str, Any]:
+    """ورودی کاتالوگ با کلید تأمین‌کننده (در هر دو نوع STT و LLM)."""
+    for kind in ALL_KINDS:
+        for entry in CATALOG.get(kind, []):
+            if entry["provider_key"] == provider_key:
+                return entry
+    return {}
+
 
 def catalog_entry(kind: str, provider_key: str) -> Dict[str, Any]:
     for entry in CATALOG.get(kind, []):
@@ -165,6 +208,7 @@ def catalog_payload() -> Dict[str, Any]:
                 "supports_diarization": entry["supports_diarization"],
                 "default_base_url": entry["base_url"],
                 "default_model": entry["model"],
+                "model_options": model_options_for(entry["provider_key"]),
                 "note": entry["note"],
             }
             for entry in CATALOG[kind]
@@ -338,13 +382,355 @@ def _deepseek_unconfigured(row: Org_ai_providers) -> bool:
     return not (row.api_key_enc or "").strip()
 
 
+def _row_unconfigured(row: Org_ai_providers) -> bool:
+    """آیا سازمان هنوز هیچ اعتبارنامه‌ای برای این تأمین‌کننده ثبت نکرده است؟
+
+    ملاک، «نبود اعتبارنامه» است نه مقدار ``enabled``؛ چون ردیف تازه با
+    ``enabled=False`` ساخته می‌شود و نمی‌توان از آن فهمید مدیر عمداً خاموشش کرده
+    یا هنوز دست نزده است. پس از اعمال پیش‌فرض، ردیف اعتبارنامه دارد و خاموش‌کردن
+    بعدی مدیر سازمان پایدار می‌ماند.
+    """
+    entry = catalog_entry(row.kind or "", row.provider_key or "")
+    if entry.get("auth_mode") == AUTH_USERNAME_PASSWORD:
+        return not ((row.auth_username or "").strip() or (row.auth_password_enc or "").strip())
+    return not (row.api_key_enc or "").strip()
+
+
+# ---------------------------------------------------------------------------
+# پیش‌فرض‌های سطح پلتفرم (قابل ویرایش از پنل مدیریت سامانه)
+#
+# پیش از این، «هوش مصنوعی پیش‌فرض همهٔ سازمان‌ها» فقط در کد و متغیرهای محیطی
+# (DEFAULT_HARF_* و DEFAULT_DEEPSEEK_API_KEY) تعریف می‌شد و تغییرش نیاز به
+# ویرایش فایل و راه‌اندازی مجدد سرویس داشت. اکنون همین پیش‌فرض‌ها در جدول
+# تنظیمات سراسری ذخیره می‌شوند و از پنل قابل ویرایش‌اند؛ متغیرهای محیطی همچنان
+# به‌عنوان مقدار پشتیبان عمل می‌کنند.
+#
+# ترتیب اولویت هنگام ساخت/به‌روزرسانی ردیف هر سازمان:
+#   ۱) مقداری که خود سازمان ثبت کرده است (هرگز بازنویسی نمی‌شود)
+#   ۲) پیش‌فرض پنل مدیریت سامانه
+#   ۳) پیش‌فرض کد/متغیر محیطی
+# ---------------------------------------------------------------------------
+
+#: کلید تنظیمات سراسری که پیش‌فرض‌های AI در آن نگه‌داری می‌شود (JSON).
+PLATFORM_AI_DEFAULTS_KEY = "ai_defaults"
+
+
+async def _platform_defaults(db: AsyncSession) -> Dict[str, Dict[str, Any]]:
+    """پیش‌فرض‌های ذخیره‌شده در پنل؛ در نبود/خرابی مقدار، دیکشنری خالی."""
+    # import تنبل: این ماژول در بسیاری از مسیرها import می‌شود و نمی‌خواهیم
+    # چرخهٔ واردکردنی بسازیم.
+    from services import platform_settings
+
+    try:
+        raw = await platform_settings.get_setting(db, PLATFORM_AI_DEFAULTS_KEY)
+    except Exception as exc:  # pragma: no cover - نبود جدول نباید جریان را بشکند
+        logger.warning("خواندن پیش‌فرض‌های AI پلتفرم ناموفق بود: %s", exc)
+        return {}
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.warning("پیش‌فرض‌های AI پلتفرم قابل تفسیر نبود؛ نادیده گرفته شد.")
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(key): value for key, value in data.items() if isinstance(value, dict)}
+
+
+def platform_default_payload(
+    kind: str, provider_key: str, stored: Dict[str, Any]
+) -> Dict[str, Any]:
+    """نمای امن پیش‌فرض یک تأمین‌کننده برای پنل؛ کلید/رمز فقط ماسک‌شده."""
+    entry = catalog_entry(kind, provider_key)
+    uses_login = entry.get("auth_mode") == AUTH_USERNAME_PASSWORD
+    api_key_enc = str(stored.get("api_key_enc") or "")
+    password_enc = str(stored.get("password_enc") or "")
+    return {
+        "provider_key": provider_key,
+        "kind": kind,
+        "display_name": entry.get("display_name", provider_key),
+        "auth_mode": entry.get("auth_mode", AUTH_API_KEY),
+        "supports_diarization": bool(entry.get("supports_diarization")),
+        "note": entry.get("note", ""),
+        "model_options": model_options_for(provider_key),
+        "default_base_url": entry.get("base_url", ""),
+        "default_model": entry.get("model", ""),
+        "configured": bool(stored),
+        "enabled": bool(stored.get("enabled", False)),
+        "model": str(stored.get("model") or entry.get("model") or ""),
+        "base_url": str(stored.get("base_url") or entry.get("base_url") or ""),
+        "priority": int(stored.get("priority") or 0) or None,
+        "diarization": bool(
+            stored.get("diarization", entry.get("supports_diarization", False))
+        ),
+        "auth_username": str(stored.get("auth_username") or ""),
+        "api_key_masked": "" if uses_login else mask_secret(api_key_enc),
+        "has_api_key": False if uses_login else bool(api_key_enc.strip()),
+        "password_masked": mask_secret(password_enc),
+        "has_password": bool(password_enc.strip()),
+        "updated_at": str(stored.get("updated_at") or ""),
+    }
+
+
+def _default_source(provider_key: str, stored_all: Dict[str, Dict[str, Any]]) -> str:
+    """منبع پیش‌فرض فعال: پنل، کد/محیط یا هیچ."""
+    if stored_all.get(provider_key):
+        return "panel"
+    if provider_key == "harf" and (DEFAULT_HARF_ENABLED or DEFAULT_HARF_AUTH_USERNAME):
+        return "code"
+    if provider_key == "deepseek" and DEFAULT_DEEPSEEK_API_KEY:
+        return "code"
+    return "none"
+
+
+def platform_defaults_payload(
+    stored_all: Dict[str, Dict[str, Any]]
+) -> Dict[str, List[Dict[str, Any]]]:
+    """فهرست کامل پیش‌فرض‌ها برای هر دو نوع سرویس، به ترتیب کاتالوگ."""
+    payload: Dict[str, List[Dict[str, Any]]] = {}
+    for kind in ALL_KINDS:
+        items: List[Dict[str, Any]] = []
+        for index, entry in enumerate(CATALOG[kind], start=1):
+            provider_key = entry["provider_key"]
+            item = platform_default_payload(kind, provider_key, stored_all.get(provider_key, {}))
+            if not item["priority"]:
+                item["priority"] = index
+            item["source"] = _default_source(provider_key, stored_all)
+            items.append(item)
+        payload[kind] = items
+    return payload
+
+
+async def read_platform_defaults(db: AsyncSession) -> Dict[str, Any]:
+    """خواندن پیش‌فرض‌ها برای پنل، به‌همراه راهنمای کاتالوگ."""
+    stored_all = await _platform_defaults(db)
+    return {
+        "defaults": platform_defaults_payload(stored_all),
+        "catalog": catalog_payload(),
+    }
+
+
+async def set_platform_default(
+    db: AsyncSession, provider_key: str, kind: str, data: Dict[str, Any]
+) -> Dict[str, Any]:
+    """ثبت/به‌روزرسانی پیش‌فرض یک تأمین‌کننده در تنظیمات سراسری (بدون commit)."""
+    from services import platform_settings
+
+    entry = catalog_entry(kind, provider_key)
+    if not entry:
+        raise ValueError("تأمین‌کنندهٔ انتخابی در فهرست پشتیبانی‌شده نیست.")
+
+    stored_all = await _platform_defaults(db)
+    current = dict(stored_all.get(provider_key) or {})
+
+    if "enabled" in data and data["enabled"] is not None:
+        current["enabled"] = bool(data["enabled"])
+    if data.get("model"):
+        current["model"] = str(data["model"]).strip()[:120]
+    if data.get("base_url"):
+        current["base_url"] = str(data["base_url"]).strip().rstrip("/")[:300]
+    if data.get("priority") is not None:
+        try:
+            current["priority"] = max(1, min(int(data["priority"]), 99))
+        except (TypeError, ValueError):
+            pass
+    if data.get("diarization") is not None:
+        current["diarization"] = bool(data["diarization"]) and bool(
+            entry.get("supports_diarization")
+        )
+    if "auth_username" in data and data["auth_username"] is not None:
+        current["auth_username"] = str(data["auth_username"]).strip()[:120]
+    if data.get("api_key"):
+        current["api_key_enc"] = encrypt_secret(_sanitize_token(str(data["api_key"])))
+    if data.get("clear_api_key"):
+        current["api_key_enc"] = ""
+    if data.get("password"):
+        current["password_enc"] = encrypt_secret(str(data["password"]).strip())
+    if data.get("clear_password"):
+        current["password_enc"] = ""
+
+    current["kind"] = kind
+    current["updated_at"] = iso_utc(utc_now())
+    stored_all[provider_key] = current
+    await platform_settings.set_setting(
+        db, PLATFORM_AI_DEFAULTS_KEY, json.dumps(stored_all, ensure_ascii=False)
+    )
+    payload = platform_default_payload(kind, provider_key, current)
+    payload["source"] = "panel"
+    return payload
+
+
+def _default_has_credentials(default: Dict[str, Any], entry: Dict[str, Any]) -> bool:
+    if entry.get("auth_mode") == AUTH_USERNAME_PASSWORD:
+        return bool(
+            str(default.get("auth_username") or "").strip()
+            and str(default.get("password_enc") or "").strip()
+        )
+    return bool(str(default.get("api_key_enc") or "").strip())
+
+
+def _apply_platform_default(
+    row: Org_ai_providers, default: Dict[str, Any], entry: Dict[str, Any]
+) -> bool:
+    """اعمال پیش‌فرض پنل روی ردیفِ بدون تنظیم سازمان؛ ``True`` اگر تغییری داد."""
+    if not default:
+        return False
+    changed = False
+    if default.get("model") and (row.model or "") != default["model"]:
+        row.model = str(default["model"])
+        changed = True
+    if default.get("base_url") and (row.base_url or "") != default["base_url"]:
+        row.base_url = str(default["base_url"])
+        changed = True
+    if default.get("priority"):
+        try:
+            priority = max(1, min(int(default["priority"]), 99))
+        except (TypeError, ValueError):
+            priority = int(row.priority or 99)
+        if int(row.priority or 0) != priority:
+            row.priority = priority
+            changed = True
+    if default.get("diarization") is not None and entry.get("supports_diarization"):
+        value = bool(default["diarization"])
+        if bool(row.diarization) != value:
+            row.diarization = value
+            changed = True
+    if default.get("auth_username") and (row.auth_username or "") != default["auth_username"]:
+        row.auth_username = str(default["auth_username"])
+        changed = True
+    if default.get("password_enc") and not (row.auth_password_enc or "").strip():
+        row.auth_password_enc = str(default["password_enc"])
+        changed = True
+    if default.get("api_key_enc") and not (row.api_key_enc or "").strip():
+        row.api_key_enc = str(default["api_key_enc"])
+        changed = True
+    # فعال‌سازی فقط وقتی پیش‌فرض فعال است و اعتبارنامهٔ کامل دارد.
+    if (
+        bool(default.get("enabled"))
+        and _default_has_credentials(default, entry)
+        and not bool(row.enabled)
+    ):
+        row.enabled = True
+        changed = True
+    return changed
+
+
+def build_default_provider(
+    provider_key: str, kind: str, stored: Dict[str, Any]
+) -> Org_ai_providers:
+    """ردیف موقت (بدون ذخیره در پایگاه داده) برای تست اتصال پیش‌فرض پنل."""
+    entry = catalog_entry(kind, provider_key)
+    return Org_ai_providers(
+        organization_id=0,
+        kind=kind,
+        provider_key=provider_key,
+        display_name=entry.get("display_name", provider_key),
+        enabled=True,
+        priority=int(stored.get("priority") or 1),
+        base_url=str(stored.get("base_url") or entry.get("base_url") or ""),
+        model=str(stored.get("model") or entry.get("model") or ""),
+        api_key_enc=str(stored.get("api_key_enc") or ""),
+        auth_username=str(stored.get("auth_username") or ""),
+        auth_password_enc=str(stored.get("password_enc") or ""),
+        diarization=bool(stored.get("diarization", entry.get("supports_diarization", False))),
+        extra_json="",
+    )
+
+
+async def platform_default_provider(
+    db: AsyncSession, provider_key: str, kind: str, overrides: Optional[Dict[str, Any]] = None
+) -> Org_ai_providers:
+    """ردیف موقت پیش‌فرض برای تست؛ مقادیر ارسالی (تست پیش از ذخیره) مقدم‌اند."""
+    stored_all = await _platform_defaults(db)
+    merged = dict(stored_all.get(provider_key) or {})
+    overrides = overrides or {}
+    if overrides.get("api_key"):
+        merged["api_key_enc"] = encrypt_secret(_sanitize_token(str(overrides["api_key"])))
+    if overrides.get("password"):
+        merged["password_enc"] = encrypt_secret(str(overrides["password"]).strip())
+    if overrides.get("auth_username") is not None:
+        merged["auth_username"] = str(overrides["auth_username"]).strip()
+    if overrides.get("base_url"):
+        merged["base_url"] = str(overrides["base_url"]).strip().rstrip("/")
+    if overrides.get("model"):
+        merged["model"] = str(overrides["model"]).strip()
+    return build_default_provider(provider_key, kind, merged)
+
+
+async def clear_platform_default(db: AsyncSession, provider_key: str) -> Dict[str, Any]:
+    """حذف پیش‌فرض پنل یک تأمین‌کننده و بازگشت به پیش‌فرض کد/محیط (بدون commit)."""
+    from services import platform_settings
+
+    stored_all = await _platform_defaults(db)
+    stored_all.pop(provider_key, None)
+    await platform_settings.set_setting(
+        db,
+        PLATFORM_AI_DEFAULTS_KEY,
+        json.dumps(stored_all, ensure_ascii=False) if stored_all else None,
+    )
+    return {"provider_key": provider_key, "cleared": True}
+
+
+async def apply_platform_defaults(db: AsyncSession) -> Dict[str, Any]:
+    """اعمال پیش‌فرض‌های پنل روی همهٔ سازمان‌های فعال (فقط ردیف‌های بدون تنظیم).
+
+    سازمانی که خودش کلید/اعتبارنامه ثبت کرده باشد هرگز بازنویسی نمی‌شود؛ این تابع
+    برای زمانی است که مدیر سامانه پیش‌فرض را عوض می‌کند و می‌خواهد همان لحظه روی
+    سازمان‌های تنظیم‌نشده اعمال شود (بدون انتظار برای نخستین درخواست هر سازمان).
+    """
+    from models.organizations import Organizations
+
+    defaults = await _platform_defaults(db)
+    if not defaults:
+        return {
+            "organizations": 0,
+            "updated_organizations": 0,
+            "updated_providers": 0,
+            "providers": {},
+        }
+
+    result = await db.execute(
+        select(Organizations).where(Organizations.status != "trashed")
+    )
+    organizations = list(result.scalars().all())
+    updated_orgs = 0
+    updated_providers = 0
+    per_provider: Dict[str, int] = {}
+    for organization in organizations:
+        rows = await ensure_defaults(db, int(organization.id))
+        org_updated = False
+        for row in rows:
+            provider_key = row.provider_key or ""
+            default = defaults.get(provider_key)
+            if not default or not _row_unconfigured(row):
+                continue
+            entry = catalog_entry(row.kind or "", provider_key)
+            if _apply_platform_default(row, default, entry):
+                updated_providers += 1
+                per_provider[provider_key] = per_provider.get(provider_key, 0) + 1
+                org_updated = True
+        if org_updated:
+            updated_orgs += 1
+    if updated_orgs:
+        await db.flush()
+    return {
+        "organizations": len(organizations),
+        "updated_organizations": updated_orgs,
+        "updated_providers": updated_providers,
+        "providers": per_provider,
+    }
+
+
 async def ensure_defaults(db: AsyncSession, organization_id: int) -> List[Org_ai_providers]:
     """ساخت ردیف‌های پیش‌فرض تنظیمات برای سازمان (یک‌بار، بی‌اثر در فراخوان دوباره).
 
-    ردیف سرویس «حرف» با اعتبارنامهٔ پیش‌فرض ساخته می‌شود تا رونویسی برای هر
-    سازمانِ تازه‌ثبت‌نام‌کرده بدون هیچ پیکربندی فعال باشد؛ ردیف‌های «حرف»
-    دست‌نخوردهٔ قدیمی (بدون نام کاربری و رمز) هم به همین پیش‌فرض منتقل می‌شوند.
+    ترتیب اولویت مقداردهی: مقدار ثبت‌شدهٔ خود سازمان ← پیش‌فرض پنل مدیریت سامانه
+    ← پیش‌فرض کد/متغیر محیطی. ردیف سرویس «حرف» با اعتبارنامهٔ پیش‌فرض ساخته
+    می‌شود تا رونویسی برای هر سازمان تازه بدون هیچ پیکربندی فعال باشد؛ ردیف‌های
+    قدیمیِ بدون اعتبارنامه هم به همین پیش‌فرض منتقل می‌شوند.
     """
+    platform_defaults = await _platform_defaults(db)
     result = await db.execute(
         select(Org_ai_providers).where(Org_ai_providers.organization_id == organization_id)
     )
@@ -378,10 +764,19 @@ async def ensure_defaults(db: AsyncSession, organization_id: int) -> List[Org_ai
             db.add(row)
             rows.append(row)
             created = True
-    # پشتیبانی از ردیف‌های «حرف» قدیمی که بدون اعتبارنامه ساخته شده‌اند
-    # و فعال‌سازی پیش‌فرض سامانه (DeepSeek) روی ردیف‌های مدل زبانی بدون کلید.
+    # ۱) پیش‌فرض پنل سامانه روی ردیف‌هایی که سازمان هنوز اعتبارنامه‌ای ثبت نکرده
+    #    است، ۲) در نبود آن، پشتیبانی از ردیف‌های «حرف» قدیمی و فعال‌سازی
+    #    پیش‌فرض کد (DeepSeek) روی ردیف‌های مدل زبانی بدون کلید.
     changed = False
     for row in rows:
+        if not _row_unconfigured(row):
+            continue
+        provider_key = row.provider_key or ""
+        entry = catalog_entry(row.kind or "", provider_key)
+        default = platform_defaults.get(provider_key)
+        if default and _apply_platform_default(row, default, entry):
+            changed = True
+            continue
         if _harf_unconfigured(row):
             _apply_default_harf(row)
             changed = True
@@ -407,6 +802,7 @@ def provider_payload(row: Org_ai_providers) -> Dict[str, Any]:
         "priority": int(row.priority or 99),
         "base_url": row.base_url or entry.get("base_url", ""),
         "model": row.model or entry.get("model", ""),
+        "model_options": model_options_for(row.provider_key or ""),
         "auth_mode": entry.get("auth_mode", AUTH_API_KEY),
         "supports_diarization": bool(entry.get("supports_diarization")),
         "diarization": bool(row.diarization),

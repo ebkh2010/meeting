@@ -209,13 +209,17 @@ async def get_setting(db: AsyncSession, key: str) -> Optional[str]:
 async def set_setting(db: AsyncSession, key: str, value: Optional[str]) -> None:
     """ثبت/به‌روزرسانی یک کلید تنظیمات سراسری (بدون commit).
 
-    ``value=None`` یعنی حذف مقدار و بازگشت به پیش‌فرض.
+    ``value=None`` یعنی حذف مقدار و بازگشت به پیش‌فرض؛ در این حالت ردیف هم پاک
+    می‌شود تا «بازگشت به پیش‌فرض» هیچ ردیف خالی‌ای در جدول باقی نگذارد.
     """
     result = await db.execute(select(Platform_settings).where(Platform_settings.key == key))
     row = result.scalars().first()
     if row is None:
-        row = Platform_settings(key=key, value=value)
-        db.add(row)
+        if value is None:
+            return
+        db.add(Platform_settings(key=key, value=value))
+    elif value is None:
+        await db.delete(row)
     else:
         row.value = value
     await db.flush()
