@@ -22,6 +22,10 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import LoadingGif from '@/components/LoadingGif';
+import AiCredentialFields, {
+  type AiCredentialState,
+} from '@/components/settings/AiCredentialFields';
+import ModelField from '@/components/settings/ModelField';
 import { Ban, Building2, BarChart3, BellRing, Bot, CheckCircle2, Coins, HardDrive, History, KeyRound, MessageSquareText, Mic, Pencil, RefreshCcw, RotateCcw, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, UserPlus } from 'lucide-react';
 import {
   errorMessage,
@@ -110,71 +114,27 @@ export default function PlatformAdmin() {
 /* هوش مصنوعی پیش‌فرض همهٔ سازمان‌ها                                     */
 /* ------------------------------------------------------------------ */
 
+/**
+ * نگاشت وصلهٔ اعتبارنامه (camelCase در کامپوننت مشترک) به کلیدهای بک‌اند.
+ * بدون این نگاشت، توکن تایپ‌شده در draft با نام دیگری می‌نشست و ارسال نمی‌شد.
+ */
+function credentialPatchToDraft(
+  patch: Partial<AiCredentialState>,
+): Record<string, string | boolean> {
+  const mapped: Record<string, string | boolean> = {};
+  if (patch.apiKey !== undefined) mapped.api_key = patch.apiKey;
+  if (patch.password !== undefined) mapped.password = patch.password;
+  if (patch.authUsername !== undefined) mapped.auth_username = patch.authUsername;
+  if (patch.clearApiKey !== undefined) mapped.clear_api_key = patch.clearApiKey;
+  if (patch.clearPassword !== undefined) mapped.clear_password = patch.clearPassword;
+  return mapped;
+}
+
 const AI_SOURCE_LABELS: Record<string, string> = {
   panel: 'تنظیم‌شده در پنل',
   code: 'پیش‌فرض کد/سرور',
   none: 'تعریف‌نشده',
 };
-
-/**
- * انتخاب مدل از فهرست پیشنهادی + گزینهٔ «مدل دیگر…» برای نام‌های تازه.
- * مقدار نهایی همان رشتهٔ مدل می‌ماند تا با قرارداد بک‌اند یکی باشد.
- */
-function ModelField({
-  label,
-  value,
-  options,
-  onChange,
-  hint,
-}: {
-  label: string;
-  value: string;
-  options: string[];
-  onChange: (value: string) => void;
-  hint?: string;
-}) {
-  const known = options.includes(value);
-  const [custom, setCustom] = useState(false);
-  const showInput = custom || !known;
-  return (
-    <div className="space-y-1">
-      <Label className="text-xs">{label}</Label>
-      <Select
-        value={known ? value : '__custom__'}
-        onValueChange={(next) => {
-          if (next === '__custom__') {
-            setCustom(true);
-            return;
-          }
-          setCustom(false);
-          onChange(next);
-        }}
-      >
-        <SelectTrigger>
-          <SelectValue placeholder="انتخاب مدل" />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map((option) => (
-            <SelectItem key={option} value={option}>
-              {option}
-            </SelectItem>
-          ))}
-          <SelectItem value="__custom__">مدل دیگر…</SelectItem>
-        </SelectContent>
-      </Select>
-      {showInput && (
-        <Input
-          value={value}
-          dir="ltr"
-          className="text-left"
-          placeholder="نام دقیق مدل"
-          onChange={(event) => onChange(event.target.value)}
-        />
-      )}
-      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
-    </div>
-  );
-}
 
 function AiDefaultsView() {
   const [data, setData] = useState<PlatformAiDefaults | null>(null);
@@ -281,6 +241,7 @@ function AiDefaultCard({ item, onSaved }: { item: PlatformAiDefault; onSaved: ()
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testMessage, setTestMessage] = useState('');
+  const [advanced, setAdvanced] = useState(false);
 
   const usesLogin = item.auth_mode === 'username_password';
   const value = (key: string): string =>
@@ -290,10 +251,21 @@ function AiDefaultCard({ item, onSaved }: { item: PlatformAiDefault; onSaved: ()
   const set = (key: string, val: string | boolean) =>
     setDraft((prev) => ({ ...prev, [key]: val }));
 
+  // اگر کاربر توکن/رمز تازه‌ای وارد کند و کلید فعال‌سازی را دست نزده باشد،
+  // سرویس خودکار فعال می‌شود تا «ورود توکن» به‌تنهایی کافی باشد.
+  const typedCredential = usesLogin
+    ? Boolean(
+        String(draft.password || '').trim() &&
+          String(draft.auth_username ?? item.auth_username ?? '').trim(),
+      )
+    : Boolean(String(draft.api_key || '').trim());
+  const enabled =
+    draft.enabled !== undefined ? Boolean(draft.enabled) : typedCredential ? true : item.enabled;
+
   const buildPayload = (): Record<string, unknown> => {
     const body: Record<string, unknown> = {
       kind: item.kind,
-      enabled: boolValue('enabled', item.enabled),
+      enabled,
       model: value('model'),
       base_url: value('base_url'),
       priority: Number(value('priority') || item.priority || 1),
@@ -313,7 +285,24 @@ function AiDefaultCard({ item, onSaved }: { item: PlatformAiDefault; onSaved: ()
       await platformApi.updateAiDefault(item.provider_key, buildPayload());
       setDraft({});
       setTestMessage('');
-      toast.success(`پیش‌فرض «${item.display_name}» ذخیره شد.`);
+      if (typedCredential && enabled) {
+        // پیش‌فرض تازه بلافاصله روی سازمان‌های تنظیم‌نشده اعمال می‌شود تا کاربر
+        // برای اثرگذاری مجبور به زدن کلید جداگانه نباشد.
+        try {
+          const report = await platformApi.applyAiDefaults();
+          toast.success(
+            `توکن «${item.display_name}» ذخیره و روی ${toPersianDigits(
+              report.updated_organizations,
+            )} سازمان تنظیم‌نشده اعمال شد.`,
+          );
+        } catch {
+          toast.success(
+            `توکن «${item.display_name}» ذخیره شد؛ برای اعمال روی سازمان‌ها کلید «اعمال روی سازمان‌های تنظیم‌نشده» را بزنید.`,
+          );
+        }
+      } else {
+        toast.success(`پیش‌فرض «${item.display_name}» ذخیره شد.`);
+      }
       onSaved();
     } catch (err) {
       toast.error(errorMessage(err, 'ذخیرهٔ پیش‌فرض ناموفق بود.'));
@@ -335,9 +324,6 @@ function AiDefaultCard({ item, onSaved }: { item: PlatformAiDefault; onSaved: ()
       setTesting(false);
     }
   };
-
-  const hasSavedSecret = usesLogin ? item.has_password : item.has_api_key;
-  const willClearSecret = Boolean(draft.clear_api_key || draft.clear_password);
 
   const resetToServerDefault = async () => {
     setBusy(true);
@@ -365,128 +351,85 @@ function AiDefaultCard({ item, onSaved }: { item: PlatformAiDefault; onSaved: ()
           </Badge>
         </CardTitle>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">
-            {boolValue('enabled', item.enabled) ? 'فعال' : 'غیرفعال'}
-          </span>
-          <Switch
-            checked={boolValue('enabled', item.enabled)}
-            onCheckedChange={(checked) => set('enabled', checked)}
-          />
+          <span className="text-xs text-muted-foreground">{enabled ? 'فعال' : 'غیرفعال'}</span>
+          <Switch checked={enabled} onCheckedChange={(checked) => set('enabled', checked)} />
         </div>
       </CardHeader>
-      <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <ModelField
-          label="مدل"
-          value={value('model')}
-          options={item.model_options || []}
-          onChange={(next) => set('model', next)}
-          hint={`پیش‌فرض کاتالوگ: ${item.default_model || '—'}`}
-        />
-        <Field
-          label="نشانی سرویس"
-          value={value('base_url')}
-          onChange={(next) => set('base_url', next)}
-          dir="ltr"
-          placeholder={item.default_base_url}
-        />
-        <Field
-          label="اولویت (کمتر = زودتر)"
-          value={value('priority')}
-          onChange={(next) => set('priority', next)}
-          dir="ltr"
-        />
-        {!usesLogin && (
-          <Field
-            label="توکن / کلید API"
-            type="password"
-            value={String(draft.api_key || '')}
-            onChange={(next) => {
-              set('api_key', next);
-              set('clear_api_key', false);
-            }}
-            dir="ltr"
-            placeholder={
-              item.has_api_key
-                ? `ثبت‌شده: ${item.api_key_masked} — برای تغییر مقدار تازه وارد کنید`
-                : 'توکن سرویس را وارد کنید'
-            }
-            hint={
-              item.has_api_key
-                ? 'توکن ذخیره شده است؛ خالی گذاشتن یعنی بدون تغییر.'
-                : 'بدون توکن، این تأمین‌کننده برای سازمان‌های تنظیم‌نشده فعال نمی‌شود.'
-            }
-          />
-        )}
-        {usesLogin && (
-          <>
-            <Field
-              label="نام کاربری سرویس"
-              value={value('auth_username')}
-              onChange={(next) => set('auth_username', next)}
-              dir="ltr"
-            />
-            <Field
-              label="رمز عبور سرویس"
-              type="password"
-              value={String(draft.password || '')}
-              onChange={(next) => {
-                set('password', next);
-                set('clear_password', false);
-              }}
-              dir="ltr"
-              placeholder={
-                item.has_password
-                  ? `ثبت‌شده: ${item.password_masked} — برای تغییر مقدار تازه وارد کنید`
-                  : 'رمز سرویس را وارد کنید'
+      <CardContent className="space-y-3">
+        {/* فقط چیزی که برای راه‌اندازی لازم است: توکن (یا نام کاربری/رمز) و مدل. */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-md border border-border p-3">
+            <AiCredentialFields
+              authMode={item.auth_mode}
+              apiKey={String(draft.api_key || '')}
+              password={String(draft.password || '')}
+              authUsername={value('auth_username')}
+              apiKeyMasked={item.api_key_masked}
+              passwordMasked={item.password_masked}
+              hasApiKey={item.has_api_key}
+              hasPassword={item.has_password}
+              clearApiKey={Boolean(draft.clear_api_key)}
+              clearPassword={Boolean(draft.clear_password)}
+              onChange={(patch) =>
+                setDraft((prev) => ({ ...prev, ...credentialPatchToDraft(patch) }))
               }
             />
-          </>
-        )}
-        {item.supports_diarization && (
-          <label className="col-span-2 flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={boolValue('diarization', item.diarization)}
-              onChange={(event) => set('diarization', event.target.checked)}
-            />
-            تفکیک گوینده (diarization)
-          </label>
-        )}
-        {item.note && <p className="col-span-2 text-xs text-muted-foreground">{item.note}</p>}
-        {hasSavedSecret && !willClearSecret && (
-          <div className="col-span-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <KeyRound className="h-3.5 w-3.5" />
-            <span>
-              {usesLogin
-                ? `رمز ثبت‌شده: ${item.password_masked}`
-                : `توکن ثبت‌شده: ${item.api_key_masked}`}
-            </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs text-destructive"
-              onClick={() => {
-                if (usesLogin) {
-                  set('clear_password', true);
-                  set('password', '');
-                } else {
-                  set('clear_api_key', true);
-                  set('api_key', '');
-                }
-              }}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              حذف
-            </Button>
           </div>
-        )}
-        {willClearSecret && (
-          <p className="col-span-2 text-xs text-destructive">
-            این کلید/رمز با ذخیره‌کردن حذف می‌شود و پیش‌فرض برای سازمان‌های تنظیم‌نشده غیرفعال
-            می‌گردد.
+          <ModelField
+            value={value('model')}
+            options={item.model_options || []}
+            onChange={(next) => set('model', next)}
+            hint={`پیش‌فرض: ${item.default_model || '—'}`}
+          />
+        </div>
+
+        {typedCredential && draft.enabled === undefined && !item.enabled && (
+          <p className="text-xs text-emerald-600">
+            با ذخیره، این سرویس فعال می‌شود و برای سازمان‌های تنظیم‌نشده اعمال می‌گردد.
           </p>
         )}
-        <div className="col-span-2 flex flex-wrap items-center justify-end gap-2">
+
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1 px-0 text-xs text-muted-foreground"
+          onClick={() => setAdvanced((current) => !current)}
+        >
+          <Settings2 className="h-3.5 w-3.5" />
+          {advanced
+            ? 'بستن تنظیمات پیشرفته'
+            : 'تنظیمات پیشرفته (نشانی سرویس، اولویت، تفکیک گوینده)'}
+        </Button>
+        {advanced && (
+          <div className="grid grid-cols-1 gap-3 rounded-md border border-dashed border-border p-3 sm:grid-cols-2">
+            <Field
+              label="نشانی سرویس"
+              value={value('base_url')}
+              onChange={(next) => set('base_url', next)}
+              dir="ltr"
+              placeholder={item.default_base_url}
+            />
+            <Field
+              label="اولویت (کمتر = زودتر)"
+              value={value('priority')}
+              onChange={(next) => set('priority', next)}
+              dir="ltr"
+            />
+            {item.supports_diarization && (
+              <label className="col-span-2 flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={boolValue('diarization', item.diarization)}
+                  onChange={(event) => set('diarization', event.target.checked)}
+                />
+                تفکیک گوینده (diarization)
+              </label>
+            )}
+            {item.note && <p className="col-span-2 text-xs text-muted-foreground">{item.note}</p>}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {testMessage && (
             <span className="ml-auto text-xs text-muted-foreground">{testMessage}</span>
           )}
@@ -2449,8 +2392,20 @@ function ProvidersList({
     setBusyId(provider.id);
     try {
       const d = drafts[provider.id] || {};
+      // اگر کاربر کلید/رمز تازه وارد کرده و کلید فعال‌سازی را دست نزده باشد،
+      // سرویس خودکار فعال می‌شود تا «ورود توکن» به‌تنهایی کافی باشد.
+      const typedCredential =
+        (provider.auth_mode || 'api_key') === 'username_password'
+          ? Boolean(String(d.password || '').trim())
+          : Boolean(String(d.api_key || '').trim());
+      const enabled =
+        d.enabled !== undefined
+          ? Boolean(d.enabled)
+          : typedCredential
+            ? true
+            : Boolean(provider.enabled);
       const payload: Record<string, unknown> = {
-        enabled: Boolean(d.enabled ?? provider.enabled),
+        enabled,
         priority: Number(d.priority ?? provider.priority),
         model: String(d.model ?? provider.model),
         base_url: String(d.base_url ?? provider.base_url),
@@ -2502,108 +2457,84 @@ function ProvidersList({
               onCheckedChange={(v) => setDraft(provider.id, 'enabled', v)}
             />
           </CardHeader>
-          <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field
-              label="نشانی سرویس"
-              value={draft(provider, 'base_url')}
-              onChange={(v) => setDraft(provider.id, 'base_url', v)}
-              dir="ltr"
-            />
-            {/* مدل از فهرست پیشنهادی انتخاب می‌شود و «مدل دیگر…» برای نام‌های تازه است. */}
-            <ModelField
-              label="مدل"
-              value={draft(provider, 'model')}
-              options={provider.model_options || []}
-              onChange={(v) => setDraft(provider.id, 'model', v)}
-            />
-            <Field label="اولویت" value={draft(provider, 'priority')} onChange={(v) => setDraft(provider.id, 'priority', v)} dir="ltr" />
-            {(provider.auth_mode || 'api_key') === 'username_password' ? (
-              <>
-                <Field
-                  label="نام کاربری سرویس"
-                  value={draft(provider, 'auth_username')}
-                  onChange={(v) => setDraft(provider.id, 'auth_username', v)}
-                  dir="ltr"
-                />
-                <Field
-                  label="رمز عبور سرویس (خالی = بدون تغییر)"
-                  type="password"
-                  value={String(drafts[provider.id]?.password || '')}
-                  onChange={(v) => {
-                    setDraft(provider.id, 'password', v);
-                    setDraft(provider.id, 'clear_password', false);
-                  }}
-                  dir="ltr"
-                  placeholder={
-                    provider.has_password
-                      ? `ثبت‌شده: ${provider.password_masked} — برای تغییر مقدار تازه وارد کنید`
-                      : 'رمز سرویس را وارد کنید'
+          {/* فقط توکن (یا نام کاربری/رمز) و مدل در دید است؛ بقیهٔ تنظیمات فنی در
+              «تنظیمات پیشرفته» پنهان می‌ماند تا انتخاب سرویس ساده بماند. */}
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-md border border-border p-3">
+                <AiCredentialFields
+                  authMode={provider.auth_mode || 'api_key'}
+                  apiKey={String(drafts[provider.id]?.api_key || '')}
+                  password={String(drafts[provider.id]?.password || '')}
+                  authUsername={draft(provider, 'auth_username')}
+                  apiKeyMasked={provider.api_key_masked}
+                  passwordMasked={provider.password_masked}
+                  hasApiKey={Boolean(provider.has_api_key)}
+                  hasPassword={Boolean(provider.has_password)}
+                  clearApiKey={Boolean(drafts[provider.id]?.clear_api_key)}
+                  clearPassword={Boolean(drafts[provider.id]?.clear_password)}
+                  onChange={(patch) =>
+                    setDrafts((prev) => ({
+                      ...prev,
+                      [provider.id]: { ...prev[provider.id], ...credentialPatchToDraft(patch) },
+                    }))
                   }
                 />
-              </>
-            ) : (
-              <Field
-                label="توکن / کلید API (خالی = بدون تغییر)"
-                type="password"
-                value={String(drafts[provider.id]?.api_key || '')}
-                onChange={(v) => {
-                  setDraft(provider.id, 'api_key', v);
-                  setDraft(provider.id, 'clear_api_key', false);
-                }}
-                dir="ltr"
-                placeholder={
-                  provider.has_api_key
-                    ? `ثبت‌شده: ${provider.api_key_masked} — برای تغییر مقدار تازه وارد کنید`
-                    : 'توکن سرویس را وارد کنید'
-                }
+              </div>
+              <ModelField
+                label="مدل"
+                value={draft(provider, 'model')}
+                options={provider.model_options || []}
+                onChange={(v) => setDraft(provider.id, 'model', v)}
               />
-            )}
-            {provider.supports_diarization && (
-              <label className="col-span-2 flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={Boolean(drafts[provider.id]?.diarization ?? provider.diarization)}
-                  onChange={(e) => setDraft(provider.id, 'diarization', e.target.checked)}
-                />
-                تفکیک گوینده (diarization)
-              </label>
-            )}
-            {(provider.has_api_key || provider.has_password) &&
-              !drafts[provider.id]?.clear_api_key &&
-              !drafts[provider.id]?.clear_password && (
-                <div className="col-span-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <KeyRound className="h-3.5 w-3.5" />
-                  <span>
-                    {(provider.auth_mode || 'api_key') === 'username_password'
-                      ? `رمز ثبت‌شده: ${provider.password_masked}`
-                      : `توکن ثبت‌شده: ${provider.api_key_masked}`}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 px-2 text-xs text-destructive"
-                    onClick={() => {
-                      if ((provider.auth_mode || 'api_key') === 'username_password') {
-                        setDraft(provider.id, 'clear_password', true);
-                        setDraft(provider.id, 'password', '');
-                      } else {
-                        setDraft(provider.id, 'clear_api_key', true);
-                        setDraft(provider.id, 'api_key', '');
-                      }
-                    }}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    حذف
-                  </Button>
-                </div>
+            </div>
+            {(drafts[provider.id]?.api_key || drafts[provider.id]?.password) &&
+              drafts[provider.id]?.enabled === undefined &&
+              !provider.enabled && (
+                <p className="text-xs text-emerald-600">
+                  با ذخیره، این سرویس برای سازمان فعال می‌شود.
+                </p>
               )}
-            {(drafts[provider.id]?.clear_api_key || drafts[provider.id]?.clear_password) && (
-              <p className="col-span-2 text-xs text-destructive">
-                این کلید/رمز با ذخیره‌کردن حذف می‌شود و تا ثبت مقدار تازه، سرویس برای این سازمان
-                غیرفعال می‌ماند.
-              </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 px-0 text-xs text-muted-foreground"
+              onClick={() =>
+                setDraft(provider.id, 'advanced', !drafts[provider.id]?.advanced)
+              }
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+              {drafts[provider.id]?.advanced
+                ? 'بستن تنظیمات پیشرفته'
+                : 'تنظیمات پیشرفته (نشانی سرویس، اولویت، تفکیک گوینده)'}
+            </Button>
+            {Boolean(drafts[provider.id]?.advanced) && (
+              <div className="grid grid-cols-1 gap-3 rounded-md border border-dashed border-border p-3 sm:grid-cols-2">
+                <Field
+                  label="نشانی سرویس"
+                  value={draft(provider, 'base_url')}
+                  onChange={(v) => setDraft(provider.id, 'base_url', v)}
+                  dir="ltr"
+                />
+                <Field
+                  label="اولویت (کمتر = زودتر)"
+                  value={draft(provider, 'priority')}
+                  onChange={(v) => setDraft(provider.id, 'priority', v)}
+                  dir="ltr"
+                />
+                {provider.supports_diarization && (
+                  <label className="col-span-2 flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(drafts[provider.id]?.diarization ?? provider.diarization)}
+                      onChange={(e) => setDraft(provider.id, 'diarization', e.target.checked)}
+                    />
+                    تفکیک گوینده (diarization)
+                  </label>
+                )}
+              </div>
             )}
-            <div className="col-span-2 flex items-center justify-end gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               {provider.last_test_message ? (
                 <span className="ml-auto text-xs text-muted-foreground">{provider.last_test_message}</span>
               ) : null}

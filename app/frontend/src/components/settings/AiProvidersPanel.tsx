@@ -9,12 +9,14 @@
  *    می‌برد، شامل جانشین نهایی پلتفرم.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowDown, ArrowUp, CheckCircle2, PlugZap, RefreshCw, XCircle } from 'lucide-react';
+import { ArrowDown, ArrowUp, CheckCircle2, PlugZap, RefreshCw, Settings2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import AiCredentialFields from '@/components/settings/AiCredentialFields';
+import ModelField from '@/components/settings/ModelField';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -168,6 +170,7 @@ function ProviderCard({
   const [diarization, setDiarization] = useState(provider.diarization);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
 
   useEffect(() => {
     setBaseUrl(provider.base_url);
@@ -181,11 +184,17 @@ function ProviderCard({
 
   const usesLogin = provider.auth_mode === 'username_password';
 
+  /** اگر کاربر کلید/رمز تازه وارد کند و فعال‌سازی را دست نزده باشد، خودکار فعال می‌شود. */
+  const typedCredential = usesLogin
+    ? Boolean(password.trim() && username.trim())
+    : Boolean(apiKey.trim());
+  const effectiveEnabled = typedCredential && !enabled ? true : enabled;
+
   const save = async () => {
     setSaving(true);
     try {
       await aiSettingsApi.updateProvider(provider.id, {
-        enabled,
+        enabled: effectiveEnabled,
         base_url: baseUrl.trim(),
         model: model.trim(),
         diarization,
@@ -263,76 +272,63 @@ function ProviderCard({
       </CardHeader>
 
       <CardContent className="space-y-4">
+        {/* فقط توکن (یا نام کاربری/رمز) و مدل در دید است؛ نشانی و اولویت و
+            تفکیک گوینده در «تنظیمات پیشرفته» قرار دارند. */}
         <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor={`base-${provider.id}`}>نشانی سرویس</Label>
-            <Input
-              id={`base-${provider.id}`}
-              dir="rtl"
-              value={baseUrl}
-              onChange={(event) => setBaseUrl(event.target.value)}
+          <div className="rounded-md border border-border p-3">
+            <AiCredentialFields
+              authMode={provider.auth_mode}
+              apiKey={apiKey}
+              password={password}
+              authUsername={username}
+              apiKeyMasked={provider.api_key_masked}
+              passwordMasked={provider.password_masked}
+              hasApiKey={Boolean(provider.has_api_key)}
+              hasPassword={Boolean(provider.has_password)}
+              clearApiKey={false}
+              clearPassword={false}
+              onChange={(patch) => {
+                if (patch.apiKey !== undefined) setApiKey(patch.apiKey);
+                if (patch.password !== undefined) setPassword(patch.password);
+                if (patch.authUsername !== undefined) setUsername(patch.authUsername);
+              }}
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor={`model-${provider.id}`}>نام مدل</Label>
-            <Input
-              id={`model-${provider.id}`}
-              dir="rtl"
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
-            />
-          </div>
-
-          {usesLogin && (
-            <div className="space-y-2">
-              <Label htmlFor={`user-${provider.id}`}>نام کاربری سرویس</Label>
-              <Input
-                id={`user-${provider.id}`}
-                dir="rtl"
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-              />
-            </div>
-          )}
-
-          {!usesLogin && (
-            <div className="space-y-2">
-              <Label htmlFor={`key-${provider.id}`}>کلید API</Label>
-              <Input
-                id={`key-${provider.id}`}
-                dir="rtl"
-                type="password"
-                autoComplete="new-password"
-                placeholder={
-                  provider.has_api_key
-                    ? `ثبت‌شده: ${provider.api_key_masked} — برای تغییر، مقدار تازه وارد کنید`
-                    : 'کلید را وارد کنید'
-                }
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-              />
-            </div>
-          )}
-
-          {usesLogin && (
-            <div className="space-y-2">
-              <Label htmlFor={`pass-${provider.id}`}>رمز عبور سرویس</Label>
-              <Input
-                id={`pass-${provider.id}`}
-                dir="rtl"
-                type="password"
-                autoComplete="new-password"
-                placeholder={
-                  provider.has_password
-                    ? `ثبت‌شده: ${provider.password_masked} — برای تغییر، مقدار تازه وارد کنید`
-                    : 'رمز عبور را وارد کنید'
-                }
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </div>
-          )}
+          <ModelField
+            value={model}
+            options={provider.model_options || []}
+            onChange={setModel}
+          />
         </div>
+
+        {typedCredential && !enabled && (
+          <p className="text-xs text-emerald-600">با ذخیره، این سرویس فعال می‌شود.</p>
+        )}
+
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1 px-0 text-xs text-muted-foreground"
+          onClick={() => setAdvanced((current) => !current)}
+        >
+          <Settings2 className="h-3.5 w-3.5" />
+          {advanced ? 'بستن تنظیمات پیشرفته' : 'تنظیمات پیشرفته (نشانی سرویس، تفکیک گوینده)'}
+        </Button>
+        {advanced && (
+          <div className="grid gap-4 rounded-md border border-dashed border-border p-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor={`base-${provider.id}`}>نشانی سرویس</Label>
+              <Input
+                id={`base-${provider.id}`}
+                dir="ltr"
+                className="text-left"
+                value={baseUrl}
+                onChange={(event) => setBaseUrl(event.target.value)}
+              />
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-5">
           <label className="flex items-center gap-2 text-sm">

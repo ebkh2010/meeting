@@ -51,6 +51,8 @@ export interface AiProvider {
   priority: number;
   base_url: string;
   model: string;
+  /** مدل‌های پیشنهادی این تأمین‌کننده برای انتخاب از فهرست. */
+  model_options?: string[];
   auth_mode: AiAuthMode;
   supports_diarization: boolean;
   diarization: boolean;
