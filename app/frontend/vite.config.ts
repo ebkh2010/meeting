@@ -40,6 +40,18 @@ function ensureBuildOutDir() {
   };
 }
 
+/**
+ * دامنهٔ عمومی این استقرار (برای sitemap.xml و robots.txt).
+ *
+ * مقدار از VITE_SITE_URL خوانده می‌شود تا هر استقرار (سامانهٔ جلسات، نسخهٔ HR و
+ * استقرارهای بعدی) بتواند دامنهٔ خودش را بدون تغییر کد اعلام کند؛ اگر تعریف
+ * نشده باشد، دامنهٔ رسمی «ویدارا - نسخه جلسات» استفاده می‌شود.
+ */
+function siteUrl(): string {
+  const configured = (process.env.VITE_SITE_URL || '').trim().replace(/\/+$/, '');
+  return configured || 'https://vidara-meeting.ir';
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(({ command }) => {
   const blogPrerenderRoutes = command === 'build' ? getBlogRoutes() : [];
@@ -53,7 +65,12 @@ export default defineConfig(({ command }) => {
       atoms(),
       ensureBuildOutDir(),
       Sitemap({
-        hostname: 'https://vidara.media',
+        // دامنهٔ عمومی سامانه: تنها منبع حقیقت، متغیر محیطی VITE_SITE_URL است
+        // (همان متغیری که src/lib/blog.ts برای نشانی کانونیکال پست‌ها می‌خواند).
+        // پیش‌فرض، دامنهٔ واقعی استقرار «ویدارا - نسخه جلسات» است، نه دامنهٔ
+        // محصول دیگر (vidara.media) که همین فایل قبلاً اشتباه ثبت می‌کرد و
+        // در نتیجه sitemap.xml و robots.txt به سرور اشتباه اشاره می‌کردند.
+        hostname: siteUrl(),
         lastmod: getSitemapLastmod(),
         readable: true,
         generateRobotsTxt: true,

@@ -19,6 +19,11 @@ COPY . .
 
 # در استقرار مستقل، فرانت و API روی همان دامنه هستند؛ پس آدرس پایه نسبی می‌ماند.
 ENV VITE_API_BASE_URL=""
+# دامنهٔ عمومی این استقرار برای sitemap.xml و robots.txt. هر استقرار (نسخهٔ
+# جلسات، نسخهٔ HR، …) این مقدار را در زمان بیلد خودش تعیین می‌کند تا هیچ
+# دامنه‌ای در کد ثابت نماند.
+ARG VITE_SITE_URL="https://vidara-meeting.ir"
+ENV VITE_SITE_URL=$VITE_SITE_URL
 RUN pnpm run build
 
 # پیش‌فشرده‌سازی فایل‌های استاتیک: nginx با gzip_static نسخهٔ .gz را بدون مصرف
