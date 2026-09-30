@@ -1,0 +1,13 @@
+[Unit]
+# زمان‌بند poller استقرار نسخهٔ دوم (سامانهٔ HR) — هر ۲ دقیقه.
+Description=Run HR meetings auto-deploy poller every 2 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Unit=hr-poller.service
+Persistent=false
+
+[Install]
+WantedBy=timers.target

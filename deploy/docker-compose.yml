@@ -5,8 +5,11 @@
 #   * پایگاه داده، MinIO، دروازهٔ ذخیره‌سازی، بک‌اند و فرانت هیچ پورتی روی میزبان باز نمی‌کنند.
 #   * دادهٔ ماندگار فقط در volume هاست: پایگاه داده، فایل‌های MinIO و گواهی‌های SSL.
 #   * همهٔ مقادیر حساس از فایل `.env` خوانده می‌شوند و هیچ پیش‌فرض قابل حدسی ندارند.
+#   * نام پروژه از COMPOSE_PROJECT_NAME خوانده می‌شود تا چند نمونه (instance) روی یک
+#     سرور، کانتینر/شبکه/ولوم/ایمیج کاملاً جدا داشته باشند. پیش‌فرض همان نام
+#     تاریخی «vidara-meetings» است؛ نسخهٔ دوم (HR) مقدار hr-meetings را در .env می‌گذارد.
 
-name: vidara-meetings
+name: ${COMPOSE_PROJECT_NAME:-vidara-meetings}
 
 x-common: &common
   restart: unless-stopped
@@ -107,6 +110,11 @@ services:
     <<: *common
     build:
       context: ../app/frontend
+      args:
+        # دامنهٔ عمومی این استقرار که در sitemap.xml و robots.txt می‌آید. هر
+        # نمونه (نسخهٔ جلسات، نسخهٔ HR، …) مقدار خودش را در .env می‌گذارد؛
+        # بدون این آرگومان، مقدار پیش‌فرض Dockerfile استفاده می‌شود.
+        VITE_SITE_URL: ${VITE_SITE_URL:-https://vidara-meeting.ir}
     environment:
       TZ: ${TZ:-Asia/Tehran}
 
@@ -125,6 +133,14 @@ services:
       STORAGE_PORT: ${STORAGE_PORT:-8443}
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-2048m}
       TZ: ${TZ:-Asia/Tehran}
+      # entrypoint پیش‌فرض ایمیج nginx، پوشهٔ /etc/nginx/templates را با envsubst
+      # «خالی» پردازش می‌کند و نسخهٔ ناقصی از قالب (بدون مقدار گواهی) را روی
+      # /etc/nginx/conf.d/default.conf می‌نویسد؛ سپس entrypoint خودمان آن را
+      # بازنویسی می‌کند و در نهایت nginx با خطای «no ssl_certificate is defined»
+      # بالا نمی‌آید. با خالی‌کردن این متغیر، تولید کانفیگ فقط در اختیار
+      # entrypoint خودمان می‌ماند.
+      NGINX_ENVSUBST_TEMPLATE_DIR: ""
+      NGINX_ENVSUBST_OUTPUT_DIR: ""
     entrypoint: ["/bin/sh", "/etc/nginx/entrypoint.sh"]
     volumes:
       - ./nginx/entrypoint.sh:/etc/nginx/entrypoint.sh:ro

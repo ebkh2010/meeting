@@ -1,0 +1,18 @@
+[Unit]
+# استقرار خودکار نسخهٔ دوم (سامانهٔ HR) — سرویس یک‌بارمصرف که poller را اجرا می‌کند.
+# نصب:  sudo cp deploy/systemd/hr-poller.service /etc/systemd/system/
+#       sudo systemctl daemon-reload && sudo systemctl enable --now hr-poller.timer
+Description=HR meetings auto-deploy poller (one-shot)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=samim
+Group=samim
+WorkingDirectory=/home/samim/hr-meetings/app
+Environment=CI_BRANCH=main
+ExecStart=/usr/bin/env bash /home/samim/hr-meetings/app/deploy/ci-poller.sh
+# poller و بیلد می‌توانند طول بکشند؛ سقف محافظتی می‌گذاریم
+TimeoutStartSec=3600
+Nice=10
