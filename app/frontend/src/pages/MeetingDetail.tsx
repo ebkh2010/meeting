@@ -72,6 +72,7 @@ import {
   JOB_STATUS_LABELS,
   JOB_TYPE_LABELS,
   MEETING_STATUS_LABELS,
+  Meeting,
   MeetingDetail as MeetingDetailData,
   MeetingSpeaker,
   MINUTES_STATUS_LABELS,
@@ -102,6 +103,7 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
   const [speakers, setSpeakers] = useState<MeetingSpeaker[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [versions, setVersions] = useState<MinuteVersion[]>([]);
+  const [editOpen, setEditOpen] = useState(false);
   const [error, setError] = useState('');
   const pollRef = useRef<number | null>(null);
 
@@ -316,7 +318,13 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
           )}
         </div>
         {/* در موبایل دکمه‌های عملیات تمام‌عرض و لمس‌پذیر می‌شوند. */}
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:flex lg:flex-wrap">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap">
+          {canManage && (
+            <Button className="min-h-11 gap-2" onClick={() => setEditOpen(true)}>
+              <Pencil className="h-4 w-4" />
+              ویرایش مشخصات جلسه
+            </Button>
+          )}
           <Button
             variant="outline"
             className="!bg-transparent min-h-11 gap-2"
@@ -339,6 +347,15 @@ function MeetingDetailBody({ bootstrap }: { bootstrap: Bootstrap }) {
           )}
         </div>
       </div>
+
+      {editOpen && (
+        <MeetingEditDialog
+          meeting={meeting}
+          members={members}
+          onClose={() => setEditOpen(false)}
+          onSaved={loadDetail}
+        />
+      )}
 
       <div ref={sectionRef}>
         <Tabs value={tab} onValueChange={setTab} dir="rtl">
@@ -2611,6 +2628,167 @@ function DecisionsPanel({
         />
       )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* ویرایش مشخصات جلسه — همیشه و برای همهٔ جلسه‌ها (حتی پس از برگزاری)     */
+/* ------------------------------------------------------------------ */
+
+function MeetingEditDialog({
+  meeting,
+  members,
+  onClose,
+  onSaved,
+}: {
+  meeting: Meeting;
+  members: Member[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(meeting.title);
+  const [description, setDescription] = useState(meeting.description || '');
+  const [startsAt, setStartsAt] = useState(meeting.starts_at || '');
+  const [location, setLocation] = useState(meeting.location || '');
+  const [onlineUrl, setOnlineUrl] = useState(meeting.online_url || '');
+  const [secretary, setSecretary] = useState(
+    meeting.secretary_membership_id ? String(meeting.secretary_membership_id) : 'none',
+  );
+  const [status, setStatus] = useState(meeting.status || 'scheduled');
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (title.trim().length < 2) {
+      toast.error('عنوان جلسه را وارد کنید (حداقل دو نویسه).');
+      return;
+    }
+    if (!startsAt) {
+      toast.error('تاریخ و زمان شروع جلسه را انتخاب کنید.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.updateMeeting(meeting.id, {
+        title: title.trim(),
+        description: description.trim(),
+        starts_at: startsAt,
+        location: location.trim(),
+        online_url: onlineUrl.trim(),
+        secretary_membership_id: secretary === 'none' ? null : Number(secretary),
+        clear_secretary: secretary === 'none',
+        status,
+      });
+      toast.success('مشخصات جلسه به‌روزرسانی شد.');
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast.error(errorMessage(err, 'ویرایش جلسه ناموفق بود.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg" dir="rtl">
+        <DialogHeader>
+          <DialogTitle>ویرایش مشخصات جلسه</DialogTitle>
+          <DialogDescription>
+            همهٔ مشخصات این جلسه — از جمله تاریخ، محل، دبیر و وضعیت — هر زمان قابل تغییر است، حتی
+            بعد از برگزاری جلسه.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="edit-meeting-title">عنوان جلسه</Label>
+            <Input
+              id="edit-meeting-title"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-meeting-desc">شرح</Label>
+            <Textarea
+              id="edit-meeting-desc"
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              rows={3}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>تاریخ و زمان شروع</Label>
+            <JalaliDateTimePicker value={startsAt} onChange={setStartsAt} />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="edit-meeting-location">محل برگزاری</Label>
+              <Input
+                id="edit-meeting-location"
+                value={location}
+                onChange={(event) => setLocation(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-meeting-url">نشانی جلسهٔ برخط</Label>
+              <Input
+                id="edit-meeting-url"
+                value={onlineUrl}
+                onChange={(event) => setOnlineUrl(event.target.value)}
+                dir="ltr"
+                className="text-left"
+              />
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>دبیر جلسه</Label>
+              <Select value={secretary} onValueChange={setSecretary}>
+                <SelectTrigger>
+                  <SelectValue placeholder="دبیر جلسه" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">بدون دبیر</SelectItem>
+                  {members.map((member) => (
+                    <SelectItem key={member.id} value={String(member.id)}>
+                      {member.full_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>وضعیت جلسه</Label>
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger>
+                  <SelectValue placeholder="وضعیت" />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(MEETING_STATUS_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            دعوت‌شدگان، حضور و دستور جلسه از برگهٔ «دستور جلسه و حضور» و صورتجلسه از برگهٔ خودش
+            قابل ویرایش است.
+          </p>
+          <div className="sticky bottom-0 -mx-6 -mb-6 flex flex-wrap gap-2 border-t border-border bg-background px-6 py-3">
+            <Button disabled={busy} onClick={save}>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              ذخیرهٔ تغییرات
+            </Button>
+            <Button variant="outline" className="!bg-transparent" disabled={busy} onClick={onClose}>
+              انصراف
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -124,6 +124,8 @@ class MeetingUpdateIn(BaseModel):
     location: Optional[str] = None
     online_url: Optional[str] = None
     secretary_membership_id: Optional[int] = None
+    #: حذف دبیر جلسه (``None`` در فیلد بالا یعنی «تغییری نده»).
+    clear_secretary: Optional[bool] = None
     status: Optional[str] = None
 
 
@@ -584,7 +586,10 @@ async def update_meeting(
         meeting.location = payload.location.strip()
     if payload.online_url is not None:
         meeting.online_url = payload.online_url.strip()
-    if payload.secretary_membership_id is not None:
+    if payload.clear_secretary:
+        meeting.secretary_membership_id = None
+        meeting.secretary_name = ""
+    elif payload.secretary_membership_id is not None:
         secretary = await get_owned(
             db, Memberships, payload.secretary_membership_id, ctx, "عضو انتخاب‌شده به‌عنوان دبیر"
         )
