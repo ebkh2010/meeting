@@ -34,6 +34,7 @@
 | کلیدهای AI | DeepSeek + حرف | **همان کلیدها** (طبق درخواست؛ در `.env` مستقل ثبت شده) |
 | گواهی TLS | لبه (wildcard `*.vidara-meeting.ir`) | همان گواهی، در لبه |
 | وضعیت `/health` | `200` ✅ | `200` ✅ |
+| `sitemap.xml` / `robots.txt` | `https://vidara-meeting.ir` ✅ | `https://hr.vidara-meeting.ir` ✅ (پس از بیلد مجدد فرانت) |
 
 **جداسازی تأییدشده:** ایمیج‌های نسخهٔ دوم حالا `hr-meetings-backend/frontend/oss-gateway`
 هستند (قبلاً به‌اشتباه `vidara-meetings-*` ساخته می‌شدند)؛ شبکهٔ `hr-meetings_internal` و
@@ -77,8 +78,18 @@ cd /home/samim/hr-meetings/app && git fetch ../hr.bundle main:refs/heads/main
 همچنین `gitlab.samimgroup.com` از سرور **قابل دسترسی** است؛ اگر مخزن HRmeeting به GitLab هم
 آینه (mirror) شود، می‌توان به‌روزرسانی خودکار واقعی از GitLab داشت — پیشنهاد بعدی.
 
-وضعیت فعلی: `hr-poller.timer` نصب و فعال است، ولی در اولین اجرا **غیرفعال شد** تا پس از تثبیت
-استقرار دوباره با احتیاط فعال شود (بخش ۶).
+وضعیت فعلی: `hr-poller.timer` روی سرور **نصب** شده ولی **غیرفعال** است تا پس از تثبیت استقرار و
+تعیین مسیر به‌روزرسانی، با یک دستور فعال شود:
+
+```bash
+# پس از تعیین مسیر به‌روزرسانی (bundle یا آینهٔ GitLab):
+sudo systemctl enable --now hr-poller.timer
+# علامت‌گذاری کامیت فعلی به‌عنوان «استقرار‌شده» تا اولین اجرا بی‌دلیل بیلد نکند:
+mkdir -p ~/.local/state/hr-meetings && (cd /home/samim/hr-meetings/app && git rev-parse main) > ~/.local/state/hr-meetings/last-deployed-commit
+```
+
+⚠️ هشدار: تا وقتی `ci-deploy.sh` را برای به‌روزرسانی **هر نمونه** جداگانه فراخوانی نکنید، poller را
+روی نمونهٔ دیگری فعال نکنید؛ درس حادثهٔ بخش ۵ دقیقاً همین بود.
 
 ---
 
