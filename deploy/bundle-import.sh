@@ -38,9 +38,15 @@ fi
     cd "${REPO_DIR}"
     BEFORE="$(git rev-parse --verify --quiet "refs/heads/${BRANCH}" || echo '')"
 
-    # واردکردن کامیت‌ها به شاخهٔ محلی
-    git fetch --force "${BUNDLE}" "${BRANCH}:refs/heads/${BRANCH}" >/dev/null 2>&1 || {
+    # واردکردن کامیت‌ها: ابتدا به یک ref موقت (git اجازهٔ fetch مستقیم به شاخهٔ
+    # checked-out را نمی‌دهد)، سپس به‌روزرسانی سریع‌جلو شاخهٔ کاری.
+    git fetch --force "${BUNDLE}" "${BRANCH}:refs/remotes/bundle/${BRANCH}" >/dev/null 2>&1 || {
         echo "[bundle-import] fetch از bundle ناموفق بود."; exit 1; }
+
+    if ! git merge --ff-only "refs/remotes/bundle/${BRANCH}" >/dev/null 2>&1; then
+        echo "[bundle-import] ادغام سریع‌جلو ممکن نبود؛ بازنشانی سخت به کامیت bundle."
+        git reset --hard "refs/remotes/bundle/${BRANCH}" >/dev/null
+    fi
 
     AFTER="$(git rev-parse "refs/heads/${BRANCH}")"
     if [ "${BEFORE}" = "${AFTER}" ]; then
