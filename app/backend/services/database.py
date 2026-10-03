@@ -74,6 +74,9 @@ async def ensure_platform_columns() -> None:
         # پرچم «مدیر اصلی» روی جدول موجود؛ مقدار ردیف‌های قدیمی در
         # platform_admin.ensure_platform_admin پر می‌شود.
         "platform_admins": ("is_owner", "BOOLEAN"),
+        # منبع تنظیم هوش مصنوعی هر سازمان (org/platform)؛ مقدار ردیف‌های قدیمی
+        # به‌صورت تنبل در ai_providers._backfill_source تشخیص داده می‌شود.
+        "org_ai_providers": ("configured_by", "VARCHAR"),
     }
     try:
         dialect = (db_manager.engine.dialect.name if db_manager.engine else "") or ""

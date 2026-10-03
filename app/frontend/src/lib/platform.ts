@@ -161,6 +161,8 @@ export interface PlatformAiProvider {
   model: string;
   /** مدل‌های پیشنهادی این تأمین‌کننده برای انتخاب از فهرست. */
   model_options?: string[];
+  /** منبع تنظیم فعال: org (اختصاصی سازمان) یا platform (از پیش‌فرض سامانه). */
+  configured_by?: string;
   api_key_masked: string;
   has_api_key?: boolean;
   auth_mode?: string;
@@ -204,6 +206,8 @@ export interface PlatformAiDefault {
 
 export interface PlatformAiDefaults {
   defaults: { stt: PlatformAiDefault[]; llm: PlatformAiDefault[] };
+  /** شمار سازمان‌های استفاده‌کننده از پیش‌فرض در برابر سازمان‌های دارای تنظیم اختصاصی. */
+  usage?: Record<string, { org: number; platform: number; none: number }>;
   catalog: Record<
     string,
     {
@@ -220,6 +224,9 @@ export interface PlatformAiDefaults {
 }
 
 export interface PlatformAiDefaultApplyResult {
+  /** با اعمال اجباری، تنظیم اختصاصی سازمان‌ها هم جایگزین می‌شود. */
+  forced?: boolean;
+  cleared_providers?: number;
   organizations: number;
   updated_organizations: number;
   updated_providers: number;
@@ -547,7 +554,11 @@ export const platformApi = {
 
   /** ثبت پیش‌فرض یک تأمین‌کننده: مدل، نشانی، توکن و اعتبارنامه. */
   updateAiDefault: (providerKey: string, payload: Record<string, unknown>) =>
-    call<{ defaults: PlatformAiDefaults['defaults'] }>(
+    call<{
+      defaults: PlatformAiDefaults['defaults'];
+      usage?: PlatformAiDefaults['usage'];
+      apply?: PlatformAiDefaultApplyResult;
+    }>(
       `${BASE}/settings/ai-defaults/${providerKey}`,
       'PUT',
       payload,
@@ -563,14 +574,21 @@ export const platformApi = {
 
   /** حذف پیش‌فرض پنل و بازگشت به پیش‌فرض کد/سرور. */
   removeAiDefault: (providerKey: string) =>
-    call<{ defaults: PlatformAiDefaults['defaults'] }>(
+    call<{
+      defaults: PlatformAiDefaults['defaults'];
+      usage?: PlatformAiDefaults['usage'];
+      apply?: PlatformAiDefaultApplyResult;
+    }>(
       `${BASE}/settings/ai-defaults/${providerKey}`,
       'DELETE',
     ),
 
-  /** اعمال فوری پیش‌فرض‌ها روی سازمان‌های تنظیم‌نشده. */
-  applyAiDefaults: () =>
-    call<PlatformAiDefaultApplyResult>(`${BASE}/settings/ai-defaults-apply`, 'POST'),
+  /**
+   * اعمال فوری پیش‌فرض‌ها روی سازمان‌های تنظیم‌نشده.
+   * با ``force`` حتی تنظیم اختصاصی سازمان‌ها هم با پیش‌فرض سامانه عوض می‌شود.
+   */
+  applyAiDefaults: (force = false) =>
+    call<PlatformAiDefaultApplyResult>(`${BASE}/settings/ai-defaults-apply`, 'POST', { force }),
 
   testAiProvider: (orgId: number, providerId: number) =>
     call<{ ok: boolean; message: string }>(

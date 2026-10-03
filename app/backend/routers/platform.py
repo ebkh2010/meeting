@@ -960,9 +960,23 @@ async def update_ai_default(
             + ("، توکن حذف شد" if data.clear_api_key else "")
         ),
     )
+    # اعمال فوری روی همهٔ سازمان‌هایی که تنظیم اختصاصی ندارند؛ وگرنه مدیر
+    # سامانه باید جداگانه کلید «اعمال» را بزند و تغییر به سازمان‌ها نمی‌رسید.
+    report = await ai_providers.apply_platform_defaults(db)
+    await _audit(
+        db,
+        0,
+        principal,
+        "platform.ai_defaults_applied",
+        entity_type="ai_provider",
+        detail=(
+            f"پیش‌فرض {data.kind} روی {report['updated_organizations']} سازمان اعمال شد "
+            f"({report['updated_providers']} تنظیم، {report['cleared_providers']} پاک‌سازی)"
+        ),
+    )
     await db.commit()
     payload = await ai_providers.read_platform_defaults(db)
-    return {"defaults": payload["defaults"]}
+    return {"defaults": payload["defaults"], "usage": payload["usage"], "apply": report}
 
 
 @router.delete("/settings/ai-defaults/{provider_key}")
@@ -973,17 +987,23 @@ async def clear_ai_default(
 ) -> Dict[str, Any]:
     """حذف پیش‌فرض پنل و بازگشت به پیش‌فرض کد/متغیر محیطی سرور."""
     await ai_providers.clear_platform_default(db, provider_key)
+    # توکن پیش‌فرضی که روی سازمان‌ها اعمال شده بود هم برداشته می‌شود تا توکن
+    # باطل‌شده جایی باقی نماند؛ ردیف‌های اختصاصی سازمان دست‌نخورده می‌مانند.
+    report = await ai_providers.apply_platform_defaults(db)
     await _audit(
         db,
         0,
         principal,
         "platform.ai_default_cleared",
         entity_type="ai_provider",
-        detail=f"پیش‌فرض پنل برای {provider_key} حذف شد و مقدار کد/سرور بازگشت",
+        detail=(
+            f"پیش‌فرض پنل برای {provider_key} حذف شد و مقدار کد/سرور بازگشت "
+            f"({report['cleared_providers']} تنظیم اعمال‌شده پاک شد)"
+        ),
     )
     await db.commit()
     payload = await ai_providers.read_platform_defaults(db)
-    return {"defaults": payload["defaults"]}
+    return {"defaults": payload["defaults"], "usage": payload["usage"], "apply": report}
 
 
 @router.post("/settings/ai-defaults/{provider_key}/test")
@@ -1022,13 +1042,20 @@ async def test_ai_default(
     return {"ok": ok, "message": message}
 
 
+class AiDefaultsApplyIn(BaseModel):
+    #: اعمال اجباری روی همهٔ سازمان‌ها، حتی آن‌هایی که تنظیم اختصاصی دارند.
+    force: bool = False
+
+
 @router.post("/settings/ai-defaults-apply")
 async def apply_ai_defaults(
+    data: Optional[AiDefaultsApplyIn] = None,
     principal: platform_admin.PlatformPrincipal = Depends(get_platform_admin),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    """اعمال فوری پیش‌فرض‌ها روی سازمان‌هایی که خودشان تنظیمی ندارند."""
-    report = await ai_providers.apply_platform_defaults(db)
+    """اعمال فوری پیش‌فرض‌ها روی سازمان‌های بدون تنظیم اختصاصی (یا همه با ``force``)."""
+    force = bool(data.force) if data else False
+    report = await ai_providers.apply_platform_defaults(db, force=force)
     await _audit(
         db,
         0,
@@ -1036,7 +1063,8 @@ async def apply_ai_defaults(
         "platform.ai_defaults_applied",
         detail=(
             f"پیش‌فرض‌های AI روی {report['updated_organizations']} سازمان اعمال شد "
-            f"({report['updated_providers']} تنظیم) از {report['organizations']} سازمان فعال"
+            f"({report['updated_providers']} تنظیم، {report['cleared_providers']} پاک‌سازی"
+            f"{'، اعمال اجباری' if force else ''}) از {report['organizations']} سازمان فعال"
         ),
     )
     await db.commit()
@@ -1417,7 +1445,7 @@ async def update_ai_provider(
     row = result.scalars().first()
     if row is None:
         raise _not_found("تأمین‌کنندهٔ هوش مصنوعی یافت نشد.")
-    ai_providers.apply_update(row, data.model_dump())
+    ai_providers.apply_update(row, data.model_dump(), source=ai_providers.SOURCE_ORG)
     await _audit(
         db, org_id, principal, "platform.org_ai_updated", entity_id=provider_id,
         detail=f"تنظیمات تأمین‌کنندهٔ {row.provider_key} ({row.kind}) توسط مدیر پلتفرم تغییر کرد",

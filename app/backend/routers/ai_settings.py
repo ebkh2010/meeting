@@ -88,7 +88,9 @@ async def update_provider(
     await ai_providers.ensure_defaults(db, principal.organization_id)
     row = await _load_row(db, principal.organization_id, provider_id)
     payload = data.model_dump(exclude_unset=True)
-    ai_providers.apply_update(row, payload)
+    # مقدار ثبت‌شده توسط مدیر سازمان، تنظیم اختصاصی همان سازمان است و دیگر با
+    # تغییر پیش‌فرض سراسری بازنویسی نمی‌شود.
+    ai_providers.apply_update(row, payload, source=ai_providers.SOURCE_ORG)
 
     if row.enabled and not ai_providers._has_credentials(row):
         raise app_auth.bad_request(

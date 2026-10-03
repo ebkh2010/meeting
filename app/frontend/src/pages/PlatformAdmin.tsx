@@ -26,7 +26,7 @@ import AiCredentialFields, {
   type AiCredentialState,
 } from '@/components/settings/AiCredentialFields';
 import ModelField from '@/components/settings/ModelField';
-import { Ban, Building2, BarChart3, BellRing, Bot, CheckCircle2, Coins, HardDrive, History, KeyRound, MessageSquareText, Mic, Pencil, RefreshCcw, RotateCcw, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, UserPlus } from 'lucide-react';
+import { Ban, Building2, BarChart3, BellRing, Bot, CheckCircle2, Coins, HardDrive, History, KeyRound, MessageSquareText, Mic, Pencil, RefreshCcw, RotateCcw, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, UserPlus, Users } from 'lucide-react';
 import {
   errorMessage,
   platformApi,
@@ -157,13 +157,15 @@ function AiDefaultsView() {
     void load();
   }, [load]);
 
-  const apply = async () => {
+  const apply = async (force = false) => {
     setApplying(true);
     try {
-      const result = await platformApi.applyAiDefaults();
+      const result = await platformApi.applyAiDefaults(force);
       toast.success(
-        `پیش‌فرض‌ها روی ${toPersianDigits(result.updated_organizations)} سازمان اعمال شد ` +
-          `(${toPersianDigits(result.updated_providers)} تنظیم از ${toPersianDigits(
+        (force ? 'اعمال اجباری انجام شد: ' : '') +
+          `پیش‌فرض‌ها روی ${toPersianDigits(result.updated_organizations)} سازمان اعمال شد ` +
+          `(${toPersianDigits(result.updated_providers)} تنظیم و ` +
+          `${toPersianDigits(result.cleared_providers || 0)} پاک‌سازی از ${toPersianDigits(
             result.organizations,
           )} سازمان فعال).`,
       );
@@ -173,6 +175,14 @@ function AiDefaultsView() {
     } finally {
       setApplying(false);
     }
+  };
+
+  const forceApply = async () => {
+    const confirmed = window.confirm(
+      'اعمال اجباری: پیش‌فرض‌های سامانه روی «همهٔ» سازمان‌ها گذاشته می‌شود، حتی سازمان‌هایی که ' +
+        'کلید اختصاصی خودشان را ثبت کرده‌اند. ادامه می‌دهید؟',
+    );
+    if (confirmed) await apply(true);
   };
 
   if (loading && !data) {
@@ -196,18 +206,28 @@ function AiDefaultsView() {
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            این مقادیر برای سازمان‌هایی اعمال می‌شود که خودشان کلید یا اعتبارنامه‌ای ثبت نکرده‌اند؛
-            سازمانی که مقدار خودش را دارد هرگز بازنویسی نمی‌شود. پیش از این، همین پیش‌فرض‌ها فقط
-            داخل کد و متغیرهای محیطی سرور بود و تغییرشان نیاز به ویرایش فایل و راه‌اندازی مجدد داشت.
+            با ذخیرهٔ هر پیش‌فرض، همان لحظه روی <b>همهٔ سازمان‌هایی که تنظیم اختصاصی ندارند</b> اعمال
+            می‌شود و توکن/سرویس پیش‌فرضِ قبلی از آن‌ها برداشته می‌گردد. سازمانی که خودش کلید یا
+            اعتبارنامه ثبت کرده است دست‌نخورده می‌ماند؛ اگر بخواهید پیش‌فرض را روی آن‌ها هم بگذارید،
+            از «اعمال اجباری روی همهٔ سازمان‌ها» استفاده کنید.
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button className="gap-2" disabled={applying} onClick={apply}>
+            <Button className="gap-2" disabled={applying} onClick={() => void apply(false)}>
               {applying ? (
                 <RefreshCcw className="h-4 w-4 animate-spin" />
               ) : (
                 <CheckCircle2 className="h-4 w-4" />
               )}
               اعمال روی سازمان‌های تنظیم‌نشده
+            </Button>
+            <Button
+              variant="outline"
+              className="!bg-transparent gap-2"
+              disabled={applying}
+              onClick={() => void forceApply()}
+            >
+              <Users className="h-4 w-4" />
+              اعمال اجباری روی همهٔ سازمان‌ها
             </Button>
             <Button variant="ghost" className="gap-2" onClick={load}>
               <History className="h-4 w-4" />
@@ -228,7 +248,12 @@ function AiDefaultsView() {
             می‌شود و در پایان آداپتر خود سامانه به‌عنوان پشتیبان اجرا می‌گردد.
           </p>
           {items.map((item) => (
-            <AiDefaultCard key={`${item.kind}-${item.provider_key}`} item={item} onSaved={load} />
+            <AiDefaultCard
+              key={`${item.kind}-${item.provider_key}`}
+              item={item}
+              usage={data?.usage?.[item.provider_key]}
+              onSaved={load}
+            />
           ))}
         </TabsContent>
       </Tabs>
@@ -236,7 +261,15 @@ function AiDefaultsView() {
   );
 }
 
-function AiDefaultCard({ item, onSaved }: { item: PlatformAiDefault; onSaved: () => void }) {
+function AiDefaultCard({
+  item,
+  usage,
+  onSaved,
+}: {
+  item: PlatformAiDefault;
+  usage?: { org: number; platform: number; none: number };
+  onSaved: () => void;
+}) {
   const [draft, setDraft] = useState<Record<string, string | boolean>>({});
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -282,26 +315,25 @@ function AiDefaultCard({ item, onSaved }: { item: PlatformAiDefault; onSaved: ()
   const save = async () => {
     setBusy(true);
     try {
-      await platformApi.updateAiDefault(item.provider_key, buildPayload());
+      // سرور خودش پیش‌فرض تازه را همان لحظه روی همهٔ سازمان‌های بدون تنظیم
+      // اختصاصی اعمال می‌کند و گزارش تعداد را برمی‌گرداند.
+      const response = await platformApi.updateAiDefault(item.provider_key, buildPayload());
       setDraft({});
       setTestMessage('');
-      if (typedCredential && enabled) {
-        // پیش‌فرض تازه بلافاصله روی سازمان‌های تنظیم‌نشده اعمال می‌شود تا کاربر
-        // برای اثرگذاری مجبور به زدن کلید جداگانه نباشد.
-        try {
-          const report = await platformApi.applyAiDefaults();
-          toast.success(
-            `توکن «${item.display_name}» ذخیره و روی ${toPersianDigits(
-              report.updated_organizations,
-            )} سازمان تنظیم‌نشده اعمال شد.`,
-          );
-        } catch {
-          toast.success(
-            `توکن «${item.display_name}» ذخیره شد؛ برای اعمال روی سازمان‌ها کلید «اعمال روی سازمان‌های تنظیم‌نشده» را بزنید.`,
-          );
-        }
+      const report = response?.apply;
+      if (report && (report.updated_organizations || report.cleared_providers)) {
+        toast.success(
+          `پیش‌فرض «${item.display_name}» ذخیره و روی ${toPersianDigits(
+            report.updated_organizations,
+          )} سازمان اعمال شد` +
+            (report.cleared_providers
+              ? ` (${toPersianDigits(report.cleared_providers)} تنظیم قبلی پاک شد).`
+              : '.'),
+        );
       } else {
-        toast.success(`پیش‌فرض «${item.display_name}» ذخیره شد.`);
+        toast.success(
+          `پیش‌فرض «${item.display_name}» ذخیره شد؛ سازمانی برای تغییر نبود (همه تنظیم اختصاصی دارند).`,
+        );
       }
       onSaved();
     } catch (err) {
@@ -328,10 +360,16 @@ function AiDefaultCard({ item, onSaved }: { item: PlatformAiDefault; onSaved: ()
   const resetToServerDefault = async () => {
     setBusy(true);
     try {
-      await platformApi.removeAiDefault(item.provider_key);
+      const response = await platformApi.removeAiDefault(item.provider_key);
       setDraft({});
       setTestMessage('');
-      toast.success(`پیش‌فرض «${item.display_name}» حذف شد و مقدار کد/سرور بازگشت.`);
+      const cleared = response?.apply?.cleared_providers || 0;
+      toast.success(
+        `پیش‌فرض «${item.display_name}» حذف شد و مقدار کد/سرور بازگشت` +
+          (cleared
+            ? ` (توکن اعمال‌شده از ${toPersianDigits(cleared)} سازمان برداشته شد).`
+            : '.'),
+      );
       onSaved();
     } catch (err) {
       toast.error(errorMessage(err, 'حذف پیش‌فرض ناموفق بود.'));
@@ -349,6 +387,12 @@ function AiDefaultCard({ item, onSaved }: { item: PlatformAiDefault; onSaved: ()
           <Badge variant={item.source === 'panel' ? 'default' : 'secondary'}>
             {AI_SOURCE_LABELS[item.source] || item.source}
           </Badge>
+          {usage && (
+            <span className="text-[11px] font-normal text-muted-foreground">
+              {toPersianDigits(usage.platform)} سازمان روی این پیش‌فرض
+              {usage.org > 0 && ` • ${toPersianDigits(usage.org)} سازمان با تنظیم اختصاصی`}
+            </span>
+          )}
         </CardTitle>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">{enabled ? 'فعال' : 'غیرفعال'}</span>
@@ -2451,6 +2495,23 @@ function ProvidersList({
               <span className="mr-2 text-xs font-normal text-muted-foreground">
                 {provider.kind === 'stt' ? 'رونویسی' : 'مدل زبانی'}
               </span>
+              {provider.configured_by === 'org' ? (
+                <Badge
+                  variant="outline"
+                  className="mr-2"
+                  title="این سازمان کلید/اعتبارنامهٔ خودش را دارد و با تغییر پیش‌فرض سراسری عوض نمی‌شود"
+                >
+                  تنظیم اختصاصی سازمان
+                </Badge>
+              ) : provider.configured_by === 'platform' ? (
+                <Badge
+                  variant="secondary"
+                  className="mr-2"
+                  title="مقدار از پیش‌فرض سراسری سامانه آمده و با تغییر آن به‌روز می‌شود"
+                >
+                  از پیش‌فرض سامانه
+                </Badge>
+              ) : null}
             </CardTitle>
             <Switch
               checked={Boolean(drafts[provider.id]?.enabled ?? provider.enabled)}

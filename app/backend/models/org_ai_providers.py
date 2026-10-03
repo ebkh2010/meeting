@@ -17,6 +17,12 @@ class Org_ai_providers(Base):
     base_url = Column(String, nullable=True)
     model = Column(String, nullable=True)
     api_key_enc = Column(String, nullable=True)
+    # منبع تنظیم فعال این ردیف:
+    #   "org"      → خود سازمان (یا مدیر سامانه برای همان سازمان) تعریف کرده است
+    #   "platform" → از پیش‌فرض سراسری سامانه اعمال شده است
+    #   ""         → هنوز هیچ اعتباری ثبت نشده
+    # ردیف‌های «org» هرگز با تغییر پیش‌فرض سراسری بازنویسی نمی‌شوند.
+    configured_by = Column(String, nullable=True)
     auth_username = Column(String, nullable=True)
     auth_password_enc = Column(String, nullable=True)
     diarization = Column(Boolean, nullable=True)

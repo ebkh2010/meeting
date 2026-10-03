@@ -341,59 +341,122 @@ DEFAULT_HARF_AUTH_PASSWORD = os.environ.get("DEFAULT_HARF_AUTH_PASSWORD", "samim
 DEFAULT_DEEPSEEK_API_KEY = os.environ.get("DEFAULT_DEEPSEEK_API_KEY", "").strip()
 
 
-def _apply_default_harf(row: Org_ai_providers) -> None:
-    """فعال‌سازی «حرف» با اعتبارنامهٔ پیش‌فرض روی ردیفی که هنوز پیکربندی نشده است."""
-    row.enabled = DEFAULT_HARF_ENABLED
-    row.auth_username = DEFAULT_HARF_AUTH_USERNAME
-    row.auth_password_enc = encrypt_secret(DEFAULT_HARF_AUTH_PASSWORD)
+#: منبع تنظیم هر ردیف تأمین‌کننده
+SOURCE_ORG = "org"            # خود سازمان تعریف کرده است (هرگز بازنویسی نمی‌شود)
+SOURCE_PLATFORM = "platform"  # از پیش‌فرض سراسری سامانه اعمال شده است
+SOURCE_NONE = ""
 
 
-def _harf_unconfigured(row: Org_ai_providers) -> bool:
-    """ردیف «حرف» بدون هیچ اعتبارنامه‌ای که مدیر هم صریحاً غیرفعالش نکرده است.
-
-    اگر مدیر سرویس را خاموش کرده باشد (``enabled=False``) یا نام کاربری/رمز
-    ثبت کرده باشد، پیش‌فرض روی آن اعمال نمی‌شود.
-    """
-    if row.kind != KIND_STT or (row.provider_key or "") != "harf":
-        return False
-    if row.enabled is False:
-        return False
-    return not ((row.auth_username or "").strip() or (row.auth_password_enc or "").strip())
-
-
-def _apply_default_deepseek(row: Org_ai_providers) -> bool:
-    """فعال‌سازی DeepSeek با کلید پیش‌فرض سامانه روی ردیف بدون کلید.
-
-    فقط وقتی اثری دارد که ``DEFAULT_DEEPSEEK_API_KEY`` در محیط تعریف شده باشد.
-    پس از اعمال، ردیف کلید دارد و پیش‌فرض دوباره روی آن اعمال نمی‌شود؛ بنابراین
-    غیرفعال‌سازی بعدی توسط مدیر سازمان پایدار می‌ماند.
-    """
-    if not DEFAULT_DEEPSEEK_API_KEY:
-        return False
-    row.enabled = True
-    row.api_key_enc = encrypt_secret(DEFAULT_DEEPSEEK_API_KEY)
-    return True
-
-
-def _deepseek_unconfigured(row: Org_ai_providers) -> bool:
-    """ردیف DeepSeek (مدل زبانی) که هنوز هیچ کلیدی برایش ثبت نشده است."""
-    if row.kind != KIND_LLM or (row.provider_key or "") != "deepseek":
-        return False
-    return not (row.api_key_enc or "").strip()
+def _row_has_credentials(row: Org_ai_providers) -> bool:
+    """آیا این ردیف اعتبارنامهٔ ثبت‌شده دارد؟ (مستقل از فعال/غیرفعال)"""
+    entry = catalog_entry(row.kind or "", row.provider_key or "")
+    if entry.get("auth_mode") == AUTH_USERNAME_PASSWORD:
+        return bool((row.auth_username or "").strip() and (row.auth_password_enc or "").strip())
+    return bool((row.api_key_enc or "").strip())
 
 
 def _row_unconfigured(row: Org_ai_providers) -> bool:
-    """آیا سازمان هنوز هیچ اعتبارنامه‌ای برای این تأمین‌کننده ثبت نکرده است؟
-
-    ملاک، «نبود اعتبارنامه» است نه مقدار ``enabled``؛ چون ردیف تازه با
-    ``enabled=False`` ساخته می‌شود و نمی‌توان از آن فهمید مدیر عمداً خاموشش کرده
-    یا هنوز دست نزده است. پس از اعمال پیش‌فرض، ردیف اعتبارنامه دارد و خاموش‌کردن
-    بعدی مدیر سازمان پایدار می‌ماند.
-    """
+    """آیا هیچ اعتبارنامه‌ای برای این تأمین‌کننده ثبت نشده است؟"""
     entry = catalog_entry(row.kind or "", row.provider_key or "")
     if entry.get("auth_mode") == AUTH_USERNAME_PASSWORD:
         return not ((row.auth_username or "").strip() or (row.auth_password_enc or "").strip())
     return not (row.api_key_enc or "").strip()
+
+
+def row_is_org_owned(row: Org_ai_providers) -> bool:
+    """آیا تنظیم این ردیف اختصاصی خود سازمان است؟ (پس با پیش‌فرض سراسری عوض نمی‌شود)"""
+    return (row.configured_by or "").strip() == SOURCE_ORG
+
+
+_SHARED_SECRET_POOL: Optional[Dict[str, set]] = None
+
+
+async def _shared_secret_pool(db: AsyncSession) -> Dict[str, set]:
+    """اعتبارنامه‌هایی که میان چند سازمان تکرار شده‌اند.
+
+    اگر یک توکن/رمز در سه سازمان یا بیشتر یکسان باشد، عملاً از پیش‌فرض سامانه
+    آمده است (سازمان‌های مستقل کلید یکسان ندارند). این تشخیص فقط برای ردیف‌های
+    قدیمیِ بدون ستون ``configured_by`` لازم است و یک‌بار در هر پروسه محاسبه و
+    نگه داشته می‌شود.
+    """
+    global _SHARED_SECRET_POOL
+    if _SHARED_SECRET_POOL is not None:
+        return _SHARED_SECRET_POOL
+    from models.organizations import Organizations
+
+    result = await db.execute(
+        select(Org_ai_providers).join(
+            Organizations, Organizations.id == Org_ai_providers.organization_id
+        ).where(Organizations.status != "trashed")
+    )
+    counters: Dict[str, Dict[str, int]] = {}
+    for row in result.scalars().all():
+        provider_key = row.provider_key or ""
+        for field, raw in (("api_key", row.api_key_enc), ("password", row.auth_password_enc)):
+            value = decrypt_secret(raw or "") if raw else ""
+            if not value:
+                continue
+            bucket = counters.setdefault(f"{provider_key}:{field}", {})
+            bucket[value] = bucket.get(value, 0) + 1
+    pool: Dict[str, set] = {
+        key: {value for value, count in bucket.items() if count >= 3}
+        for key, bucket in counters.items()
+    }
+    _SHARED_SECRET_POOL = pool
+    return pool
+
+
+async def _known_default_credentials(db: AsyncSession) -> Dict[str, List[str]]:
+    """اعتبارنامه‌های پیش‌فرض شناخته‌شده به تفکیک تأمین‌کننده.
+
+    برای ردیف‌هایی که پیش از افزودن ستون ``configured_by`` ساخته شده‌اند، از این
+    فهرست استفاده می‌کنیم تا بفهمیم مقدارشان از پیش‌فرض سامانه آمده یا خود سازمان
+    ثبتش کرده است؛ ردیف سازمانی هرگز بازنویسی نمی‌شود.
+    """
+    known: Dict[str, List[str]] = {}
+    for provider_key, item in (await _platform_defaults(db)).items():
+        values: List[str] = []
+        if item.get("api_key_enc"):
+            values.append(decrypt_secret(str(item["api_key_enc"])))
+        if item.get("password_enc"):
+            values.append(decrypt_secret(str(item["password_enc"])))
+        if values:
+            known[provider_key] = [value for value in values if value]
+    if DEFAULT_DEEPSEEK_API_KEY:
+        known.setdefault("deepseek", []).append(DEFAULT_DEEPSEEK_API_KEY)
+    if DEFAULT_HARF_AUTH_PASSWORD:
+        known.setdefault("harf", []).append(DEFAULT_HARF_AUTH_PASSWORD)
+    return known
+
+
+def _backfill_source(
+    row: Org_ai_providers, known: Dict[str, List[str]], shared: Optional[Dict[str, set]] = None
+) -> str:
+    """تعیین منبع ردیف‌های قدیمی (بدون ستون).
+
+    ملاک «از پیش‌فرض سامانه آمده» یکی از این دو است: مقدار با پیش‌فرض پنل/کد
+    یکسان باشد، یا همان مقدار در چند سازمان تکرار شده باشد (کلید مشترک سامانه).
+    در غیر این صورت، مقدار اختصاصی خود سازمان تلقی و هرگز بازنویسی نمی‌شود.
+    """
+    current = (row.configured_by or "").strip()
+    if current:
+        return current
+    if _row_unconfigured(row):
+        row.configured_by = SOURCE_NONE
+        return row.configured_by
+    provider_key = row.provider_key or ""
+    candidates = known.get(provider_key, [])
+    api_key = decrypt_secret(row.api_key_enc or "") if row.api_key_enc else ""
+    password = decrypt_secret(row.auth_password_enc or "") if row.auth_password_enc else ""
+    shared = shared or {}
+    from_platform = bool(
+        (api_key and api_key in candidates)
+        or (password and password in candidates)
+        or (api_key and api_key in shared.get(f"{provider_key}:api_key", set()))
+        or (password and password in shared.get(f"{provider_key}:password", set()))
+    )
+    row.configured_by = SOURCE_PLATFORM if from_platform else SOURCE_ORG
+    return row.configured_by
 
 
 # ---------------------------------------------------------------------------
@@ -503,11 +566,17 @@ def platform_defaults_payload(
 
 
 async def read_platform_defaults(db: AsyncSession) -> Dict[str, Any]:
-    """خواندن پیش‌فرض‌ها برای پنل، به‌همراه راهنمای کاتالوگ."""
+    """خواندن پیش‌فرض‌ها برای پنل، به‌همراه راهنمای کاتالوگ و آمار مصرف."""
     stored_all = await _platform_defaults(db)
+    try:
+        usage = await defaults_usage(db)
+    except Exception as exc:  # pragma: no cover - آمار نباید صفحه را بشکند
+        logger.warning("شمارش مصرف پیش‌فرض‌های AI ناموفق بود: %s", exc)
+        usage = {}
     return {
         "defaults": platform_defaults_payload(stored_all),
         "catalog": catalog_payload(),
+        "usage": usage,
     }
 
 
@@ -570,17 +639,69 @@ def _default_has_credentials(default: Dict[str, Any], entry: Dict[str, Any]) -> 
     return bool(str(default.get("api_key_enc") or "").strip())
 
 
+def _code_default(provider_key: str, kind: str) -> Dict[str, Any]:
+    """پیش‌فرض کد/متغیر محیطی برای تأمین‌کننده (harf و deepseek).
+
+    اگر مدیر سامانه پیش‌فرضی در پنل ثبت نکرده باشد، همین مقدارها مبنا هستند تا
+    رفتار پیشین سامانه حفظ شود.
+    """
+    if provider_key == "harf" and kind == KIND_STT:
+        return {
+            "enabled": bool(DEFAULT_HARF_ENABLED),
+            "auth_username": DEFAULT_HARF_AUTH_USERNAME,
+            "password_enc": encrypt_secret(DEFAULT_HARF_AUTH_PASSWORD),
+            "source": "code",
+        }
+    if provider_key == "deepseek" and kind == KIND_LLM and DEFAULT_DEEPSEEK_API_KEY:
+        return {
+            "enabled": True,
+            "api_key_enc": encrypt_secret(DEFAULT_DEEPSEEK_API_KEY),
+            "source": "code",
+        }
+    return {}
+
+
+async def effective_default(
+    db: AsyncSession, provider_key: str, kind: str
+) -> Dict[str, Any]:
+    """پیش‌فرض مؤثر یک تأمین‌کننده: مقدار پنل، وگرنه پیش‌فرض کد/محیط."""
+    panel = (await _platform_defaults(db)).get(provider_key)
+    if panel:
+        return {**panel, "source": "panel"}
+    return _code_default(provider_key, kind)
+
+
+def _secret_matches(current_enc: str, new_enc: str) -> bool:
+    """آیا مقدار رمزنگاری‌شدهٔ فعلی همان مقدار تازه است؟
+
+    Fernet هر بار خروجی متفاوتی می‌سازد؛ پس مقایسهٔ متن رمزنگاری‌شده همیشه
+    «تفاوت» نشان می‌دهد و باعث بازنویسی بی‌پایان ردیف‌ها می‌شود. مقایسه باید
+    روی مقدار رمزگشایی‌شده انجام شود.
+    """
+    if not new_enc:
+        return True
+    if not current_enc:
+        return False
+    return decrypt_secret(current_enc) == decrypt_secret(new_enc)
+
+
 def _apply_platform_default(
     row: Org_ai_providers, default: Dict[str, Any], entry: Dict[str, Any]
 ) -> bool:
-    """اعمال پیش‌فرض پنل روی ردیفِ بدون تنظیم سازمان؛ ``True`` اگر تغییری داد."""
+    """جایگزینی کامل تنظیم ردیف با پیش‌فرض سراسری؛ ``True`` اگر چیزی تغییر کرد.
+
+    برخلاف نسخهٔ پیشین، مقدارهای قبلی (توکن قدیمیِ پیش‌فرض، مدل و نشانی) بازنویسی
+    می‌شوند؛ وگرنه با عوض‌کردن توکن پیش‌فرض، سازمان‌ها روی توکن قبلی می‌ماندند.
+    ردیف‌هایی که سازمان خودش تعریف کرده است هرگز به این تابع نمی‌رسند.
+    """
     if not default:
         return False
     changed = False
-    if default.get("model") and (row.model or "") != default["model"]:
+
+    if default.get("model") and (row.model or "") != str(default["model"]):
         row.model = str(default["model"])
         changed = True
-    if default.get("base_url") and (row.base_url or "") != default["base_url"]:
+    if default.get("base_url") and (row.base_url or "") != str(default["base_url"]):
         row.base_url = str(default["base_url"])
         changed = True
     if default.get("priority"):
@@ -596,24 +717,77 @@ def _apply_platform_default(
         if bool(row.diarization) != value:
             row.diarization = value
             changed = True
-    if default.get("auth_username") and (row.auth_username or "") != default["auth_username"]:
-        row.auth_username = str(default["auth_username"])
+
+    if entry.get("auth_mode") == AUTH_USERNAME_PASSWORD:
+        username = str(default.get("auth_username") or "").strip()
+        password_enc = str(default.get("password_enc") or "")
+        if username and (row.auth_username or "") != username:
+            row.auth_username = username
+            changed = True
+        if password_enc and not _secret_matches(row.auth_password_enc or "", password_enc):
+            row.auth_password_enc = password_enc
+            changed = True
+        if (row.api_key_enc or "").strip():
+            row.api_key_enc = ""
+            changed = True
+    else:
+        api_key_enc = str(default.get("api_key_enc") or "")
+        if api_key_enc and not _secret_matches(row.api_key_enc or "", api_key_enc):
+            row.api_key_enc = api_key_enc
+            changed = True
+        if (row.auth_password_enc or "").strip():
+            row.auth_password_enc = ""
+            changed = True
+
+    enabled = bool(default.get("enabled")) and _default_has_credentials(default, entry)
+    if bool(row.enabled) != enabled:
+        row.enabled = enabled
         changed = True
-    if default.get("password_enc") and not (row.auth_password_enc or "").strip():
-        row.auth_password_enc = str(default["password_enc"])
-        changed = True
-    if default.get("api_key_enc") and not (row.api_key_enc or "").strip():
-        row.api_key_enc = str(default["api_key_enc"])
-        changed = True
-    # فعال‌سازی فقط وقتی پیش‌فرض فعال است و اعتبارنامهٔ کامل دارد.
-    if (
-        bool(default.get("enabled"))
-        and _default_has_credentials(default, entry)
-        and not bool(row.enabled)
-    ):
-        row.enabled = True
+
+    if (row.configured_by or "") != SOURCE_PLATFORM:
+        row.configured_by = SOURCE_PLATFORM
         changed = True
     return changed
+
+
+def _clear_platform_credentials(row: Org_ai_providers) -> bool:
+    """برداشتن اعتبارنامه‌ای که از پیش‌فرض سامانه آمده بود (خروجی: تغییری داد؟)."""
+    changed = False
+    if (row.api_key_enc or "").strip():
+        row.api_key_enc = ""
+        changed = True
+    if (row.auth_password_enc or "").strip():
+        row.auth_password_enc = ""
+        changed = True
+    if (row.auth_username or "").strip():
+        row.auth_username = ""
+        changed = True
+    if bool(row.enabled):
+        row.enabled = False
+        changed = True
+    if (row.configured_by or "") != SOURCE_NONE:
+        row.configured_by = SOURCE_NONE
+        changed = True
+    return changed
+
+
+def _sync_row_with_default(
+    row: Org_ai_providers, default: Dict[str, Any], entry: Dict[str, Any], *, force: bool = False
+) -> Optional[str]:
+    """همگام‌سازی یک ردیف با پیش‌فرض مؤثر.
+
+    خروجی: ``"applied"`` (پیش‌فرض اعمال شد)، ``"cleared"`` (پیش‌فرض برداشته شد)،
+    ``"kept"`` (تغییری لازم نبود) یا ``None`` (ردیف اختصاصی سازمان است).
+    """
+    if row_is_org_owned(row) and not force:
+        return None
+    if default and bool(default.get("enabled")) and _default_has_credentials(default, entry):
+        return "applied" if _apply_platform_default(row, default, entry) else "kept"
+    # پیش‌فرضی وجود ندارد یا غیرفعال است: اگر ردیف قبلاً از پیش‌فرض پر شده بود،
+    # اعتبارنامهٔ سامانه برداشته می‌شود تا توکن باطل‌شده جایی باقی نماند.
+    if (row.configured_by or "") == SOURCE_PLATFORM:
+        return "cleared" if _clear_platform_credentials(row) else "kept"
+    return "kept"
 
 
 def build_default_provider(
@@ -672,71 +846,41 @@ async def clear_platform_default(db: AsyncSession, provider_key: str) -> Dict[st
     return {"provider_key": provider_key, "cleared": True}
 
 
-async def apply_platform_defaults(db: AsyncSession) -> Dict[str, Any]:
-    """اعمال پیش‌فرض‌های پنل روی همهٔ سازمان‌های فعال (فقط ردیف‌های بدون تنظیم).
-
-    سازمانی که خودش کلید/اعتبارنامه ثبت کرده باشد هرگز بازنویسی نمی‌شود؛ این تابع
-    برای زمانی است که مدیر سامانه پیش‌فرض را عوض می‌کند و می‌خواهد همان لحظه روی
-    سازمان‌های تنظیم‌نشده اعمال شود (بدون انتظار برای نخستین درخواست هر سازمان).
-    """
-    from models.organizations import Organizations
-
-    defaults = await _platform_defaults(db)
-    if not defaults:
-        return {
-            "organizations": 0,
-            "updated_organizations": 0,
-            "updated_providers": 0,
-            "providers": {},
-        }
-
-    result = await db.execute(
-        select(Organizations).where(Organizations.status != "trashed")
-    )
-    organizations = list(result.scalars().all())
-    updated_orgs = 0
-    updated_providers = 0
-    per_provider: Dict[str, int] = {}
-    for organization in organizations:
-        rows = await ensure_defaults(db, int(organization.id))
-        org_updated = False
-        for row in rows:
-            provider_key = row.provider_key or ""
-            default = defaults.get(provider_key)
-            if not default or not _row_unconfigured(row):
+async def _effective_defaults_map(db: AsyncSession) -> Dict[str, Dict[str, Any]]:
+    """نقشهٔ پیش‌فرض مؤثر همهٔ تأمین‌کنندگان (یک‌بار خواندن برای همهٔ ردیف‌ها)."""
+    panel = await _platform_defaults(db)
+    mapping: Dict[str, Dict[str, Any]] = {}
+    for kind in ALL_KINDS:
+        for entry in CATALOG[kind]:
+            provider_key = entry["provider_key"]
+            if panel.get(provider_key):
+                mapping[provider_key] = {**panel[provider_key], "source": "panel"}
                 continue
-            entry = catalog_entry(row.kind or "", provider_key)
-            if _apply_platform_default(row, default, entry):
-                updated_providers += 1
-                per_provider[provider_key] = per_provider.get(provider_key, 0) + 1
-                org_updated = True
-        if org_updated:
-            updated_orgs += 1
-    if updated_orgs:
-        await db.flush()
-    return {
-        "organizations": len(organizations),
-        "updated_organizations": updated_orgs,
-        "updated_providers": updated_providers,
-        "providers": per_provider,
-    }
+            code = _code_default(provider_key, kind)
+            if code:
+                mapping[provider_key] = code
+    return mapping
 
 
-async def ensure_defaults(db: AsyncSession, organization_id: int) -> List[Org_ai_providers]:
-    """ساخت ردیف‌های پیش‌فرض تنظیمات برای سازمان (یک‌بار، بی‌اثر در فراخوان دوباره).
+async def _sync_organization(
+    db: AsyncSession, organization_id: int, *, force: bool = False
+) -> Tuple[List[Org_ai_providers], Dict[str, Any]]:
+    """ساخت ردیف‌های تازه، تعیین منبع و همگام‌سازی با پیش‌فرض مؤثر.
 
-    ترتیب اولویت مقداردهی: مقدار ثبت‌شدهٔ خود سازمان ← پیش‌فرض پنل مدیریت سامانه
-    ← پیش‌فرض کد/متغیر محیطی. ردیف سرویس «حرف» با اعتبارنامهٔ پیش‌فرض ساخته
-    می‌شود تا رونویسی برای هر سازمان تازه بدون هیچ پیکربندی فعال باشد؛ ردیف‌های
-    قدیمیِ بدون اعتبارنامه هم به همین پیش‌فرض منتقل می‌شوند.
+    خروجی: فهرست ردیف‌ها و آمار تغییرها. ردیف‌های اختصاصی سازمان دست‌نخورده
+    می‌مانند؛ ردیف‌هایی که از پیش‌فرض سامانه آمده‌اند با مقدار تازه جایگزین
+    (یا در صورت حذف/غیرفعال‌شدن پیش‌فرض، پاک) می‌شوند.
     """
-    platform_defaults = await _platform_defaults(db)
+    known_defaults = await _known_default_credentials(db)
     result = await db.execute(
         select(Org_ai_providers).where(Org_ai_providers.organization_id == organization_id)
     )
     rows = list(result.scalars().all())
+    # استخر کلیدهای مشترک فقط وقتی لازم است که ردیف بدون منبع داشته باشیم.
+    needs_pool = any(not (row.configured_by or "").strip() for row in rows)
+    shared_pool = await _shared_secret_pool(db) if needs_pool else {}
     existing = {(row.kind, row.provider_key) for row in rows}
-    created = False
+    changed = False
     for kind in ALL_KINDS:
         for index, entry in enumerate(CATALOG[kind], start=1):
             if (kind, entry["provider_key"]) in existing:
@@ -755,37 +899,119 @@ async def ensure_defaults(db: AsyncSession, organization_id: int) -> List[Org_ai
                 auth_password_enc="",
                 diarization=bool(entry["supports_diarization"]),
                 extra_json="",
+                configured_by=SOURCE_NONE,
                 last_test_ok=False,
                 last_test_at="",
                 last_test_message="",
             )
-            if entry["provider_key"] == "harf":
-                _apply_default_harf(row)
             db.add(row)
             rows.append(row)
-            created = True
-    # ۱) پیش‌فرض پنل سامانه روی ردیف‌هایی که سازمان هنوز اعتبارنامه‌ای ثبت نکرده
-    #    است، ۲) در نبود آن، پشتیبانی از ردیف‌های «حرف» قدیمی و فعال‌سازی
-    #    پیش‌فرض کد (DeepSeek) روی ردیف‌های مدل زبانی بدون کلید.
-    changed = False
+            changed = True
+
+    defaults = await _effective_defaults_map(db)
+    stats: Dict[str, Any] = {"applied": 0, "cleared": 0, "providers": {}}
     for row in rows:
-        if not _row_unconfigured(row):
-            continue
+        if _backfill_source(row, known_defaults, shared_pool):
+            changed = True
         provider_key = row.provider_key or ""
         entry = catalog_entry(row.kind or "", provider_key)
-        default = platform_defaults.get(provider_key)
-        if default and _apply_platform_default(row, default, entry):
+        outcome = _sync_row_with_default(
+            row, defaults.get(provider_key, {}), entry, force=force
+        )
+        if outcome == "applied":
+            stats["applied"] += 1
+            stats["providers"][provider_key] = stats["providers"].get(provider_key, 0) + 1
             changed = True
-            continue
-        if _harf_unconfigured(row):
-            _apply_default_harf(row)
+        elif outcome == "cleared":
+            stats["cleared"] += 1
             changed = True
-        if _deepseek_unconfigured(row):
-            changed = _apply_default_deepseek(row) or changed
-    if created or changed:
+    if changed:
         await db.flush()
+    return rows, stats
+
+
+async def sync_organization_defaults(
+    db: AsyncSession, organization_id: int, *, force: bool = False
+) -> Dict[str, Any]:
+    """همگام‌سازی ردیف‌های یک سازمان با پیش‌فرض‌های سراسری جاری (با آمار)."""
+    _, stats = await _sync_organization(db, organization_id, force=force)
+    return stats
+
+
+async def ensure_defaults(db: AsyncSession, organization_id: int) -> List[Org_ai_providers]:
+    """ردیف‌های تنظیمات هوش مصنوعی سازمان، همگام‌شده با پیش‌فرض‌های سراسری.
+
+    هر بار خواندن، ردیف‌های تازه ساخته می‌شوند، منبع ردیف‌های قدیمی تعیین می‌شود و
+    مقدار پیش‌فرض تازه روی ردیف‌هایی که تنظیم اختصاصی ندارند می‌نشیند؛ بنابراین
+    تغییر پیش‌فرض سراسری بدون هیچ کار دستی به سازمان‌ها می‌رسد.
+    """
+    rows, _ = await _sync_organization(db, organization_id)
     rows.sort(key=lambda row: (row.kind, int(row.priority or 99), int(row.id or 0)))
     return rows
+
+
+async def apply_platform_defaults(db: AsyncSession, *, force: bool = False) -> Dict[str, Any]:
+    """اعمال پیش‌فرض‌های سراسری روی همهٔ سازمان‌های فعال.
+
+    خروجی، گزارش تعداد سازمان‌ها و تنظیم‌های تغییریافته است. سازمانی که خودش
+    کلید/اعتبارنامه ثبت کرده باشد (``configured_by = org``) هرگز بازنویسی نمی‌شود؛
+    اما سازمانی که از پیش‌فرض سامانه استفاده می‌کند مقدار تازه را می‌گیرد.
+
+    با ``force=True`` حتی تنظیم اختصاصی سازمان‌ها هم با پیش‌فرض سامانه جایگزین
+    می‌شود (انتخاب صریح مدیر سامانه برای «اعمال روی همه»).
+    """
+    from models.organizations import Organizations
+
+    result = await db.execute(
+        select(Organizations).where(Organizations.status != "trashed")
+    )
+    organizations = list(result.scalars().all())
+    updated_orgs = 0
+    applied = 0
+    cleared = 0
+    per_provider: Dict[str, int] = {}
+    for organization in organizations:
+        _, stats = await _sync_organization(db, int(organization.id), force=force)
+        if stats["applied"] or stats["cleared"]:
+            updated_orgs += 1
+        applied += stats["applied"]
+        cleared += stats["cleared"]
+        for key, count in stats["providers"].items():
+            per_provider[key] = per_provider.get(key, 0) + count
+    if updated_orgs:
+        await db.flush()
+    return {
+        "organizations": len(organizations),
+        "updated_organizations": updated_orgs,
+        "updated_providers": applied,
+        "cleared_providers": cleared,
+        "providers": per_provider,
+        "forced": bool(force),
+    }
+
+
+async def defaults_usage(db: AsyncSession) -> Dict[str, Dict[str, int]]:
+    """شمارش سازمان‌های استفاده‌کننده از پیش‌فرض در برابر سازمان‌های دارای تنظیم اختصاصی."""
+    from models.organizations import Organizations
+
+    result = await db.execute(
+        select(Organizations).where(Organizations.status != "trashed")
+    )
+    organizations = list(result.scalars().all())
+    usage: Dict[str, Dict[str, int]] = {}
+    for organization in organizations:
+        rows = await ensure_defaults(db, int(organization.id))
+        for row in rows:
+            provider_key = row.provider_key or ""
+            bucket = usage.setdefault(provider_key, {"org": 0, "platform": 0, "none": 0})
+            source = (row.configured_by or "").strip()
+            if source == SOURCE_ORG:
+                bucket["org"] += 1
+            elif source == SOURCE_PLATFORM:
+                bucket["platform"] += 1
+            else:
+                bucket["none"] += 1
+    return usage
 
 
 def provider_payload(row: Org_ai_providers) -> Dict[str, Any]:
@@ -804,6 +1030,8 @@ def provider_payload(row: Org_ai_providers) -> Dict[str, Any]:
         "model": row.model or entry.get("model", ""),
         "model_options": model_options_for(row.provider_key or ""),
         "auth_mode": entry.get("auth_mode", AUTH_API_KEY),
+        # منبع تنظیم فعال: org (اختصاصی سازمان) / platform (از پیش‌فرض سامانه) / ""
+        "configured_by": (row.configured_by or "").strip(),
         "supports_diarization": bool(entry.get("supports_diarization")),
         "diarization": bool(row.diarization),
         "auth_username": row.auth_username or "",
@@ -843,7 +1071,9 @@ def _has_credentials(row: Org_ai_providers) -> bool:
     return bool((row.api_key_enc or "").strip())
 
 
-def apply_update(row: Org_ai_providers, data: Dict[str, Any]) -> None:
+def apply_update(
+    row: Org_ai_providers, data: Dict[str, Any], *, source: str = SOURCE_ORG
+) -> None:
     """اعمال تغییرات مدیر روی یک ردیف تنظیمات (کلید خالی = بدون تغییر)."""
     if "enabled" in data and data["enabled"] is not None:
         row.enabled = bool(data["enabled"])
@@ -866,6 +1096,14 @@ def apply_update(row: Org_ai_providers, data: Dict[str, Any]) -> None:
         row.auth_password_enc = encrypt_secret(str(data["password"]).strip())
     if data.get("clear_password"):
         row.auth_password_enc = ""
+
+    # منبع تنظیم: با ثبت اعتبارنامه، ردیف «اختصاصی سازمان» می‌شود و دیگر با
+    # پیش‌فرض سراسری عوض نمی‌شود. اگر اعتبارنامه‌ها پاک شوند، ردیف به حالت
+    # «تعریف‌نشده» برمی‌گردد تا پیش‌فرض سراسری بتواند دوباره پر کند.
+    if _row_unconfigured(row):
+        row.configured_by = SOURCE_NONE
+    else:
+        row.configured_by = source or SOURCE_ORG
 
 
 # ---------------------------------------------------------------------------
